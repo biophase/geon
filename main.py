@@ -19,7 +19,7 @@ from vtk.util import numpy_support as ns
 import vtk
 
 # Import segmentation definitions
-from segmentation import IndexSegmentation, SemanticSchema, SemanticClass
+from annotation import IndexSegmentation, SemanticSchema, SemanticClass
 
 # For scalar mapping using matplotlib colormaps
 import matplotlib.cm as cm
@@ -159,7 +159,7 @@ class InteractorStyle(vtk.vtkInteractorStyleTrackballCamera):
 
 
 # ---------------------------
-# Dialogs for new tools (unchanged except where noted)
+# Dialogs for new tools 
 # ---------------------------
 class LabelSemanticsDialog(QDialog):
 
@@ -1234,17 +1234,17 @@ class VTKPointCloudViewer(QMainWindow):
             self.lasso_polygon_actor = None
         self.vtkWidget.GetRenderWindow().Render()
 
-    def point_in_polygon(self, x, y, poly):
-        num = len(poly)
-        j = num - 1
-        c = False
-        for i in range(num):
-            xi, yi = poly[i]
-            xj, yj = poly[j]
-            if ((yi > y) != (yj > y)) and (x < (xj - xi) * (y - yi) / (yj - yi + 1e-12) + xi):
-                c = not c
-            j = i
-        return c
+    # def point_in_polygon(self, x, y, poly):
+    #     num = len(poly)
+    #     j = num - 1
+    #     c = False
+    #     for i in range(num):
+    #         xi, yi = poly[i]
+    #         xj, yj = poly[j]
+    #         if ((yi > y) != (yj > y)) and (x < (xj - xi) * (y - yi) / (yj - yi + 1e-12) + xi):
+    #             c = not c
+    #         j = i
+    #     return c
 
     def lasso_in(self):
         if len(self.lasso_points) < 3:
