@@ -1,3 +1,6 @@
 [submodule "segmentation/region-growing"]
 	path = segmentation/region-growing
 	url = https://github.com/biophase/region-growing.git
+[submodule "segmentation/reggrow"]
+	path = segmentation/reggrow
+	url = https://github.com/biophase/region-growing.git
