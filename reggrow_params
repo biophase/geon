@@ -1,0 +1,23 @@
+{
+    "settings": {
+        "epsilon": 0.03,
+        "alpha": 0.4712,
+        "min_points_in_region": 80,
+        "min_success_ratio": 0.1,
+        "max_dist_from_cent": 50.0,
+        "epsilon_multiplier": 3.0,
+        "epsilon_multiplier_average": 1.5,
+        "first_refit": 4,
+        "refit_multiplier": 2.0,
+        "oriented_normals": false,
+        "verbose": true,
+        "tracker_size": 50,
+        "search_radius_approx": 0.0,
+        "perform_cca": true
+    },
+    "chunk_layout": [
+        1,
+        1,
+        1
+    ]
+}

@@ -96,9 +96,10 @@ class IndexSegmentation:
     """
     def __init__(self, name:str, size:int, store_semantic_idx = True, store_instance_idx = True):
         self.name = name
-        self.semantic_idx = np.ones(size, dtype = int) * -1 if store_semantic_idx else None
-        self.instance_idx = np.ones(size, dtype = int) * -1 if store_instance_idx else None
+        self.semantic_idx = np.ones(size, dtype = np.int32) * -1 if store_semantic_idx else None
+        self.instance_idx = np.ones(size, dtype = np.int32) * -1 if store_instance_idx else None
         self.semantic_schema = SemanticSchema()
+        self.metadata:Dict = dict()
 
     def get_statistic(self)->SegmentationStatistic:
         if self.semantic_idx is not None:

@@ -1,3 +1,5 @@
 vtk
 pyqt6
 scipy
+pybind11
+pybind11-stubgen

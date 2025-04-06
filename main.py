@@ -6,6 +6,7 @@ import random
 import numpy as np
 import colorsys
 import configparser
+import json
 
 from plyfile import PlyData
 from PyQt6.QtCore import Qt, QSize, QTimer
@@ -13,10 +14,13 @@ from PyQt6.QtGui import QIcon, QCursor, QPixmap
 from PyQt6.QtWidgets import (QApplication, QDialog, QDialogButtonBox, QFrame, QGridLayout, QHBoxLayout,
                              QVBoxLayout, QMainWindow, QMessageBox, QPushButton, QSpacerItem,
                              QSizePolicy, QWidget, QFileDialog, QTabWidget, QTreeWidget, QTreeWidgetItem,
-                             QComboBox, QLabel, QLineEdit, QSplitter, QMenu, QColorDialog, QHeaderView)
+                             QComboBox, QLabel, QLineEdit, QSplitter, QMenu, QColorDialog, QHeaderView,
+                             QSpinBox, QCheckBox, QFormLayout, QDoubleSpinBox)
 from vtkmodules.qt.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
 from vtk.util import numpy_support as ns
 import vtk
+
+import segmentation.reggrow.build.lib.reggrow as rg
 
 # Import segmentation definitions
 from annotation import IndexSegmentation, SemanticSchema, SemanticClass
@@ -52,6 +56,185 @@ def blend_colors(c1, c2, t):
     """Linearly blend two RGB colors with blend factor t (0<=t<=1)."""
     return tuple((1 - t) * a + t * b for a, b in zip(c1, c2))
 
+# ---------------------------
+# Region Growing Settings Dialog
+# ---------------------------
+class RegionGrowingSettingsDialog(QDialog):
+    def __init__(self, parent, current_settings, current_chunk_layout):
+        super().__init__(parent)
+        self.setWindowTitle("Region Growing Settings")
+        self.current_settings = current_settings.copy()
+        self.current_chunk_layout = list(current_chunk_layout)
+        
+        layout = QVBoxLayout(self)
+        form_layout = QFormLayout()
+        
+        # Float parameters with QDoubleSpinBox
+        self.epsilon_spin = QDoubleSpinBox(self)
+        self.epsilon_spin.setRange(0.0001, 1.0)
+        self.epsilon_spin.setDecimals(4)
+        self.epsilon_spin.setValue(self.current_settings.get("epsilon", 0.03))
+        form_layout.addRow("Epsilon:", self.epsilon_spin)
+        
+        self.alpha_spin = QDoubleSpinBox(self)
+        self.alpha_spin.setRange(0, math.pi)
+        self.alpha_spin.setDecimals(4)
+        self.alpha_spin.setValue(self.current_settings.get("alpha", math.pi * 0.15))
+        form_layout.addRow("Alpha (radians):", self.alpha_spin)
+        
+        self.min_success_ratio_spin = QDoubleSpinBox(self)
+        self.min_success_ratio_spin.setRange(0.0, 1.0)
+        self.min_success_ratio_spin.setDecimals(2)
+        self.min_success_ratio_spin.setValue(self.current_settings.get("min_success_ratio", 0.10))
+        form_layout.addRow("Min Success Ratio:", self.min_success_ratio_spin)
+        
+        self.max_dist_spin = QDoubleSpinBox(self)
+        self.max_dist_spin.setRange(0.0, 1000.0)
+        self.max_dist_spin.setDecimals(2)
+        self.max_dist_spin.setValue(self.current_settings.get("max_dist_from_cent", 50.0))
+        form_layout.addRow("Max Dist from Centroid:", self.max_dist_spin)
+        
+        self.epsilon_multiplier_spin = QDoubleSpinBox(self)
+        self.epsilon_multiplier_spin.setRange(0.1, 10.0)
+        self.epsilon_multiplier_spin.setDecimals(2)
+        self.epsilon_multiplier_spin.setValue(self.current_settings.get("epsilon_multiplier", 3.0))
+        form_layout.addRow("Epsilon Multiplier:", self.epsilon_multiplier_spin)
+        
+        self.epsilon_multiplier_avg_spin = QDoubleSpinBox(self)
+        self.epsilon_multiplier_avg_spin.setRange(0.1, 10.0)
+        self.epsilon_multiplier_avg_spin.setDecimals(2)
+        self.epsilon_multiplier_avg_spin.setValue(self.current_settings.get("epsilon_multiplier_average", 1.5))
+        form_layout.addRow("Epsilon Multiplier Average:", self.epsilon_multiplier_avg_spin)
+        
+        self.refit_multiplier_spin = QDoubleSpinBox(self)
+        self.refit_multiplier_spin.setRange(0.1, 10.0)
+        self.refit_multiplier_spin.setDecimals(2)
+        self.refit_multiplier_spin.setValue(self.current_settings.get("refit_multiplier", 2.0))
+        form_layout.addRow("Refit Multiplier:", self.refit_multiplier_spin)
+        
+        self.search_radius_spin = QDoubleSpinBox(self)
+        self.search_radius_spin.setRange(0.0, 1000.0)
+        self.search_radius_spin.setDecimals(2)
+        self.search_radius_spin.setValue(self.current_settings.get("search_radius_approx", 0.0))
+        form_layout.addRow("Search Radius Approx (0=exact search):", self.search_radius_spin)
+        
+        # Integer parameters with QSpinBox
+        self.min_points_spin = QSpinBox(self)
+        self.min_points_spin.setRange(1, 1000000)
+        self.min_points_spin.setValue(self.current_settings.get("min_points_in_region", 80))
+        form_layout.addRow("Min Points in Region:", self.min_points_spin)
+        
+        self.first_refit_spin = QSpinBox(self)
+        self.first_refit_spin.setRange(1, 1000)
+        self.first_refit_spin.setValue(self.current_settings.get("first_refit", 4))
+        form_layout.addRow("First Refit:", self.first_refit_spin)
+        
+        self.tracker_size_spin = QSpinBox(self)
+        self.tracker_size_spin.setRange(1, 1000)
+        self.tracker_size_spin.setValue(self.current_settings.get("tracker_size", 50))
+        form_layout.addRow("Tracker Size:", self.tracker_size_spin)
+        
+        # Boolean parameters with QCheckBox
+        self.oriented_normals_checkbox = QCheckBox(self)
+        self.oriented_normals_checkbox.setChecked(self.current_settings.get("oriented_normals", False))
+        form_layout.addRow("Oriented Normals:", self.oriented_normals_checkbox)
+        
+        self.verbose_checkbox = QCheckBox(self)
+        self.verbose_checkbox.setChecked(self.current_settings.get("verbose", True))
+        form_layout.addRow("Verbose:", self.verbose_checkbox)
+        
+        self.perform_cca_checkbox = QCheckBox(self)
+        self.perform_cca_checkbox.setChecked(self.current_settings.get("perform_cca", True))
+        form_layout.addRow("Perform CCA:", self.perform_cca_checkbox)
+        
+        # Chunk layout: three integers
+        chunk_layout = QHBoxLayout()
+        self.chunk_x_spin = QSpinBox(self)
+        self.chunk_x_spin.setRange(1, 100)
+        self.chunk_x_spin.setValue(self.current_chunk_layout[0])
+        self.chunk_y_spin = QSpinBox(self)
+        self.chunk_y_spin.setRange(1, 100)
+        self.chunk_y_spin.setValue(self.current_chunk_layout[1])
+        self.chunk_z_spin = QSpinBox(self)
+        self.chunk_z_spin.setRange(1, 100)
+        self.chunk_z_spin.setValue(self.current_chunk_layout[2])
+        chunk_layout.addWidget(QLabel("X:"))
+        chunk_layout.addWidget(self.chunk_x_spin)
+        chunk_layout.addWidget(QLabel("Y:"))
+        chunk_layout.addWidget(self.chunk_y_spin)
+        chunk_layout.addWidget(QLabel("Z:"))
+        chunk_layout.addWidget(self.chunk_z_spin)
+        form_layout.addRow("Chunk Layout:", chunk_layout)
+        
+        layout.addLayout(form_layout)
+        
+        # Load/Save JSON buttons
+        buttons_layout = QHBoxLayout()
+        self.load_button = QPushButton("Load JSON", self)
+        self.save_button = QPushButton("Save JSON", self)
+        buttons_layout.addWidget(self.load_button)
+        buttons_layout.addWidget(self.save_button)
+        layout.addLayout(buttons_layout)
+        
+        self.load_button.clicked.connect(self.load_json)
+        self.save_button.clicked.connect(self.save_json)
+        
+        # OK/Cancel dialog buttons
+        self.buttonBox = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        self.buttonBox.accepted.connect(self.accept)
+        self.buttonBox.rejected.connect(self.reject)
+        layout.addWidget(self.buttonBox)
+    def get_settings(self):
+        settings = {
+            "epsilon": self.epsilon_spin.value(),
+            "alpha": self.alpha_spin.value(),
+            "min_points_in_region": self.min_points_spin.value(),
+            "min_success_ratio": self.min_success_ratio_spin.value(),
+            "max_dist_from_cent": self.max_dist_spin.value(),
+            "epsilon_multiplier": self.epsilon_multiplier_spin.value(),
+            "epsilon_multiplier_average": self.epsilon_multiplier_avg_spin.value(),
+            "first_refit": self.first_refit_spin.value(),
+            "refit_multiplier": self.refit_multiplier_spin.value(),
+            "oriented_normals": self.oriented_normals_checkbox.isChecked(),
+            "verbose": self.verbose_checkbox.isChecked(),
+            "tracker_size": self.tracker_size_spin.value(),
+            "search_radius_approx": self.search_radius_spin.value(),
+            "perform_cca": self.perform_cca_checkbox.isChecked()
+        }
+        chunk_layout = (self.chunk_x_spin.value(), self.chunk_y_spin.value(), self.chunk_z_spin.value())
+        return settings, chunk_layout
+    def load_json(self):
+        file_path, _ = QFileDialog.getOpenFileName(self, "Load Region Growing Settings", "", "JSON Files (*.json)")
+        if file_path:
+            with open(file_path, "r") as f:
+                data = json.load(f)
+            settings = data.get("settings", {})
+            chunk_layout = data.get("chunk_layout", [1, 1, 1])
+            self.epsilon_spin.setValue(settings.get("epsilon", 0.03))
+            self.alpha_spin.setValue(settings.get("alpha", math.pi * 0.15))
+            self.min_points_spin.setValue(settings.get("min_points_in_region", 80))
+            self.min_success_ratio_spin.setValue(settings.get("min_success_ratio", 0.10))
+            self.max_dist_spin.setValue(settings.get("max_dist_from_cent", 50.0))
+            self.epsilon_multiplier_spin.setValue(settings.get("epsilon_multiplier", 3.0))
+            self.epsilon_multiplier_avg_spin.setValue(settings.get("epsilon_multiplier_average", 1.5))
+            self.first_refit_spin.setValue(settings.get("first_refit", 4))
+            self.refit_multiplier_spin.setValue(settings.get("refit_multiplier", 2.0))
+            self.oriented_normals_checkbox.setChecked(settings.get("oriented_normals", False))
+            self.verbose_checkbox.setChecked(settings.get("verbose", True))
+            self.tracker_size_spin.setValue(settings.get("tracker_size", 50))
+            self.search_radius_spin.setValue(settings.get("search_radius_approx", 0.0))
+            self.perform_cca_checkbox.setChecked(settings.get("perform_cca", True))
+            self.chunk_x_spin.setValue(chunk_layout[0])
+            self.chunk_y_spin.setValue(chunk_layout[1])
+            self.chunk_z_spin.setValue(chunk_layout[2])
+    
+    def save_json(self):
+        file_path, _ = QFileDialog.getSaveFileName(self, "Save Region Growing Settings", "", "JSON Files (*.json)")
+        if file_path:
+            settings, chunk_layout = self.get_settings()
+            data = {"settings": settings, "chunk_layout": list(chunk_layout)}
+            with open(file_path, "w") as f:
+                json.dump(data, f, indent=4)
 
 # ---------------------------
 # Hotkeys Settings Dialog
@@ -143,6 +326,10 @@ class InteractorStyle(vtk.vtkInteractorStyleTrackballCamera):
         # Get the key and modifiers
         key = self.GetInteractor().GetKeySym().lower()
         ctrl = self.GetInteractor().GetControlKey()
+
+        # undo
+        if key == 'z' and ctrl:
+            self.viewer.undo_update_active_selection()
         # Check user-defined hotkeys
         lasso_hotkey = self.viewer.hotkeys.get("lasso", "t").lower()
         wand_hotkey = self.viewer.hotkeys.get("wand", "control+w").lower()
@@ -305,12 +492,17 @@ class VTKPointCloudViewer(QMainWindow):
         self.active_segmentation_mode = None  # "semantic" or "instance"
         self.visibility_mask = None  # Binary mask for point visibility
         self.loaded_ply_name = None
+        self.region_growing_settings = None
+        self.region_growing_chunk_layout = None
 
         # Initialize hotkeys with defaults.
         self.hotkeys = {
             "lasso": "t",
             "wand": "Control+w"
         }
+
+        # default region growing settings
+        self.set_default_region_growing_setting()
 
         # ---------------------------
         # Top-Level Layout: Vertical layout with top toolbar and main horizontal area.
@@ -399,7 +591,8 @@ class VTKPointCloudViewer(QMainWindow):
             ("resources/deselect.png", "Deselect selection", self.deselect_selection),
             ("resources/hide_selected.png", "Hide selected points", self.hide_selected_points),
             ("resources/show_all.png", "Show all points", self.show_all_points),
-            ("resources/reggrow.png", "Show all points", self.region_growing)
+            ("resources/reggrow.png", "Start regioin growing", self.region_growing),
+            ("resources/reggrow_settings.png", "Region growing settings", self.change_region_growing_settings)
         ]
         row = 0
         col = 0
@@ -432,6 +625,7 @@ class VTKPointCloudViewer(QMainWindow):
         self.point_cloud_actor = None
 
         self.active_selection = None
+        self.last_active_selection = None
         self.selection_actor = None
         self.selection_timer = QTimer()
         self.selection_timer.timeout.connect(self.update_selection_pulse)
@@ -470,8 +664,8 @@ class VTKPointCloudViewer(QMainWindow):
         self.active_tool = tool_name
         pixmap = QPixmap(icon_path)
         if tool_name == "wand":
-            pixmap = pixmap.scaled(40, 40, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
-        cursor = QCursor(pixmap)
+            pixmap = pixmap.scaled(30, 30, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+        cursor = QCursor(pixmap,0, 0)
         QApplication.setOverrideCursor(cursor)
 
     def activate_wand_tool(self):
@@ -479,7 +673,7 @@ class VTKPointCloudViewer(QMainWindow):
             QMessageBox.warning(self, "Wand Tool", "No semantic or instance labels are active.")
             return
         print("Wand tool activated.")
-        self.activate_tool("wand", "resources/wand.png")
+        self.activate_tool("wand", "resources/wand_cursor.png")
     
     # ---------------------------
     # VTK and Rendering Methods
@@ -973,7 +1167,6 @@ class VTKPointCloudViewer(QMainWindow):
             self.deselect_selection()
         except Exception as e:
             QMessageBox.warning(self, "Instance Segmentation", str(e))
-
     def wand_pick(self):
         x, y = self.interactor.GetEventPosition()
         picker = vtk.vtkPointPicker()
@@ -1011,9 +1204,21 @@ class VTKPointCloudViewer(QMainWindow):
                 new_selection = np.array([], dtype=int)
             else:
                 new_selection = np.intersect1d(self.active_selection, picked_indices)
-        self.active_selection = new_selection
+        # self.active_selection = new_selection
+        self.update_active_selection(new_selection)
         print(f"Wand tool selected {len(new_selection)} points with label {label_value}.")
         self.update_selection_visualization()
+
+    def update_active_selection(self, new_selection):
+        self.last_active_selection = self.active_selection
+        self.active_selection = new_selection
+        
+    def undo_update_active_selection(self):
+        temp = self.active_selection
+        self.active_selection = self.last_active_selection
+        self.last_active_selection = temp
+        self.update_selection_visualization()
+
 
     def deselect_selection(self):
         self.active_selection = None
@@ -1460,8 +1665,67 @@ class VTKPointCloudViewer(QMainWindow):
         else:
             self.update_point_cloud_actor_colors(self.all_colors)
         print("All points shown.")
+
+    def set_default_region_growing_setting(self):
+        self.region_growing_settings = dict(
+            epsilon = 0.03,
+            alpha = np.pi * 0.15,
+            min_points_in_region = 80,
+            min_success_ratio = 0.10,
+            max_dist_from_cent = 50.,
+            epsilon_multiplier = 3., # Value in Poux & Kobbelt paper = 3
+            epsilon_multiplier_average = 1.5, # average residual should be bellow value * epsilon, otherwise stop growing
+            first_refit = 4,
+            refit_multiplier = 2.,
+            oriented_normals = False,
+            verbose = True,
+            tracker_size = 50,
+            search_radius_approx = 0., # accuracy of radius search; 0. = exact sarch
+            perform_cca = True, # divides each region in connected components after segmentation
+        )
+        self.region_growing_chunk_layout = (1,1,1)
+    def change_region_growing_settings(self):
+        dlg = RegionGrowingSettingsDialog(self, self.region_growing_settings, self.region_growing_chunk_layout)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            new_settings, new_chunk_layout = dlg.get_settings()
+            self.region_growing_settings = new_settings
+            self.region_growing_chunk_layout = new_chunk_layout
+            print("Region growing settings updated.")
+    
     def region_growing(self):
-        raise NotImplementedError
+        print('called region growing')
+        if self.all_points is None:
+            QMessageBox.warning(self, "No point cloud loaded", "You need to load a point cloud first")
+            return
+        
+        # create segmentation object
+        base_name = "Segmentation"
+        if self.loaded_ply_name is not None:
+            base_name = self.loaded_ply_name.split('.')[0]
+        existing_names = {s.name for s in self.segmentations}
+        i = 1
+        while True:
+            new_name = f'{base_name}_{i:03d}'
+            if new_name not in existing_names:
+                break
+            i += 1
+
+        seg = IndexSegmentation(name = new_name, size=len(self.all_points))
+        self.segmentations.append(seg)
+        print(f"Created new segmentation: {seg.name}")
+
+        # region growing
+        if self.all_points is not None:
+            cla = self.region_growing_chunk_layout
+            pcd = rg.PointCloud(self.all_points.astype(np.float32), None)
+            rg.region_growing(pcd, seg.instance_idx,cla[0],cla[1],cla[2],**self.region_growing_settings)
+        
+        # save settings as segmentation metadata
+        seg.metadata = seg.metadata | dict(settings = 
+            dict(region_growing_settings=self.region_growing_settings, 
+                 region_growing_chunk_layout = self.region_growing_chunk_layout))
+        self.update_segmentation_browser()
+        
 
 if __name__ == "__main__":
     app = QApplication([])
