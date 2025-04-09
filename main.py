@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import (QApplication, QDialog, QDialogButtonBox, QFrame, QG
                              QVBoxLayout, QMainWindow, QMessageBox, QPushButton, QSpacerItem,
                              QSizePolicy, QWidget, QFileDialog, QTabWidget, QTreeWidget, QTreeWidgetItem,
                              QComboBox, QLabel, QLineEdit, QSplitter, QMenu, QColorDialog, QHeaderView,
-                             QSpinBox, QCheckBox, QFormLayout, QDoubleSpinBox)
+                             QSpinBox, QCheckBox, QFormLayout, QDoubleSpinBox, QTableWidget, QTableWidgetItem)
 from vtkmodules.qt.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
 from vtk.util import numpy_support as ns
 import vtk
@@ -147,6 +147,15 @@ class RegionGrowingSettingsDialog(QDialog):
         self.perform_cca_checkbox.setChecked(self.current_settings.get("perform_cca", True))
         form_layout.addRow("Perform CCA:", self.perform_cca_checkbox)
         
+        self.cleanup_small_edges_checkbox = QCheckBox(self)
+        self.cleanup_small_edges_checkbox.setChecked(self.current_settings.get("cleanup_small_edges", True))
+        form_layout.addRow("Clean up small remaining edges:", self.cleanup_small_edges_checkbox)
+        
+        self.perform_cca_on_remaining_checkbox = QCheckBox(self)
+        self.perform_cca_on_remaining_checkbox.setChecked(self.current_settings.get("perform_cca_on_remaining", True))
+        form_layout.addRow("Perform CCA on remaining points:", self.perform_cca_on_remaining_checkbox)
+        
+        
         # Chunk layout: three integers
         chunk_layout = QHBoxLayout()
         self.chunk_x_spin = QSpinBox(self)
@@ -199,7 +208,11 @@ class RegionGrowingSettingsDialog(QDialog):
             "verbose": self.verbose_checkbox.isChecked(),
             "tracker_size": self.tracker_size_spin.value(),
             "search_radius_approx": self.search_radius_spin.value(),
-            "perform_cca": self.perform_cca_checkbox.isChecked()
+            "perform_cca": self.perform_cca_checkbox.isChecked(),
+            
+            "cleanup_small_edges": self.cleanup_small_edges_checkbox.isChecked(),
+            "perform_cca_on_remaining": self.perform_cca_on_remaining_checkbox.isChecked()
+
         }
         chunk_layout = (self.chunk_x_spin.value(), self.chunk_y_spin.value(), self.chunk_z_spin.value())
         return settings, chunk_layout
@@ -226,7 +239,10 @@ class RegionGrowingSettingsDialog(QDialog):
             self.perform_cca_checkbox.setChecked(settings.get("perform_cca", True))
             self.chunk_x_spin.setValue(chunk_layout[0])
             self.chunk_y_spin.setValue(chunk_layout[1])
-            self.chunk_z_spin.setValue(chunk_layout[2])
+            self.chunk_z_spin.setValue(chunk_layout[2])            
+            
+            self.cleanup_small_edges_checkbox.setChecked(settings.get("cleanup_small_edges"))
+            self.perform_cca_on_remaining_checkbox.setChecked(settings.get("perform_cca_on_remaining"))
     
     def save_json(self):
         file_path, _ = QFileDialog.getSaveFileName(self, "Save Region Growing Settings", "", "JSON Files (*.json)")
@@ -240,29 +256,41 @@ class RegionGrowingSettingsDialog(QDialog):
 # Hotkeys Settings Dialog
 # ---------------------------
 class HotkeysSettingsDialog(QDialog):
-    def __init__(self, parent, current_hotkeys):
+    def __init__(self, parent, current_settings):
         super().__init__(parent)
-        self.setWindowTitle("Hotkeys Settings")
-        self.current_hotkeys = current_hotkeys.copy()
+        self.setWindowTitle("Interaction Settings")
+        self.current_settings = current_settings.copy()  # Expecting keys: lasso, wand, picker_type
         layout = QVBoxLayout(self)
         
         layout.addWidget(QLabel("Lasso Tool Hotkey:"))
         self.lasso_edit = QLineEdit(self)
-        self.lasso_edit.setText(current_hotkeys.get("lasso", "t"))
+        self.lasso_edit.setText(current_settings.get("lasso", "t"))
         layout.addWidget(self.lasso_edit)
         
         layout.addWidget(QLabel("Wand Tool Hotkey:"))
         self.wand_edit = QLineEdit(self)
-        self.wand_edit.setText(current_hotkeys.get("wand", "Control+w"))
+        self.wand_edit.setText(current_settings.get("wand", "Control+w"))
         layout.addWidget(self.wand_edit)
+        
+        # New: Picker Type dropdown
+        layout.addWidget(QLabel("Picker Type:"))
+        self.picker_combo = QComboBox(self)
+        # Two choices: use vtkPointPicker or vtkHardwareSelector
+        self.picker_combo.addItems(["vtkPointPicker", "vtkHardwareSelector"])
+        self.picker_combo.setCurrentText(current_settings.get("picker_type", "vtkPointPicker"))
+        layout.addWidget(self.picker_combo)
         
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
     
-    def get_hotkeys(self):
-        return {"lasso": self.lasso_edit.text(), "wand": self.wand_edit.text()}
+    def get_settings(self):
+        return {
+            "lasso": self.lasso_edit.text(),
+            "wand": self.wand_edit.text(),
+            "picker_type": self.picker_combo.currentText()
+        }
 
 
 # ---------------------------
@@ -469,6 +497,106 @@ class SemanticClassEditorDialog(QDialog):
             return (0.0, 0.0, 0.0)
 
 
+class ScalarFieldMappingDialog(QDialog):
+    def __init__(self, parent, ply_fields):
+        super().__init__(parent)
+        self.setWindowTitle("Scalar Field Mapping")
+        self.ply_fields = ply_fields  # List of extra field names from the ply file.
+        
+        layout = QVBoxLayout(self)
+        self.table = QTableWidget(self)
+        self.table.setColumnCount(4)
+        self.table.setHorizontalHeaderLabels(["Ply Field", "Maps To", "Position", "Color Map"])
+        self.table.setRowCount(len(self.ply_fields))
+        
+        # Populate each row.
+        for i, field in enumerate(self.ply_fields):
+            # Column 0: Ply Field (read-only)
+            item = QTableWidgetItem(field)
+            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self.table.setItem(i, 0, item)
+            
+            # Column 1: Maps To (editable; default is the same as the ply field)
+            maps_to_item = QTableWidgetItem(field)
+            self.table.setItem(i, 1, maps_to_item)
+            
+            # Column 2: Position (spinbox, default 0, disabled for scalar mapping)
+            pos_widget = QSpinBox(self)
+            pos_widget.setMinimum(0)
+            pos_widget.setMaximum(10)
+            pos_widget.setValue(0)
+            pos_widget.setEnabled(False)
+            self.table.setCellWidget(i, 2, pos_widget)
+            
+            # Column 3: Color Map (drop‑down for scalar fields)
+            cmap_combo = QComboBox(self)
+            cmap_combo.addItems(["gray", "viridis", "plasma", "inferno", "magma", "cividis"])
+            cmap_combo.setEnabled(True)
+            self.table.setCellWidget(i, 3, cmap_combo)
+        
+        self.table.horizontalHeader().setStretchLastSection(True)
+        layout.addWidget(self.table)
+        
+        # OK/Cancel buttons
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        
+        # When the user edits the "Maps To" column, check if there are multiple rows for a given internal name.
+        self.table.itemChanged.connect(self.on_item_changed)
+    
+    def on_item_changed(self, item):
+        # Only care about changes in the "Maps To" column (index 1)
+        if item.column() != 1:
+            return
+        
+        # Build a dictionary mapping each internal name to the list of row indices that use it.
+        mapping_dict = {}
+        for row in range(self.table.rowCount()):
+            cell = self.table.item(row, 1)
+            if cell is not None:
+                key = cell.text().strip()
+                mapping_dict.setdefault(key, []).append(row)
+        
+        # For each mapping key, if more than one row maps to it then enable the Position spinboxes
+        # and disable the colormap (vector fields don’t use a colormap).
+        for key, rows in mapping_dict.items():
+            if len(rows) > 1:
+                for r in rows:
+                    pos_widget = self.table.cellWidget(r, 2)
+                    if pos_widget is not None:
+                        pos_widget.setEnabled(True)
+                    cmap_widget = self.table.cellWidget(r, 3)
+                    if cmap_widget is not None:
+                        cmap_widget.setEnabled(False)
+            else:
+                # Otherwise, treat as scalar: disable the position widget (set to 0) and enable the colormap.
+                r = rows[0]
+                pos_widget = self.table.cellWidget(r, 2)
+                if pos_widget is not None:
+                    pos_widget.setEnabled(False)
+                    pos_widget.setValue(0)
+                cmap_widget = self.table.cellWidget(r, 3)
+                if cmap_widget is not None:
+                    cmap_widget.setEnabled(True)
+    
+    def get_mappings(self):
+        """
+        Returns a dictionary where each key is the internal field name and the value is a list
+        of tuples (ply_field, position, colormap). For scalar fields, the list has one tuple;
+        for vector fields, the list may have multiple tuples (ordered by the 'position' value).
+        """
+        mappings = {}
+        for row in range(self.table.rowCount()):
+            ply_field = self.table.item(row, 0).text().strip()
+            maps_to = self.table.item(row, 1).text().strip()
+            pos_widget = self.table.cellWidget(row, 2)
+            pos = pos_widget.value() if pos_widget is not None else 0
+            cmap_widget = self.table.cellWidget(row, 3)
+            cmap = cmap_widget.currentText() if cmap_widget is not None and cmap_widget.isEnabled() else None
+            mappings.setdefault(maps_to, []).append((ply_field, pos, cmap))
+        return mappings
 
 
 # ---------------------------
@@ -498,9 +626,11 @@ class VTKPointCloudViewer(QMainWindow):
         # Initialize hotkeys with defaults.
         self.hotkeys = {
             "lasso": "t",
-            "wand": "Control+w"
+            "wand": "Control+w",
+            "picker_type": "vtkPointPicker"  # default option
         }
 
+        self.picker_type = self.hotkeys.get("picker_type", "vtkPointPicker")        
         # default region growing settings
         self.set_default_region_growing_setting()
 
@@ -737,6 +867,8 @@ class VTKPointCloudViewer(QMainWindow):
         if file_path:
             print(f"Loading: {file_path}")
             ply_data = PlyData.read(file_path)
+            for f in ['x','y','z']:
+                ply_data['vertex'][f] -= ply_data['vertex'][f].mean()
             self.display_ply(ply_data)
             self.load_fields_from_ply(ply_data)
             self.loaded_ply_name = os.path.basename(file_path)
@@ -804,36 +936,39 @@ class VTKPointCloudViewer(QMainWindow):
 
     def load_fields_from_ply(self, ply_data):
         vertex_names = ply_data['vertex'].data.dtype.names
+        # If RGB values are present, automatically map them.
         if all(c in vertex_names for c in ('red', 'green', 'blue')):
             rgb = np.vstack((ply_data['vertex']['red'],
-                             ply_data['vertex']['green'],
-                             ply_data['vertex']['blue'])).T.astype(np.float32) / 255.0
+                            ply_data['vertex']['green'],
+                            ply_data['vertex']['blue'])).T.astype(np.float32) / 255.0
             self.fields["RGB"] = (rgb, "vector")
-        for name in vertex_names:
-            if name not in ['x','y','z','red','green','blue']:
-                try:
-                    values = ply_data['vertex'][name].astype(np.float32)
-                    dialog = ScalarFieldMappingDialog(self, name, values)
-                    if dialog.exec():
-                        cmap = dialog.selected_colormap()
+        
+        # Collect extra fields (excluding geometry and color fields)
+        extra_fields = [name for name in vertex_names if name not in ['x','y','z','red','green','blue']]
+        if extra_fields:
+            # Open the ScalarFieldMappingDialog with the list of extra fields.
+            mapping_dialog = ScalarFieldMappingDialog(self, extra_fields)
+            if mapping_dialog.exec() == QDialog.DialogCode.Accepted:
+                mappings = mapping_dialog.get_mappings()
+                for internal_name, mapping_list in mappings.items():
+                    if len(mapping_list) == 1:
+                        # Single field mapping → treat as scalar.
+                        ply_field, pos, cmap = mapping_list[0]
+                        values = ply_data['vertex'][ply_field].astype(np.float32)
+                        self.fields[internal_name] = (values, "scalar", cmap)
                     else:
-                        cmap = "gray"
-                    self.fields[name] = (values, "scalar", cmap)
-                except Exception as e:
-                    print(f"Skipping field {name}: {e}")
+                        # Multiple fields map to the same internal name → treat as vector.
+                        # Sort by the 'position' value.
+                        mapping_list.sort(key=lambda tup: tup[1])
+                        vector_components = []
+                        for ply_field, pos, cmap in mapping_list:
+                            values = ply_data['vertex'][ply_field].astype(np.float32)
+                            vector_components.append(values)
+                        vector_array = np.stack(vector_components, axis=-1)
+                        self.fields[internal_name] = (vector_array, "vector")
+        
         self.update_fields_browser()
 
-    def update_fields_browser(self):
-        self.fields_tree.clear()
-        for key, field in self.fields.items():
-            if field[1] == "vector":
-                item = QTreeWidgetItem([key, "Vector"])
-            else:
-                cmap = field[2] if len(field) > 2 else "gray"
-                item = QTreeWidgetItem([key, f"Scalar ({cmap})"])
-            self.fields_tree.addTopLevelItem(item)
-        self.fields_tree.expandAll()
-        self.fields_tree.setColumnWidth(0, int(self.fields_tree.width() * 0.6))
 
     # ---------------------------
     # Segmentation and Fields Browser Methods
@@ -904,6 +1039,24 @@ class VTKPointCloudViewer(QMainWindow):
             self.seg_tree.addTopLevelItem(parent)
         self.seg_tree.expandAll()
         self.seg_tree.setColumnWidth(0, int(self.seg_tree.width() * 0.6))
+        
+    def update_fields_browser(self):
+        self.fields_tree.clear()
+        for field_name, field_info in self.fields.items():
+            field_type = field_info[1]
+            if field_type == "vector":
+                # For vector fields, display simply "Vector".
+                type_str = "Vector"
+            else:
+                # For scalar fields, display "Scalar" along with the colormap.
+                cmap = field_info[2] if len(field_info) > 2 else "gray"
+                type_str = f"Scalar ({cmap})"
+            item = QTreeWidgetItem([field_name, type_str])
+            self.fields_tree.addTopLevelItem(item)
+        self.fields_tree.expandAll()
+        # Optionally, adjust column widths (first column takes about 60% of available width)
+        self.fields_tree.setColumnWidth(0, int(self.fields_tree.width() * 0.6))
+        
 
     def on_seg_tree_selection_changed(self):
         items = self.seg_tree.selectedItems()
@@ -1095,17 +1248,65 @@ class VTKPointCloudViewer(QMainWindow):
                 color = np.array(sem_class.color) * 255
                 new_colors[mask] = color.astype(np.uint8)
         elif mode == "instance":
-            unique_ids = np.unique(self.active_segmentation.instance_idx)
-            color_map = {}
-            for id_val in unique_ids:
-                if id_val == -1:
-                    color_map[id_val] = np.array([204, 204, 204])
+            # Get the instance ids for all points.
+            instance_ids = self.active_segmentation.instance_idx
+            # Get unique instance ids and an inverse index array.
+            unique_ids, inverse = np.unique(instance_ids, return_inverse=True)
+            # Create a lookup table for colors corresponding to each unique instance id.
+            lut = np.empty((unique_ids.size, 3), dtype=np.uint8)
+            for i, uid in enumerate(unique_ids):
+                if uid == -1:
+                    lut[i] = np.array([204, 204, 204])  # Special color for id -1.
                 else:
-                    color_map[id_val] = (np.array(generate_vibrant_color()) * 255).astype(np.uint8)
-            for id_val, color in color_map.items():
-                mask = (self.active_segmentation.instance_idx == id_val)
-                new_colors[mask] = color
-        self.update_point_cloud_actor_colors(new_colors)
+                    # Generate a random vibrant color.
+                    h = random.random()
+                    s = 0.9
+                    v = 0.9
+                    r, g, b = colorsys.hsv_to_rgb(h, s, v)
+                    lut[i] = (np.array([r, g, b]) * 255).astype(np.uint8)
+            # Use the inverse mapping to build the color array for all points.
+            new_colors = lut[inverse]
+            # unique_ids = np.unique(self.active_segmentation.instance_idx)
+            # color_map = {}
+            # # Special case for id -1 remains unchanged.
+            # if -1 in unique_ids:
+            #     color_map[-1] = np.array([204, 204, 204])
+            # # Get all instance ids that are not -1.
+            # inst_ids = unique_ids[unique_ids != -1]
+            # if inst_ids.size:
+            #     # Generate random hues for all instances at once.
+            #     hues = np.random.rand(inst_ids.size)
+            #     s = 0.9
+            #     v = 0.9
+            #     hsv = np.column_stack((hues, np.full(inst_ids.size, s), np.full(inst_ids.size, v)))
+            #     rgb = mcolors.hsv_to_rgb(hsv)  # Returns an (N,3) array with values in [0,1].
+            #     rgb = (rgb * 255).astype(np.uint8)
+            #     for idx, id_val in enumerate(inst_ids):
+            #         color_map[id_val] = rgb[idx]
+            # for id_val, color in color_map.items():
+            #     mask = (self.active_segmentation.instance_idx == id_val)
+            #     new_colors[mask] = color
+        self.update_point_cloud_actor_colors(new_colors)        
+        # if self.active_segmentation is None or self.all_points is None:
+        #     return
+        # new_colors = np.zeros((len(self.all_points), 3), dtype=np.uint8)
+        # if mode == "semantic":
+        #     for sem_class in self.active_segmentation.semantic_schema.semantic_classes:
+        #         mask = (self.active_segmentation.semantic_idx == sem_class.id)
+        #         color = np.array(sem_class.color) * 255
+        #         new_colors[mask] = color.astype(np.uint8)
+        # elif mode == "instance":
+        #     unique_ids = np.unique(self.active_segmentation.instance_idx)
+        #     color_map = {}
+        #     for id_val in unique_ids:
+        #         if id_val == -1:
+        #             color_map[id_val] = np.array([204, 204, 204])
+        #         else:
+        #             color_map[id_val] = (np.array(generate_vibrant_color()) * 255).astype(np.uint8)
+        #     for id_val, color in color_map.items():
+        #         mask = (self.active_segmentation.instance_idx == id_val)
+        #         new_colors[mask] = color
+        # self.update_point_cloud_actor_colors(new_colors)
 
     def apply_field_coloring(self):
         if self.active_field is None or self.all_points is None:
@@ -1126,18 +1327,44 @@ class VTKPointCloudViewer(QMainWindow):
     def update_point_cloud_actor_colors(self, new_colors):
         if self.poly_data is None:
             return
-        # Incorporate visibility: use alpha=255 for visible points, 0 for hidden.
-        if self.visibility_mask is None or len(self.visibility_mask) != new_colors.shape[0]:
-            self.visibility_mask = np.ones(new_colors.shape[0], dtype=bool)
-        alphas = np.where(self.visibility_mask, 255, 0).astype(np.uint8)
-        new_colors_rgba = np.concatenate([new_colors, alphas[:, None]], axis=1)
-        vtk_colors = ns.numpy_to_vtk(new_colors_rgba.astype(np.uint8), deep=True)
+        # Compute the indices of visible points.
+        visible_indices = np.nonzero(self.visibility_mask)[0]
+        # Filter the original points and colors using the visible indices.
+        filtered_points = self.all_points[visible_indices]
+        filtered_colors = new_colors[visible_indices]
+        # For visible points, force full opacity (alpha = 255)
+        alphas = np.full(filtered_colors.shape[0], 255, dtype=np.uint8)
+        filtered_colors_rgba = np.concatenate([filtered_colors, alphas[:, None]], axis=1)
+        
+        # Rebuild the polydata with only the visible points.
+        vtk_points = vtk.vtkPoints()
+        vtk_points.SetData(ns.numpy_to_vtk(filtered_points, deep=True))
+        self.poly_data.SetPoints(vtk_points)
+        
+        # Create a new vtkArray for RGBA colors and assign it.
+        vtk_colors = ns.numpy_to_vtk(filtered_colors_rgba.astype(np.uint8), deep=True)
         vtk_colors.SetNumberOfComponents(4)
         self.poly_data.GetPointData().SetScalars(vtk_colors)
+        
         self.poly_data.Modified()
         self.vtkWidget.GetRenderWindow().Render()
+        
         if new_colors.size:
-            self.selection_base_color = tuple(np.mean(new_colors, axis=0)/255.0)
+            self.selection_base_color = tuple(np.mean(new_colors, axis=0) / 255.0)
+        # if self.poly_data is None:
+        #     return
+        # # Incorporate visibility: use alpha=255 for visible points, 0 for hidden.
+        # if self.visibility_mask is None or len(self.visibility_mask) != new_colors.shape[0]:
+        #     self.visibility_mask = np.ones(new_colors.shape[0], dtype=bool)
+        # alphas = np.where(self.visibility_mask, 255, 0).astype(np.uint8)
+        # new_colors_rgba = np.concatenate([new_colors, alphas[:, None]], axis=1)
+        # vtk_colors = ns.numpy_to_vtk(new_colors_rgba.astype(np.uint8), deep=True)
+        # vtk_colors.SetNumberOfComponents(4)
+        # self.poly_data.GetPointData().SetScalars(vtk_colors)
+        # self.poly_data.Modified()
+        # self.vtkWidget.GetRenderWindow().Render()
+        # if new_colors.size:
+        #     self.selection_base_color = tuple(np.mean(new_colors, axis=0)/255.0)
 
     # ---------------------------
     # New Tool Functions
@@ -1167,19 +1394,49 @@ class VTKPointCloudViewer(QMainWindow):
             self.deselect_selection()
         except Exception as e:
             QMessageBox.warning(self, "Instance Segmentation", str(e))
+            
+    def hardware_pick(self, x, y, tolerance=5):
+        """
+        Uses vtkHardwareSelector to pick a point near the screen (x,y).
+        The tolerance is in pixels.
+        Returns the picked point id or -1 if none found.
+        """
+        selector = vtk.vtkHardwareSelector()
+        selector.SetRenderer(self.renderer)
+        selector.SetFieldAssociation(vtk.vtkDataObject.FIELD_ASSOCIATION_POINTS)
+        # Define a small rectangle around (x,y)
+        selector.SetArea(x - tolerance, y - tolerance, x + tolerance, y + tolerance)
+        
+        selection = selector.Select()
+        if not selection or selection.GetNumberOfNodes() == 0:
+            return -1
+        node = selection.GetNode(0)
+        id_list = node.GetSelectionList()
+        if id_list.GetNumberOfTuples() > 0:
+            return id_list.GetValue(0)
+        return -1          
+      
     def wand_pick(self):
         x, y = self.interactor.GetEventPosition()
-        picker = vtk.vtkPointPicker()
-        picker.Pick(x, y, 0, self.renderer)
-        pt_id = picker.GetPointId()
-        if pt_id < 0:
-            print("No point picked with wand.")
-            return
+        if self.picker_type == "vtkHardwareSelector":
+            point_id = self.hardware_pick(x, y, tolerance=5)
+            if point_id < 0:
+                print("No point picked using hardware selector.")
+                return
+        else:
+            picker = vtk.vtkPointPicker()
+            picker.SetTolerance(0.005)
+            picker.Pick(x, y, 0, self.renderer)
+            point_id = picker.GetPointId()
+            if point_id < 0:
+                print("No point picked using point picker.")
+                return
+
         if self.active_segmentation_mode == "semantic":
-            label_value = self.active_segmentation.semantic_idx[pt_id]
+            label_value = self.active_segmentation.semantic_idx[point_id]
             picked_indices = np.where(self.active_segmentation.semantic_idx == label_value)[0]
         elif self.active_segmentation_mode == "instance":
-            label_value = self.active_segmentation.instance_idx[pt_id]
+            label_value = self.active_segmentation.instance_idx[point_id]
             picked_indices = np.where(self.active_segmentation.instance_idx == label_value)[0]
         else:
             print("Wand tool not active: segmentation mode not set.")
@@ -1204,7 +1461,7 @@ class VTKPointCloudViewer(QMainWindow):
                 new_selection = np.array([], dtype=int)
             else:
                 new_selection = np.intersect1d(self.active_selection, picked_indices)
-        # self.active_selection = new_selection
+        
         self.update_active_selection(new_selection)
         print(f"Wand tool selected {len(new_selection)} points with label {label_value}.")
         self.update_selection_visualization()
@@ -1279,14 +1536,15 @@ class VTKPointCloudViewer(QMainWindow):
     def settings(self):
         dlg = HotkeysSettingsDialog(self, self.hotkeys)
         if dlg.exec() == QDialog.DialogCode.Accepted:
-            new_hotkeys = dlg.get_hotkeys()
-            self.hotkeys = new_hotkeys
-            # Save to settings.ini
+            new_settings = dlg.get_settings()
+            self.hotkeys.update(new_settings)
+            self.picker_type = new_settings.get("picker_type", "vtkPointPicker")
+            # Save hotkeys (and picker type) to settings.ini
             config = configparser.ConfigParser()
             config["Hotkeys"] = self.hotkeys
             with open("settings.ini", "w") as f:
                 config.write(f)
-            QMessageBox.information(self, "Settings", "Hotkeys saved.")
+            QMessageBox.information(self, "Settings", "Settings saved.")
 
     def increase_point_size(self):
         if self.point_cloud_actor:
@@ -1650,6 +1908,7 @@ class VTKPointCloudViewer(QMainWindow):
             QMessageBox.warning(self, "Hide Points", "No points selected to hide.")
             return
         self.set_points_visibility(self.active_selection, False)
+        self.point_cloud_actor.GetProperty().SetOpacity(1.0)
         print(f"Hid {len(self.active_selection)} points.")
 
     def show_all_points(self):
