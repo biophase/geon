@@ -20,7 +20,7 @@ from vtkmodules.qt.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
 from vtk.util import numpy_support as ns
 import vtk
 
-from segmentation.interactive_gc import GraphCutDPGMM, register_pick, create_cp_graph
+from segmentation.interactive_gc import GraphCutDPGMM, create_cp_graph
 
 
 import segmentation.reggrow.build.lib.reggrow as rg
@@ -1185,7 +1185,6 @@ class VTKPointCloudViewer(QMainWindow):
                     self.update_segmentation_browser()
 
 
-
             elif parent.text(0) in ["instance", "stuff"]:
                 show_action = menu.addAction("Show points")
                 hide_action = menu.addAction("Hide points")
@@ -1205,7 +1204,47 @@ class VTKPointCloudViewer(QMainWindow):
                         else:
                             indices = np.where(self.active_segmentation.instance_idx != -1)[0]
                         self.set_points_visibility(indices, False)
+            if item.text(0) == "instance":
+                    menu = QMenu()
+                    show_action   = menu.addAction("Show points")
+                    hide_action   = menu.addAction("Hide points")
+                    export_action = menu.addAction("Export instance id to scalar field")
+                    action = menu.exec(self.seg_tree.viewport().mapToGlobal(pos))
 
+                    if action == show_action:
+                        indices = np.where(self.active_segmentation.instance_idx != -1)[0]
+                        self.set_points_visibility(indices, True)
+
+                    elif action == hide_action:
+                        indices = np.where(self.active_segmentation.instance_idx != -1)[0]
+                        self.set_points_visibility(indices, False)
+
+                    elif action == export_action:
+                        # call a helper to do the export
+                        self.export_instance_to_scalar_field(self.active_segmentation)
+
+    def export_instance_to_scalar_field(self, seg: IndexSegmentation):
+        """
+        Take seg.instance_idx (an array of ints, length N)
+        and add it as a new scalar field so you can color by it.
+        """
+        # build a unique field name
+        field_name = f"{seg.name}_instance_id"
+        # convert to float so matplotlib colormaps will be happy
+        assert seg.instance_idx is not None
+        data = seg.instance_idx.astype(np.float32)
+
+        # insert into your fields dictionary
+        # assume default gray color map
+        self.fields[field_name] = (data, "scalar", "gray")
+
+        # refresh the Fields browser so it shows up immediately
+        self.update_fields_browser()
+        QMessageBox.information(self,
+            "Exported",
+            f"Instance IDs exported as scalar field “{field_name}”.\n"
+            "Select it under the Fields tab to color by instance."
+        )
     def add_new_semantic_class(self, seg):
         dialog = SemanticClassEditorDialog(self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
@@ -1915,7 +1954,7 @@ class VTKPointCloudViewer(QMainWindow):
             return
         scalar_fields = {name:info[0]
                          for name, info in self.fields.items()
-                         if info[1] =='scalar'}
+                         }
         graph = create_cp_graph(self.all_points.astype(np.float32), scalar_fields)
         self.graphs.append(graph)
         self.update_graph_browser()
@@ -1971,6 +2010,8 @@ class VTKPointCloudViewer(QMainWindow):
         panel_layout = QHBoxLayout(self.intseg_panel)
         self.intseg_display_chk = QCheckBox("Display mask", self.intseg_panel)
         self.intseg_display_chk.stateChanged.connect(self.toggle_intseg_display)
+        # self.intseg_display_chk.stateChanged.connect(lambda checked: print(">>> checkbox was clicked, now:", checked))
+
         done_btn = QPushButton("Done", self.intseg_panel)
         done_btn.clicked.connect(self.finish_interactive_segmentation)
         panel_layout.addWidget(self.intseg_display_chk)
@@ -1984,6 +2025,7 @@ class VTKPointCloudViewer(QMainWindow):
         self.intseg_click_observer = self.interactor.AddObserver("LeftButtonPressEvent", self.handle_intseg_pick)
 
     def handle_intseg_pick(self, obj, event):
+        assert self.intseg_gc is not None
         x, y = self.interactor.GetEventPosition()
         ctrl = self.interactor.GetControlKey()
         # pick point id
@@ -1998,21 +2040,29 @@ class VTKPointCloudViewer(QMainWindow):
             return
         
         # update mask
-        new_mask = register_pick(pid, positive = not ctrl)
+        print(f"DEBUG {pid=}")
+        print(f'DEBUG {self.intseg_gc.graph.super.max()=}')
+        new_mask = self.intseg_gc.register_pick(pid, positive = not ctrl)
         self.intseg_mask = new_mask
         if self.intseg_display_on:
             # mask colro schema
             self.intseg_mask_colors[~self.intseg_mask] = [1., 0., 0.]
             self.intseg_mask_colors[self.intseg_mask] = [0., 1., 0.]
             colors = (self.intseg_mask_colors *255). astype(np.uint8)
+            print(f"DEBUG updating colors")
             self.update_point_cloud_actor_colors(colors)
     
     def toggle_intseg_display(self, state):
-        self.intseg_display_on = (state == Qt.CheckState.Checked)
+        # state = bool(state)
+        self.intseg_display_on = bool(state)
+        print(f'DEBUG color toggle triggered with state {state}')
+        print(f'DEBUG {self.intseg_display_on=}')
+        
         if self.intseg_display_on:
             self.intseg_mask_colors[~self.intseg_mask] = [1., 0., 0.]
             self.intseg_mask_colors[self.intseg_mask] = [0., 1., 0.]
             colors = (self.intseg_mask_colors *255). astype(np.uint8)
+            print(f"DEBUG updating colors")
             self.update_point_cloud_actor_colors(colors)
         else:
             # revert colors
@@ -2021,6 +2071,7 @@ class VTKPointCloudViewer(QMainWindow):
             elif self.active_field:
                 self.apply_field_coloring()
             else:
+                
                 self.update_point_cloud_actor_colors(self.all_colors)
 
     def finish_interactive_segmentation(self):
