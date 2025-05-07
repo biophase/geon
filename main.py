@@ -20,6 +20,9 @@ from vtkmodules.qt.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
 from vtk.util import numpy_support as ns
 import vtk
 
+from segmentation.interactive_gc import GraphCutDPGMM, register_pick, create_cp_graph
+
+
 import segmentation.reggrow.build.lib.reggrow as rg
 
 # Import segmentation definitions
@@ -617,6 +620,8 @@ class VTKPointCloudViewer(QMainWindow):
         self.active_segmentation = None
         self.active_field = None
         self.active_tool = None
+        self.graphs = []
+        self.active_graph = None
         self.active_segmentation_mode = None  # "semantic" or "instance"
         self.visibility_mask = None  # Binary mask for point visibility
         self.loaded_ply_name = None
@@ -662,6 +667,7 @@ class VTKPointCloudViewer(QMainWindow):
         self.left_sidebar = QTabWidget()
         self.left_sidebar.setTabPosition(QTabWidget.TabPosition.West)
         self.left_sidebar.setMinimumWidth(200)
+        # segmentation tab
         seg_tab = QWidget()
         seg_layout = QVBoxLayout(seg_tab)
         self.btn_create_seg = QPushButton("Create segmentation")
@@ -686,6 +692,7 @@ class VTKPointCloudViewer(QMainWindow):
         self.seg_tree.header().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         self.seg_tree.header().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         self.left_sidebar.addTab(seg_tab, QIcon("resources/segmentation.png"), "Segmentation")
+        # fields tab
         fields_tab = QWidget()
         fields_layout = QVBoxLayout(fields_tab)
         self.fields_tree = QTreeWidget()
@@ -696,6 +703,17 @@ class VTKPointCloudViewer(QMainWindow):
         self.fields_tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
         self.fields_tree.header().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         self.left_sidebar.addTab(fields_tab, QIcon("resources/fields.png"), "Fields")
+        # graph tab
+        graphs_tab = QWidget()
+        graphs_layout = QVBoxLayout(graphs_tab)
+        self.graph_tree = QTreeWidget()
+        self.graph_tree.setColumnCount(1)
+        self.graph_tree.setHeaderLabels(['Graphs'])
+        # self.graph_tree.itemSelectionChanged.connect(self.on_graph_tree_selection_changed)
+        graphs_layout.addWidget(self.graph_tree, stretch=1)
+        self.left_sidebar.addTab(graphs_tab, QIcon("resources/graphs.png"),"Graphs")
+        
+
         splitter.addWidget(self.left_sidebar)
 
         # Central VTK Viewer
@@ -722,7 +740,10 @@ class VTKPointCloudViewer(QMainWindow):
             ("resources/hide_selected.png", "Hide selected points", self.hide_selected_points),
             ("resources/show_all.png", "Show all points", self.show_all_points),
             ("resources/reggrow.png", "Start regioin growing", self.region_growing),
-            ("resources/reggrow_settings.png", "Region growing settings", self.change_region_growing_settings)
+            ("resources/reggrow_settings.png", "Region growing settings", self.change_region_growing_settings),
+            ("resources/create_graph.png", "Create a graph", self.create_graph),
+            ("resources/interactive_segmentation.png", "Interactive segmentation", self.interactive_segmentation)
+
         ]
         row = 0
         col = 0
@@ -1885,9 +1906,143 @@ class VTKPointCloudViewer(QMainWindow):
         )
         inside = np.count_nonzero(cond, axis=1) % 2 == 1
         return inside
+    # ---------------------------
+    # Graph tools
+    # ---------------------------
+    def create_graph(self):
+        if self.all_points is None:
+            QMessageBox.warning(self, "Create Graph", "No point cloud loaded!")
+            return
+        scalar_fields = {name:info[0]
+                         for name, info in self.fields.items()
+                         if info[1] =='scalar'}
+        graph = create_cp_graph(self.all_points.astype(np.float32), scalar_fields)
+        self.graphs.append(graph)
+        self.update_graph_browser()
+    def update_graph_browser(self):
+        self.graph_tree.clear()
+        for i, graph in enumerate(self.graphs):
+            item = QTreeWidgetItem([f'Graph_{i}'])
+            item.setData(0, Qt.ItemDataRole.UserRole, graph)
+            self.graph_tree.addTopLevelItem(item)
+
+    def on_graph_tree_selection_changed(self):
+        items = self.graph_tree.selectedItems()
+        if items:
+            self.active_graph = items[0].data(0, Qt.ItemDataRole.UserRole)
 
     # ---------------------------
-    # New Hide/Show Points Methods
+    # Interactive segmentation
+    # ---------------------------    
+    def interactive_segmentation(self):
+        if self.all_points is None:
+            QMessageBox.warning(self, "Interactive Segmentation", "No point cloud loaded!")
+            return
+        if not self.graphs:
+            QMessageBox.warning(self, "Interactive Segmentation", "No graph available. Create graph first.")
+            return
+
+        # choose graph
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Select Graph for Interactive Segmentation")
+        layout = QVBoxLayout(dlg)
+        combo = QComboBox(dlg)
+        for graph in self.graphs:
+            combo.addItem(str(graph), graph)
+        layout.addWidget(combo)
+        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        btns.accepted.connect(dlg.accept)
+        btns.rejected.connect(dlg.reject)
+        layout.addWidget(btns)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        graph = combo.currentData()
+
+        # init graph-cut and mask
+        self.intseg_gc = GraphCutDPGMM(graph)
+        N = len(self.all_points)
+        self.intseg_mask = np.zeros(N, dtype=bool)
+        self.intseg_mask_colors = np.zeros((N,3), dtype=float)
+        self.intseg_display_on = False
+
+        # flaoting panel
+        self.intseg_panel = QDialog(self)
+        self.intseg_panel.setWindowFlags(self.intseg_panel.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
+        panel_layout = QHBoxLayout(self.intseg_panel)
+        self.intseg_display_chk = QCheckBox("Display mask", self.intseg_panel)
+        self.intseg_display_chk.stateChanged.connect(self.toggle_intseg_display)
+        done_btn = QPushButton("Done", self.intseg_panel)
+        done_btn.clicked.connect(self.finish_interactive_segmentation)
+        panel_layout.addWidget(self.intseg_display_chk)
+        panel_layout.addWidget(done_btn)
+        self.intseg_panel.setLayout(panel_layout)
+        pos = self.vtkWidget.mapToGlobal(self.vtkWidget.rect().topRight())
+        self.intseg_panel.move(pos.x()- self.intseg_panel.width(), pos.y())
+        self.intseg_panel.show()
+        # activate tool and register click handler
+        self.activate_tool("interactive_segmentation", "resources/interactive_segmentation.png")
+        self.intseg_click_observer = self.interactor.AddObserver("LeftButtonPressEvent", self.handle_intseg_pick)
+
+    def handle_intseg_pick(self, obj, event):
+        x, y = self.interactor.GetEventPosition()
+        ctrl = self.interactor.GetControlKey()
+        # pick point id
+        if self.picker_type == 'vtkHardwareSelector':
+            pid = self.hardware_pick(x,y, tolerance=5) # TODO: tolerance shouldn't be hard-coded
+        else:
+            picker = vtk.vtkPointPicker()
+            picker.SetTolerance(0.005)
+            picker.Pick(x,y,0,self.renderer)
+            pid = picker.GetPointId()
+        if pid < 0:
+            return
+        
+        # update mask
+        new_mask = register_pick(pid, positive = not ctrl)
+        self.intseg_mask = new_mask
+        if self.intseg_display_on:
+            # mask colro schema
+            self.intseg_mask_colors[~self.intseg_mask] = [1., 0., 0.]
+            self.intseg_mask_colors[self.intseg_mask] = [0., 1., 0.]
+            colors = (self.intseg_mask_colors *255). astype(np.uint8)
+            self.update_point_cloud_actor_colors(colors)
+    
+    def toggle_intseg_display(self, state):
+        self.intseg_display_on = (state == Qt.CheckState.Checked)
+        if self.intseg_display_on:
+            self.intseg_mask_colors[~self.intseg_mask] = [1., 0., 0.]
+            self.intseg_mask_colors[self.intseg_mask] = [0., 1., 0.]
+            colors = (self.intseg_mask_colors *255). astype(np.uint8)
+            self.update_point_cloud_actor_colors(colors)
+        else:
+            # revert colors
+            if self.active_segmentation_mode and self.active_segmentation:
+                self.apply_segmentation_coloring(mode = self.active_segmentation_mode)
+            elif self.active_field:
+                self.apply_field_coloring()
+            else:
+                self.update_point_cloud_actor_colors(self.all_colors)
+
+    def finish_interactive_segmentation(self):
+        self.active_selection = np.where(self.intseg_mask)[0]
+        self.update_selection_visualization()
+        # cleanup
+        if self.intseg_panel:
+            self.intseg_panel.close()
+            self.intseg_panel = None
+        if self.intseg_click_observer:
+            self.interactor.RemoveObserver(self.intseg_click_observer)
+            self.intseg_click_observer = None
+        self.intseg_gc = None
+        self.intseg_mask = None
+        self.intseg_mask_colors = None
+        self.deactivate_tool()
+        self.update_interactor()
+
+
+        
+    # ---------------------------
+    # Hide/Show Points Methods
     # ---------------------------
     def set_points_visibility(self, indices, show: bool):
         if self.all_points is None:
