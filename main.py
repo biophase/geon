@@ -9,7 +9,7 @@ import configparser
 import json
 
 from plyfile import PlyData
-from PyQt6.QtCore import Qt, QSize, QTimer
+from PyQt6.QtCore import Qt, QSize, QTimer, QEvent
 from PyQt6.QtGui import QIcon, QCursor, QPixmap
 from PyQt6.QtWidgets import (QApplication, QDialog, QDialogButtonBox, QFrame, QGridLayout, QHBoxLayout,
                              QVBoxLayout, QMainWindow, QMessageBox, QPushButton, QSpacerItem,
@@ -20,7 +20,7 @@ from vtkmodules.qt.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
 from vtk.util import numpy_support as ns
 import vtk
 
-from segmentation.interactive_gc import GraphCutDPGMM, create_cp_graph
+from segmentation.interactive_gc import InteractiveGraphCut, Graph
 
 
 import segmentation.reggrow.build.lib.reggrow as rg
@@ -709,9 +709,14 @@ class VTKPointCloudViewer(QMainWindow):
         self.graph_tree = QTreeWidget()
         self.graph_tree.setColumnCount(1)
         self.graph_tree.setHeaderLabels(['Graphs'])
-        # self.graph_tree.itemSelectionChanged.connect(self.on_graph_tree_selection_changed)
+        self.graph_tree.itemSelectionChanged.connect(self.on_graph_tree_selection_changed)
         graphs_layout.addWidget(self.graph_tree, stretch=1)
         self.left_sidebar.addTab(graphs_tab, QIcon("resources/graphs.png"),"Graphs")
+
+        # tab event filters
+        self.graph_tree.installEventFilter(self)
+        self.seg_tree.installEventFilter(self)
+        self.fields_tree.installEventFilter(self)
         
 
         splitter.addWidget(self.left_sidebar)
@@ -796,6 +801,15 @@ class VTKPointCloudViewer(QMainWindow):
 
         self.update_interactor()
         self.vtkWidget.GetRenderWindow().Render()
+    def eventFilter(self, obj, event):
+        # catch only KeyPress on our trees
+        if (event.type() == QEvent.Type.KeyPress and
+            event.key() == Qt.Key.Key_Escape and
+            isinstance(obj, QTreeWidget)):
+            obj.clearSelection()
+            return True     # eat the event
+        # otherwise default handling
+        return super().eventFilter(obj, event)
 
     # ---------------------------
     # Layout and Tool Activation Methods
@@ -1952,12 +1966,29 @@ class VTKPointCloudViewer(QMainWindow):
         if self.all_points is None:
             QMessageBox.warning(self, "Create Graph", "No point cloud loaded!")
             return
-        scalar_fields = {name:info[0]
-                         for name, info in self.fields.items()
-                         }
-        graph = create_cp_graph(self.all_points.astype(np.float32), scalar_fields)
+
+        # collect your scalar fields exactly as before
+        scalar_fields = {name: info[0] for name, info in self.fields.items()}
+        print(scalar_fields)
+
+        # build a [N×F] feature array by concatenating each field
+        feats_list = []
+        for name, arr in scalar_fields.items():
+            f = arr.astype(np.float32)
+            if f.ndim == 1:
+                f = f[:, None]
+            feats_list.append(f)
+        feats_point = np.concatenate(feats_list, axis=1)
+
+        # construct the hierarchical Graph in one go
+        print(f"DEBUG creating a graph with feats of shape {feats_point.shape}")
+        graph = Graph(self.all_points.astype(np.float32), feats_point)
+
         self.graphs.append(graph)
         self.update_graph_browser()
+
+
+
     def update_graph_browser(self):
         self.graph_tree.clear()
         for i, graph in enumerate(self.graphs):
@@ -1965,10 +1996,33 @@ class VTKPointCloudViewer(QMainWindow):
             item.setData(0, Qt.ItemDataRole.UserRole, graph)
             self.graph_tree.addTopLevelItem(item)
 
+    # def on_graph_tree_selection_changed(self):
+    #     items = self.graph_tree.selectedItems()
+    #     if items:
+    #         print(f'DEBUG graph selected{self.active_graph}')
+    #         self.active_graph = items[0].data(0, Qt.ItemDataRole.UserRole)
     def on_graph_tree_selection_changed(self):
         items = self.graph_tree.selectedItems()
-        if items:
-            self.active_graph = items[0].data(0, Qt.ItemDataRole.UserRole)
+        if not items or self.all_points is None:
+            return
+
+        # 1) pull out the graph and its super labels
+        self.active_graph = items[0].data(0, Qt.ItemDataRole.UserRole)
+        labels = self.active_graph.super_fine
+        if labels.shape[0] != len(self.all_points):
+            QMessageBox.warning(self, "Graph / Point Cloud Mismatch",
+                                "graph.super_fine length doesn’t match number of points.")
+            return
+
+        # 2) pack them into a temporary segmentation object
+        from annotation import IndexSegmentation
+        temp = IndexSegmentation(name="GraphSuper", size=len(self.all_points))
+        temp.instance_idx[:] = labels
+
+        # 3) use your existing machinery
+        self.active_segmentation = temp
+        self.active_segmentation_mode = "instance"
+        self.apply_segmentation_coloring(mode="instance")
 
     # ---------------------------
     # Interactive segmentation
@@ -1998,7 +2052,7 @@ class VTKPointCloudViewer(QMainWindow):
         graph = combo.currentData()
 
         # init graph-cut and mask
-        self.intseg_gc = GraphCutDPGMM(graph)
+        self.intseg_gc = InteractiveGraphCut(graph)
         N = len(self.all_points)
         self.intseg_mask = np.zeros(N, dtype=bool)
         self.intseg_mask_colors = np.zeros((N,3), dtype=float)
@@ -2041,7 +2095,7 @@ class VTKPointCloudViewer(QMainWindow):
         
         # update mask
         print(f"DEBUG {pid=}")
-        print(f'DEBUG {self.intseg_gc.graph.super.max()=}')
+        print(f'DEBUG {self.intseg_gc.graph.super_fine.max()=}')
         new_mask = self.intseg_gc.register_pick(pid, positive = not ctrl)
         self.intseg_mask = new_mask
         if self.intseg_display_on:
