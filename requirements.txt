@@ -3,3 +3,8 @@ pyqt6
 scipy
 pybind11
 pybind11-stubgen
+plyfile
+maxflow
+torch
+# compile reggrow
+# compile cut pursuit
