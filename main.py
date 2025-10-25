@@ -605,10 +605,10 @@ class ScalarFieldMappingDialog(QDialog):
 # ---------------------------
 # Main Viewer Class
 # ---------------------------
-class VTKPointCloudViewer(QMainWindow):
+class App(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("VTK PLY Point Cloud Viewer")
+        self.setWindowTitle("geon")
         self.resize(1200, 800)
 
         # Data holders
@@ -801,6 +801,7 @@ class VTKPointCloudViewer(QMainWindow):
 
         self.update_interactor()
         self.vtkWidget.GetRenderWindow().Render()
+
     def eventFilter(self, obj, event):
         # catch only KeyPress on our trees
         if (event.type() == QEvent.Type.KeyPress and
@@ -2250,6 +2251,6 @@ if __name__ == "__main__":
     app = QApplication([])
     app.setStyle("Fusion")
     set_dark_palette(app)
-    window = VTKPointCloudViewer()
+    window = App()
     window.show()
     app.exec()
