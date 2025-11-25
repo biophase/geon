@@ -17,7 +17,7 @@ from PyQt6.QtWidgets import (QApplication, QDialog, QDialogButtonBox, QFrame, QG
                              QComboBox, QLabel, QLineEdit, QSplitter, QMenu, QColorDialog, QHeaderView,
                              QSpinBox, QCheckBox, QFormLayout, QDoubleSpinBox, QTableWidget, QTableWidgetItem)
 from vtkmodules.qt.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
-from vtk.util import numpy_support as ns
+from vtk.util import numpy_support as ns # type: ignore
 import vtk
 
 from segmentation.interactive_gc import InteractiveGraphCut, Graph
@@ -32,7 +32,7 @@ from annotation import IndexSegmentation, SemanticSchema, SemanticClass
 import matplotlib.cm as cm
 import matplotlib.colors as mcolors
 
-from theme import set_dark_palette
+from geon.ui.theme import set_dark_palette
 
 # ---------------------------
 # Helper functions
@@ -225,6 +225,7 @@ class RegionGrowingSettingsDialog(QDialog):
             with open(file_path, "r") as f:
                 data = json.load(f)
             settings = data.get("settings", {})
+            # TODO: don't duplicate settings each time. have a central dict with names and defaults and iterate over them
             chunk_layout = data.get("chunk_layout", [1, 1, 1])
             self.epsilon_spin.setValue(settings.get("epsilon", 0.03))
             self.alpha_spin.setValue(settings.get("alpha", math.pi * 0.15))
@@ -343,7 +344,7 @@ class InteractorStyle(vtk.vtkInteractorStyleTrackballCamera):
 
     def double_click_event(self):
         x, y = self.GetInteractor().GetEventPosition()
-        picker = vtk.vtkPointPicker()
+        picker = vtk.vtkPointPicker() #TODO: shouldn't this be whatever is the current picker? i.e. could be VtkHardwareSelector
         picker.SetTolerance(0.01)
         picker.Pick(x, y, 0, self.renderer)
         if picker.GetPointId() < 0:
@@ -360,9 +361,9 @@ class InteractorStyle(vtk.vtkInteractorStyleTrackballCamera):
 
         # undo
         if key == 'z' and ctrl:
-            self.viewer.undo_update_active_selection()
+            self.viewer.undo_update_active_selection() # TODO: extend list of possible undoable actions (e.g. segmentation with abstract "set_value" method)
         # Check user-defined hotkeys
-        lasso_hotkey = self.viewer.hotkeys.get("lasso", "t").lower()
+        lasso_hotkey = self.viewer.hotkeys.get("lasso", "t").lower() # TODO: remove hard-coded defaults -> defults should live in tool class
         wand_hotkey = self.viewer.hotkeys.get("wand", "control+w").lower()
         if key == lasso_hotkey and not ctrl:
             self.viewer.lasso_segmentation()
@@ -633,7 +634,7 @@ class App(QMainWindow):
             "lasso": "t",
             "wand": "Control+w",
             "picker_type": "vtkPointPicker"  # default option
-        }
+        } # TODO: no need to duplicate the defaults: let them be handled by a tool registry
 
         self.picker_type = self.hotkeys.get("picker_type", "vtkPointPicker")        
         # default region growing settings
@@ -728,6 +729,7 @@ class App(QMainWindow):
         # Right Toolbar: using QWidget (set minimum width for resizing)
         self.right_toolbar = QWidget()
         self.right_toolbar.setMinimumWidth(120)
+        self.right_toolbar.setFixedWidth(120)
         right_toolbar_layout = QGridLayout(self.right_toolbar)
         right_toolbar_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         # Updated tool list (added hotkeys settings and hide/show points tools)
@@ -913,13 +915,15 @@ class App(QMainWindow):
         vertex_data = ply_data['vertex']
         points = np.vstack((vertex_data['x'], vertex_data['y'], vertex_data['z'])).T
         initial_pivot = np.mean(points, axis=0).tolist()
-        self.all_points = points.copy()
+        # self.all_points = points.copy()
+        self.all_points = points
         has_color = all(c in vertex_data.data.dtype.names for c in ('red', 'green', 'blue'))
         if has_color:
             colors = np.vstack((vertex_data['red'], vertex_data['green'], vertex_data['blue'])).T
         else:
             colors = np.full((len(points), 3), [255, 255, 255])
-        self.all_colors = colors.copy()
+        # self.all_colors = colors.copy()
+        self.all_colors = colors
 
         # Initialize the visibility mask (all points visible)
         self.visibility_mask = np.ones(len(points), dtype=bool)
@@ -1400,6 +1404,9 @@ class App(QMainWindow):
         self.update_point_cloud_actor_colors(colors)
 
     def update_point_cloud_actor_colors(self, new_colors):
+        """
+        could be seen as a general point cloud visualization update (e.g. also updates masking)
+        """
         if self.poly_data is None:
             return
         # Compute the indices of visible points.
@@ -1413,11 +1420,11 @@ class App(QMainWindow):
         
         # Rebuild the polydata with only the visible points.
         vtk_points = vtk.vtkPoints()
-        vtk_points.SetData(ns.numpy_to_vtk(filtered_points, deep=True))
+        vtk_points.SetData(ns.numpy_to_vtk(filtered_points, deep=False))
         self.poly_data.SetPoints(vtk_points)
         
         # Create a new vtkArray for RGBA colors and assign it.
-        vtk_colors = ns.numpy_to_vtk(filtered_colors_rgba.astype(np.uint8), deep=True)
+        vtk_colors = ns.numpy_to_vtk(filtered_colors_rgba.astype(np.uint8), deep=False)
         vtk_colors.SetNumberOfComponents(4)
         self.poly_data.GetPointData().SetScalars(vtk_colors)
         
@@ -1433,7 +1440,7 @@ class App(QMainWindow):
         #     self.visibility_mask = np.ones(new_colors.shape[0], dtype=bool)
         # alphas = np.where(self.visibility_mask, 255, 0).astype(np.uint8)
         # new_colors_rgba = np.concatenate([new_colors, alphas[:, None]], axis=1)
-        # vtk_colors = ns.numpy_to_vtk(new_colors_rgba.astype(np.uint8), deep=True)
+        # vtk_colors = ns.numpy_to_vtk(new_colors_rgba.astype(np.uint8), deep=False)
         # vtk_colors.SetNumberOfComponents(4)
         # self.poly_data.GetPointData().SetScalars(vtk_colors)
         # self.poly_data.Modified()
@@ -1569,7 +1576,7 @@ class App(QMainWindow):
         if self.active_selection is not None and self.active_selection.size > 0:
             selected_points = self.all_points[self.active_selection]
             vtk_points = vtk.vtkPoints()
-            vtk_points.SetData(ns.numpy_to_vtk(selected_points, deep=True))
+            vtk_points.SetData(ns.numpy_to_vtk(selected_points, deep=False))
             poly_data = vtk.vtkPolyData()
             poly_data.SetPoints(vtk_points)
             vertex = vtk.vtkVertexGlyphFilter()
@@ -1724,7 +1731,7 @@ class App(QMainWindow):
         actor = vtk.vtkActor2D()
         actor.SetMapper(mapper)
         actor.GetProperty().SetColor(1, 0.5, 0)
-        actor.GetProperty().SetLineWidth(4)
+        actor.GetProperty().SetLineWidth(1)
         self.lasso_polygon_actor = actor
         self.renderer.AddActor(actor)
         self.vtkWidget.GetRenderWindow().Render()
@@ -1733,10 +1740,10 @@ class App(QMainWindow):
         candidate_points = self.all_points[self.lasso_candidate_indices]
         candidate_colors = self.all_colors[self.lasso_candidate_indices]
         vtk_points = vtk.vtkPoints()
-        vtk_points.SetData(ns.numpy_to_vtk(candidate_points, deep=True))
+        vtk_points.SetData(ns.numpy_to_vtk(candidate_points, deep=False))
         poly_data = vtk.vtkPolyData()
         poly_data.SetPoints(vtk_points)
-        colors_vtk = ns.numpy_to_vtk(candidate_colors.astype(np.uint8), deep=True)
+        colors_vtk = ns.numpy_to_vtk(candidate_colors.astype(np.uint8), deep=False)
         poly_data.GetPointData().SetScalars(colors_vtk)
         vertex = vtk.vtkVertexGlyphFilter()
         vertex.SetInputData(poly_data)

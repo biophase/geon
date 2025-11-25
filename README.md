@@ -33,6 +33,6 @@ cd ../../..
 
 build cut-pursuit extension (instructions from [gitlab repo](https://gitlab.com/1a7r0ch3/parallel-cut-pursuit))
 ```
-cd ./segmentation/cutpursuit/python
-python setup.py build_ext
+python segmentation/cutpursuit/python/setup.py build_ext
+python segmentation/cutpursuit/pcd-prox-split/grid-graph/python/setup.py build_ext
 ```

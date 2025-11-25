@@ -55,7 +55,7 @@ def scatter_eig(src: torch.Tensor, idx: torch.Tensor, G: Optional[int]=None, eps
 
 
 def build_csr(edge_idx: torch.Tensor, num_nodes: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    sys.path.append("./segmentation/cutpursuit/pcd-prox-split/grid-graph/python")
+    sys.path.append("./segmentation/cutpursuit/pcd-prox-split/grid-graph/python/bin")
     from grid_graph import edge_list_to_forward_star
     indptr, indices, reidx = edge_list_to_forward_star(
         num_nodes, edge_idx.T.contiguous().cpu().numpy()
