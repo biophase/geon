@@ -1,1 +1,0 @@
-# apply segmentation/field colors

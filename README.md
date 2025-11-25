@@ -2,13 +2,13 @@
 ![](./resources/logo/geometric-red.png)
 
 # Install guide
-
+## Libraries
 ```
-git clone --recursive
+git clone --recursive https://github.com/biophase/geon
+cd geon
 conda create -n geon python=3.10
 conda activate geon
 pip install -r requirements.txt
-conda install -c conda-forge libstdcxx-ng
 conda install pytorch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 pytorch-cuda=12.1 -c pytorch -c nvidia
 ```
 
@@ -30,6 +30,19 @@ pip install https://data.pyg.org/whl/torch-2.5.0%2Bcu121/torch_sparse-0.6.18%2Bp
 pip install https://data.pyg.org/whl/torch-2.5.0%2Bcu121/torch_spline_conv-1.2.2%2Bpt25cu121-cp310-cp310-win_amd64.whl
 ```
 
+## Build C++ extensions
+Install cmake, if missing:
+on Windows:
+```
+winget install Kitware.CMake
+```
+
+on Ubuntu
+```
+sudo apt update
+sudo apt install cmake
+conda install -c conda-forge libstdcxx-ng
+```
 
 build reggrow extension:
 ```
@@ -45,4 +58,14 @@ build cut-pursuit extension (instructions from [gitlab repo](https://gitlab.com/
 ```
 python segmentation/cutpursuit/python/setup.py build_ext
 python segmentation/cutpursuit/pcd-prox-split/grid-graph/python/setup.py build_ext
+```
+
+## Install Geon
+```
+pip install -e .
+```
+
+## Running Geon
+```
+python -m geon.main
 ```

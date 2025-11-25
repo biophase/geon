@@ -1,0 +1,3 @@
+GEON_VERSION = 1
+GEON_FORMAT_NAME = "geon"
+

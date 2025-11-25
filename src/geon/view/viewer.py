@@ -1,1 +1,0 @@
-# VTK renderer, camera, pivot, color updates

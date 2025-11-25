@@ -32,7 +32,7 @@ from annotation import IndexSegmentation, SemanticSchema, SemanticClass
 import matplotlib.cm as cm
 import matplotlib.colors as mcolors
 
-from geon.ui.theme import set_dark_palette
+from config.theme import set_dark_palette
 
 # ---------------------------
 # Helper functions

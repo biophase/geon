@@ -1,1 +1,0 @@
-# menus/sidebars/wiring

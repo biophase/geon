@@ -1,1 +1,0 @@
-# Lasso tool implementation (move out of App)
