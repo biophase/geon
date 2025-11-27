@@ -2,6 +2,7 @@ from typing import Any
 import h5py
 from geon.data.base import BaseData
 from geon.version import GEON_FORMAT_VERSION
+from geon.data.registry import data_registry
 
 class Document:
     def __init__(self):
@@ -16,3 +17,10 @@ class Document:
     def load_hdf5(self, path:str):
         # TODO: add rest of load logic
         raise NotImplementedError
+    
+    # def new_item(self,)
+    
+    
+
+
+    

@@ -4,20 +4,12 @@ from .base import BaseData
 
 
 from typing import Tuple, TypedDict, List, Dict, Optional, Literal
+from numpy.typing import NDArray
 from dataclasses import dataclass
 from abc import ABC, abstractmethod
 import json
 from enum import Enum, auto
 import pickle
-
-
-@register_data
-class PointCloudData(BaseData):
-    def __init__(self, points: np.ndarray):
-        super().__init__()
-        self.points = points
-        self.segmentations : list[FieldBase] = []
-
 
 class FieldType(Enum):
     SCALAR = auto()
@@ -27,6 +19,76 @@ class FieldType(Enum):
     SEMANTIC    = auto()
     INSTANCE    = auto()
 
+@register_data
+class PointCloudData(BaseData):
+    def __init__(self, points: np.ndarray):
+        super().__init__()
+        self.points = points
+        self._fields : list[FieldBase] = []
+
+    def save_hdf5(self) -> Dict:
+        raise NotImplementedError
+        return super().save_hdf5()
+    
+    @classmethod
+    def load_hdf5(cls, data:dict):
+        raise NotImplementedError
+    
+    @property
+    def field_names(self)->list[str]:
+        return [f.name for f in self._fields]
+    
+    def add_field(self, 
+                  name:Optional[str]=None, 
+                  data:Optional[np.ndarray]=None, 
+                  field_type:Optional[FieldType]=None,
+                  vector_dim_hint: int = 1,
+                  default_fill_value:float = 0.,
+                  dtype_hint = np.float32
+                  ) -> None:
+        
+        assert name not in self.field_names, \
+            "Field names should not be duplicates in same point cloud."
+        
+        if field_type is None:
+            if vector_dim_hint == 1:
+                field_type = FieldType.SCALAR
+            else:
+                field_type = FieldType.VECTOR
+
+        if name is None:
+            field_prefix = 'Field_'
+            taken_ids = [int(n.replace(field_prefix,'')) for n in self.field_names]
+            new_id = mex(np.array(taken_ids))
+            name = f"{field_prefix}{new_id:04}"
+        if data is not None:
+            assert data.ndim == 2, \
+                f"Fields should have two dims but got: {data.shape}"
+            assert data.shape[0] == self.points.shape[0]
+            field = FieldBase(name, data, field_type)
+
+        else:
+            
+            shape = (self.points.shape[0], vector_dim_hint)
+            data = np.full(shape, default_fill_value, dtype_hint)
+            field = FieldBase(name, data, field_type)
+
+        self._fields.append(field)
+
+    def remove_field(self,
+                     name: Optional[str] = None,
+                     field_type: Optional[FieldType] = None,
+                     ):
+        if name is not None:
+
+    def get_field(self,
+            name: Optional[str | list[str]] = None,
+            field_type: Optional[FieldType] = None
+            )->list["FieldBase"]:
+        return []
+        
+
+   
 @dataclass
 class FieldBase:
     name: str
@@ -126,6 +188,12 @@ def mex(data:np.ndarray)->int:
     """
     returns the minimum excluded value
     """
+    if data.ndim == 0: 
+        return 0
+    else:
+        assert data.ndim == 1, \
+            f"Can only compute MEX on flat arrays but got {data.shape}"
+
     nonneg = data[data >= 0]
     size = len(data) + 1
     present = np.zeros(size, dtype=bool)

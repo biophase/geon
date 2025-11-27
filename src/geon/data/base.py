@@ -38,4 +38,7 @@ class BaseData(ABC):
         n = cls._id_counters.get(cls, 0) + 1
         cls._id_counters[cls] = n
         return f"{cls.get_short_type_id()}_{n:04}"
+    
+    def __init__(self):
+        self.id = self._generate_id()
         
