@@ -1,5 +1,4 @@
-from typing import Type
-
+from typing import Type, TypeVar
 from .base import BaseData
 
 class DataRegistry:
@@ -14,10 +13,13 @@ class DataRegistry:
     def get(self, type_id:str) -> Type[BaseData]:
         return self._by_type_id[type_id]
     
+
+# type checker fix
+T = TypeVar("T", bound=BaseData)
     
 data_registry = DataRegistry()
 
-def register_data(cls: Type[BaseData]):
+def register_data(cls: Type[T]) -> Type[T]:
     data_registry.register(cls)
     return cls
     

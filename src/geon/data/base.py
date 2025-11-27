@@ -1,10 +1,11 @@
 from abc import ABC, abstractmethod 
-from typing import Optional, ClassVar, Type
+from typing import Optional, ClassVar, Type, TypeVar
+import h5py
 
 
 class BaseData(ABC):
     """
-    Base class for all data objects (e.g. point clouds, meshes, etc.).
+    Base class for all top-level document data objects (e.g. point clouds, meshes, etc.).
     """
     type_id: Optional[str] = None
     
@@ -12,14 +13,27 @@ class BaseData(ABC):
     _id_counters: ClassVar[dict[Type["BaseData"], int]] = {}
     
     @abstractmethod
-    def save_hdf5(self) -> dict:
+    def save_hdf5(self, group: h5py.Group) -> dict:
+        """
+        Save this object into the given HDF5 group.
+
+        The method should:
+          - create datasets/groups inside `group`
+          - set any relevant attributes on `group`
+        It MUST NOT close the file or the group.
+        """
 
         ...
         
     @classmethod
     @abstractmethod
-    def load_hdf5(cls, data: dict) -> "BaseData":
-
+    def load_hdf5(cls, group: h5py.Group) -> "BaseData":
+        """
+        Load this object from an HDF5 group and return an instance.
+        The method should read attributes, datasets and subgroups
+        inside `group`, build the corresponding in-memory object,
+        and return it.
+        """
         ...
         
     @classmethod
