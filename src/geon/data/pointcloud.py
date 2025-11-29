@@ -2,14 +2,14 @@ import json
 import pickle
 from dataclasses import dataclass
 from enum import Enum, auto
-from typing import Dict, List, Literal, Optional, Tuple, TypedDict
+from typing import Dict, List, Literal, Optional, Tuple, TypedDict, Type, Union
 
 import h5py
 import numpy as np
-from numpy.typing import NDArray
 
 from .base import BaseData
 from .registry import register_data
+from geon.utils.common import decode_utf8, generate_vibrant_color
 
 class FieldType(Enum):
     SCALAR = auto()
@@ -31,6 +31,16 @@ class FieldType(Enum):
             cls.INSTANCE    : "Instance Segmentation",
         }
         return map[field_type]
+    
+    @classmethod
+    def get_class (cls, field_type:"FieldType") -> Type["FieldBase"]:
+        """
+        Mapping in reconstrucing specialized field types from the enum e.g. when reading h5py files
+        """
+        return {
+            cls.SEMANTIC : SemanticSegmentation,
+            cls.INSTANCE : InstanceSegmentation
+        }.get(field_type, FieldBase)
         
 
 @register_data
@@ -52,8 +62,8 @@ class PointCloudData(BaseData):
         if self._fields:
             fields_group = group.create_group("fields")
             for field in self._fields:
-                dataset = fields_group.create_dataset(field.name, data=field.data)
-                dataset.attrs["field_type"] = field.field_type.name
+                field.save_hdf5(fields_group)
+                
 
         return {"num_points": self.points.shape[0], "num_fields": len(self._fields)}
     
@@ -80,10 +90,13 @@ class PointCloudData(BaseData):
             for name, dataset in fields_group.items():
                 if not isinstance(dataset, h5py.Dataset):
                     continue
-                data = dataset[()]
+
                 ft_attr = dataset.attrs.get("field_type")
                 field_type = FieldType[_decode(ft_attr)] if ft_attr is not None else FieldType.SCALAR
-                obj._fields.append(FieldBase(name, data, field_type))
+                field_class = FieldType.get_class(field_type)
+                field = field_class.from_hdf5_dataset(dataset)
+                obj._fields.append(field)
+
         return obj
     
     @property
@@ -113,7 +126,16 @@ class PointCloudData(BaseData):
 
         if name is None:
             field_prefix = 'Field_'
-            taken_ids = [int(n.replace(field_prefix,'')) for n in self.field_names]
+            taken_ids: list[int] = []
+            for n in self.field_names:
+                if n.startswith(field_prefix):
+                    suffix = n[len(field_prefix):]
+                    try:
+                        taken_ids.append(int(suffix))
+                    except ValueError:
+                        # ignore non-numeric suffixes
+                        pass
+                
             new_id = mex(np.array(taken_ids))
             name = f"{field_prefix}{new_id:04}"
             
@@ -184,10 +206,14 @@ class PointCloudData(BaseData):
                 return [f for f in self._fields if f.field_type == field_type]
             return self._fields
     
-    def __getitem__(self, name:str) -> np.ndarray:
-        if name == 'points':
+    def __getitem__(self, name: str) -> np.ndarray:
+        if name == "points":
             return self.points
-        return self.get_fields(names=name)[0].data
+        fields = self.get_fields(names=name)
+        if not fields:
+            raise KeyError(f"Field '{name}' not found")
+        return fields[0].data
+
     
     @property
     def colors(self) -> Optional["FieldBase"]:
@@ -244,10 +270,21 @@ class FieldBase:
     data: np.ndarray
     field_type: FieldType
     
-    def save_hdf5(self, group: h5py.Group) -> None:
-        dataset = group.create_dataset(self.name, self.data)
+    def save_hdf5(self, group: h5py.Group) -> h5py.Dataset:
+        dataset = group.create_dataset(self.name, self.data.shape,data=self.data)
         dataset.attrs['field_type'] = self.field_type.name
-        
+        return dataset
+    
+    @classmethod
+    def from_hdf5_dataset(cls, dataset: h5py.Dataset) -> "FieldBase":
+        data = dataset[()]
+        ft_attr = dataset.attrs.get("field_type")
+        field_type = FieldType[decode_utf8(ft_attr)] if ft_attr is not None else FieldType.SCALAR
+        name = dataset.name
+        assert isinstance(name, str)
+        name = name.split("/")[-1]
+        return cls(name, data, field_type)
+    
 
     
 
@@ -297,21 +334,23 @@ class SemanticSchema:
     
     @classmethod
     def from_dict(cls, semantic_dict : Dict[str, SemanticDescription]) -> "SemanticSchema":
-        instance = cls.__new__(cls)
-        instance.semantic_classes = []
+        schema = cls()
+        schema.semantic_classes = []
         for key, value in semantic_dict.items():
             class_id = int(key)
             r, g, b = value["color"]
             semantic_class = SemanticClass(class_id, value["name"], (r,g,b))
-            instance.semantic_classes.append(semantic_class)
-        instance.semantic_classes.sort(key=lambda s: s.id)
-        return instance
+            schema.semantic_classes.append(semantic_class)
+        schema.semantic_classes.sort(key=lambda s: s.id)
+        return schema
         
     
     def __hash__(self) -> int:
         return hash(tuple(self.semantic_classes))
     
-    def add_semantic_class(self, semantic_class : SemanticClass) -> None:
+    def add_semantic_class(self, semantic_class : Union[str, SemanticClass]) -> None:
+        if isinstance (semantic_class,str):
+            semantic_class = SemanticClass(self.get_next_id(),semantic_class, generate_vibrant_color())
         assert semantic_class.id not in [s.id for s in self.semantic_classes], \
             f"Index {semantic_class.id} already exists in schema."
         assert semantic_class.name not in [s.name for s in self.semantic_classes], \
@@ -334,6 +373,8 @@ class SemanticSchema:
             s.id = i
             id_map[old_id] = i
         return id_map
+    def get_next_id(self) -> int:
+        return mex(np.array([c.id for c in self.semantic_classes]))
 
 
     
@@ -343,10 +384,12 @@ def mex(data:np.ndarray)->int:
     """
     if data.ndim == 0: 
         return 0
+    elif len(data) == 0:
+        return 0
     else:
         assert data.ndim == 1, \
             f"Can only compute MEX on flat arrays but got {data.shape}"
-
+    assert np.issubdtype(data.dtype, np.integer)
     nonneg = data[data >= 0]
     size = len(data) + 1
     present = np.zeros(size, dtype=bool)
@@ -372,6 +415,14 @@ class InstanceSegmentation(FieldBase):
         
     def get_next_instance_id(self) -> int:
         return mex(self.data)
+    
+    @classmethod
+    def from_hdf5_dataset(cls, dataset: h5py.Dataset) -> "InstanceSegmentation":
+        data = dataset[()]
+        name = dataset.name
+        assert isinstance(name, str)            
+        name = name.split("/")[-1]
+        return cls(name=name, data=data)
         
     
 
@@ -394,6 +445,35 @@ class SemanticSegmentation(FieldBase):
             schema = SemanticSchema()
         self.schema = schema
         
+    def save_hdf5(self, group: h5py.Group) -> h5py.Dataset:
+        dataset = super().save_hdf5(group)
+        dataset.attrs['semantic_schema'] = json.dumps(self.schema.to_dict())
+        return dataset      
+    
+    @classmethod
+    def from_hdf5_dataset(cls, dataset: h5py.Dataset) -> "SemanticSegmentation":
+        data = dataset[()]
+        name = dataset.name
+        assert isinstance(name, str)
+        name = name.split("/")[-1]
+        
+        #schema
+        schema_attr = dataset.attrs.get('semantic_schema')
+        if schema_attr is not None:
+            try:
+                schema_json = decode_utf8(schema_attr)
+                schema_dict = json.loads(schema_json)
+                schema = SemanticSchema.from_dict(schema_dict)
+            except(json.JSONDecodeError, TypeError, ValueError):
+                schema=None
+        else: 
+            schema = None
+              
+        return cls(name=name, data=data, schema=schema)
+    
+    
+    
+
     def get_next_id(self) -> int:
         return mex(self.data)
         
