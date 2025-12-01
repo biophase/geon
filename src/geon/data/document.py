@@ -10,7 +10,7 @@ from typing import Optional
 
 class Document:
     def __init__(self, name:str = 'Untitled'):
-        self.items: dict[str, BaseData] = {}
+        self.scene_items: dict[str, BaseData] = {}
         self.meta: dict[str, Any] = {
             'name':name
             }
@@ -32,18 +32,18 @@ class Document:
         
         # doc children
         
-        for k, v in self.items.items():
+        for k, v in self.scene_items.items():
             child_group = group.create_group(v.id)
             v.save_hdf5(child_group)
             
             
     def __repr__(self):
-        return ''.join(["Document containing:\n"] + [f"- '{n}'\n" for n in self.items.keys()])
+        return ''.join(["Document containing:\n"] + [f"- '{n}'\n" for n in self.scene_items.keys()])
         
     def add_data(self, data: BaseData):
-        assert data.id not in self.items.keys(),\
+        assert data.id not in self.scene_items.keys(),\
             f"Tried adding duplicate item id {data.id}"
-        self.items[data.id] = data
+        self.scene_items[data.id] = data
     
     @classmethod
     def load_hdf5(cls, path:Union[str, Path]):
@@ -97,7 +97,7 @@ class Document:
         
         doc = cls()
         doc.meta = loaded_meta
-        doc.items = loaded_items
+        doc.scene_items = loaded_items
         return doc
     
     

@@ -13,7 +13,7 @@ class BaseData(ABC):
     _id_counters: ClassVar[dict[Type["BaseData"], int]] = {}
     
     @abstractmethod
-    def save_hdf5(self, group: h5py.Group) -> dict:
+    def save_hdf5(self, group: h5py.Group) -> h5py.Group:
         """
         Save this object into the given HDF5 group.
 

@@ -21,8 +21,8 @@ pcd2.add_field('instance', field_type=FieldType.INSTANCE)
 
 print (doc)
 
-print(doc.items['PCD_0002']['semantics'])
-print(doc.items['PCD_0002']['instance'])
+print(doc.scene_items['PCD_0002']['semantics'])
+print(doc.scene_items['PCD_0002']['instance'])
 
 
 

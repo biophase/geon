@@ -21,7 +21,7 @@ class BaseLayer(Generic[TData], ABC):
     """
 
     data: TData
-    visible: bool
+    visible: bool = True
     
     # VTK
     _renderer: Optional[vtk.vtkRenderer] = field(default=None, init=False, repr=False)
@@ -73,14 +73,21 @@ class BaseLayer(Generic[TData], ABC):
         """
         ...
     @abstractmethod
-    def refresh_from_data(self) -> None:
+    def update(self) -> None:
         """
         Called when the data has changed and the layer should update its VTK pipeline
         e.g. colors, geometry ...
         
         """
         ...
-        
+    @property
+    def name(self) -> str:
+        return self.data.id
+    
+    @property
+    def browser_name(self) -> str:
+        return self.data.id
+    
     @property
     def renderer(self) -> Optional[vtk.vtkRenderer]:
         return self._renderer

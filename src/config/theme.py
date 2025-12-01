@@ -1,6 +1,9 @@
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QPalette, QColor
 
+DEFAULT_OBJ_COLOR: tuple[float,float,float] = (0.6,0.6,0.6)
+DEFAULT_SEGMENTATION_COLOR: tuple[int,int,int] = (204, 204, 204)
+
 def set_dark_palette(app):
     dark_palette = QPalette()
     dark_palette.setColor(QPalette.ColorRole.Window, QColor(53, 53, 53))
@@ -17,3 +20,4 @@ def set_dark_palette(app):
     dark_palette.setColor(QPalette.ColorRole.Highlight, QColor(42, 130, 218))
     dark_palette.setColor(QPalette.ColorRole.HighlightedText, Qt.GlobalColor.black)
     app.setPalette(dark_palette)
+
