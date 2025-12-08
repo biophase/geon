@@ -45,6 +45,9 @@ class Document:
             f"Tried adding duplicate item id {data.id}"
         self.scene_items[data.id] = data
     
+    def remove_data(self,id:str)->None:
+        data = self.scene_items.pop(id)
+        
     @classmethod
     def load_hdf5(cls, path:Union[str, Path]):
         path = Path(path)

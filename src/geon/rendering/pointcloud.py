@@ -8,12 +8,16 @@ from geon.data.definitions import ColorMap
 from config import theme
 from .base import BaseLayer
 from .util import build_vtk_color_transfer_function
+from .layer_registry import layer_for
 
 from dataclasses import dataclass, field
 from typing import Optional, Tuple
 
 
 
+
+
+@layer_for(PointCloudData)
 class PointCloudLayer(BaseLayer[PointCloudData]):
     layer_type_id = "pointcloud"
 
@@ -216,15 +220,19 @@ class PointCloudLayer(BaseLayer[PointCloudData]):
 
 
     @property
-    def name(self) -> str:
-        return super().name
+    def id(self) -> str:
+        return super().id
     
     @property
     def browser_name(self) -> str:
         if self._visibility_mask is not None:
-            return f'self.name; (visible:{self._visibility_mask.sum()}/{self.   data.points.shape[0]})'
+            return f'{super().browser_name}; (visible:{self._visibility_mask.sum()}/{self.   data.points.shape[0]})'
         else:
-            return self.name
+            return super().browser_name
+
+    @browser_name.setter
+    def browser_name(self, browser_name: str) -> None:
+        self._browser_name = browser_name
         
 
 # # Here you can choose how to initialize colors: base colors, intensity, etc.

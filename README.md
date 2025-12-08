@@ -69,3 +69,33 @@ pip install -e .
 ```
 python -m geon.main
 ```
+
+
+# HDF File structure:
+```
+.
+└── /document
+    ├── attrs:
+    │   ├── geon_format_version: <GEON_FORMAT_VERSION>
+    │   ├── type:
+    │   └── name:
+    └── PCD_000 (Group)
+        ├── attrs:
+        │   ├── type_id
+        │   └── id
+        ├── points (Dataset, shape(N,3))
+        └── fields (Group)
+            ├── intensity (Group)
+            │   ├── data (Dataset, shape (N,1))
+            │   ├── attrs:
+            │   │   └── field_type: "INTENSITY"
+            │   └── color_map (Dataset, optional)
+            └── semantics (Group)
+                ├── data (Dataset, shape (N,))
+                ├── attrs
+                │   └── field_type: "SEMANTIC"
+                └── semantic_schema (Dataset, scalar string, JSON)
+                    └── attrs:
+                        └── name: "schema_name"
+
+```

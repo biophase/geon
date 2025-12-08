@@ -20,8 +20,10 @@ class BaseLayer(Generic[TData], ABC):
 
     """
 
+
     data: TData
     visible: bool = True
+    _browser_name: str = 'Untitled'
     
     # VTK
     _renderer: Optional[vtk.vtkRenderer] = field(default=None, init=False, repr=False)
@@ -81,12 +83,16 @@ class BaseLayer(Generic[TData], ABC):
         """
         ...
     @property
-    def name(self) -> str:
+    def id(self) -> str:
         return self.data.id
     
     @property
     def browser_name(self) -> str:
-        return self.data.id
+        return self._browser_name
+    
+    @browser_name.setter
+    def browser_name(self, browser_name: str) -> None:
+        self._browser_name = browser_name
     
     @property
     def renderer(self) -> Optional[vtk.vtkRenderer]:
@@ -105,7 +111,7 @@ class BaseLayer(Generic[TData], ABC):
         Optional hook for subclasses to clean up extra state after detaching
         """
         pass
-    
+
     # VTK Property updates
     
     def _apply_visibility(self) -> None:
@@ -115,7 +121,3 @@ class BaseLayer(Generic[TData], ABC):
         for actor in self._actors:
             if hasattr(actor, "SetVisibility"):
                 actor.SetVisibility(int(self.visible))
-                
-        
-    
-    
