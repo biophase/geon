@@ -19,17 +19,36 @@ class DocumentState(Enum):
 
 @dataclass
 class DocumentReference:
-    _path: str
+    _name: str
+    _path: Optional[str]
     _state: DocumentState = DocumentState.SAVED
 
-    @classmethod
-    def create(cls, path: str) -> "DocumentReference":
-        return cls(path, DocumentState.MODIFIED)
+    # @classmethod
+    # def create(cls, path: str) -> "DocumentReference":
+    #     return cls(path, DocumentState.MODIFIED)
     
     def load(self) -> Document:
-        doc = Document.load_hdf5(self._path)
+        if self.path is None:
+            raise Exception("Attempted to load a reference with no path")
+        doc = Document.load_hdf5(self.path)
         self._state = DocumentState.SAVED
         return doc
+    
+    @property
+    def path(self) -> Optional[str]:
+        return self._path
+    @property
+    def state(self) -> DocumentState:
+        return self._state
+    
+    @property
+    def name(self) -> str:
+        return self._name
+        # split = osp.split(self.path)
+        # if not len(split):
+        #     return '<Corrupted path>'
+        # return split[-1]
+    
 
 
 
@@ -38,6 +57,8 @@ class Dataset:
     def __init__(self, working_dir = None) -> None:
         self._working_dir : Optional[str] = working_dir
         self._doc_refs : list[DocumentReference] = []
+
+        self.use_intermid_dirs: bool = True
 
 
     @property
@@ -50,6 +71,7 @@ class Dataset:
         self._working_dir = path
 
     def update_references(self):
+        return
         if self.working_dir is None:
             return
         
@@ -65,5 +87,21 @@ class Dataset:
                         f"Unsupported GEON format version {version} in {fp}; "
                         f"current version is {GEON_FORMAT_VERSION}"
                     )
-            self._doc_refs.append(DocumentReference(fp))
-            
+            self._doc_refs.append(DocumentReference(osp.split(fp)[-1],fp))
+    @property
+    def doc_refs(self):
+        for ref in self._doc_refs:
+            yield ref
+
+    def create_new_reference(self, doc: Document) -> None:
+        """
+        This creates a refernce to a new in-memory doc, that is not yet saved on disk
+        """
+
+        doc_ref = DocumentReference(doc.name, None, DocumentState.UNSAVED)
+        self._doc_refs.append(doc_ref)
+        
+        
+
+        self.update_references()
+    

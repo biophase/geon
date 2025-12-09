@@ -10,6 +10,7 @@ from typing import Optional
 
 class Document:
     def __init__(self, name:str = 'Untitled'):
+        self.name = name
         self.scene_items: dict[str, BaseData] = {}
         self.meta: dict[str, Any] = {
             'name':name
