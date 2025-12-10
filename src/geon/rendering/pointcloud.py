@@ -6,9 +6,10 @@ from numpy.typing import NDArray
 from geon.data.pointcloud import PointCloudData, FieldType, SemanticSegmentation, InstanceSegmentation
 from geon.data.definitions import ColorMap
 from config import theme
-from .base import BaseLayer
+from .base import BaseLayer, BrowserGroup
 from .util import build_vtk_color_transfer_function
 from .layer_registry import layer_for
+
 
 from dataclasses import dataclass, field
 from typing import Optional, Tuple
@@ -33,6 +34,8 @@ class PointCloudLayer(BaseLayer[PointCloudData]):
         self._mapper_coarse:    Optional[vtk.vtkMapper] = None
 
         self._main_actor: Optional[vtk.vtkLODActor] = None
+        
+        self._browser_group = BrowserGroup.POINTCLOUD
 
         
 

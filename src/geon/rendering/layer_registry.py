@@ -11,10 +11,10 @@ class LayerRegistry:
             raise ValueError(f"Layer already registered for {data_cls}")
         self._map[data_cls] = layer_cls
 
-    def create_layer_for(self, data_obj: BaseData, renderer) -> BaseLayer:
+    def create_layer_for(self, data_obj: BaseData) -> BaseLayer:
         data_cls = type(data_obj)
         layer_cls = self._map[data_cls]
-        return layer_cls(data_obj, renderer)
+        return layer_cls(data_obj)
 
 layer_registry = LayerRegistry()
 

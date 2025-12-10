@@ -1,4 +1,4 @@
-from .tree import Dock, DatasetManager
+from .dataset_manager import Dock, DatasetManager
 from .viewer import VTKViewer
 from .common_tools import CommonToolsDock
 from .menu_bar import MenuBar
@@ -36,15 +36,12 @@ class MainWindow(QMainWindow):
         self.addToolBar(Qt.ToolBarArea.TopToolBarArea, self.ribbon)
         self.scene_widget = Dock("Scene", self) # TODO: might need to specialize the tree class
         self.dataset_manager = DatasetManager(self)
-        # self.dataset_manager.documentLoaded.connect(self.scene.set_document)
+        self.dataset_manager.documentLoaded.connect(self.scene.set_document)
         
         self.menu_bar = MenuBar(self)
         self.setMenuBar(self.menu_bar)
-        self.menu_bar.setWorkdirRequested.connect(
-            self.dataset_manager.set_work_dir)
-        self.menu_bar.importFromRequested.connect(
-            self.dataset_manager.import_doc_from_ply
-        )
+        self.menu_bar.setWorkdirRequested.connect(self.dataset_manager.set_work_dir)
+        self.menu_bar.importFromRequested.connect(self.dataset_manager.import_doc_from_ply)
         
 
         

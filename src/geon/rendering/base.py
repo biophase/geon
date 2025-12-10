@@ -2,11 +2,29 @@ from abc import ABC, abstractmethod
 import vtk
 from geon.data.base import BaseData
 
-from typing import TypeVar, Generic, Optional, Sequence
+from typing import TypeVar, Generic, Optional, Sequence, Tuple
 from dataclasses import dataclass, field
+from enum import Enum, auto
 
 TData = TypeVar("TData", bound=BaseData) 
 
+
+class BrowserGroup(Enum):
+    """
+    Determines where the layer lands up in UI groups
+    """
+    OTHER           = auto()
+    POINTCLOUD      = auto()
+    
+    @classmethod
+    def get_human_name(cls):
+        """
+        Actual rendered name in UI
+        """
+        map = {
+            cls.OTHER:          "Other",
+            cls.POINTCLOUD:     "Pointclouds",
+        }
 
 @dataclass
 class BaseLayer(Generic[TData], ABC):
@@ -23,7 +41,8 @@ class BaseLayer(Generic[TData], ABC):
 
     data: TData
     visible: bool = True
-    _browser_name: str = 'Untitled'
+    _browser_name: str =            'Untitled'
+    _browser_group:BrowserGroup =   BrowserGroup.OTHER
     
     # VTK
     _renderer: Optional[vtk.vtkRenderer] = field(default=None, init=False, repr=False)
@@ -93,6 +112,14 @@ class BaseLayer(Generic[TData], ABC):
     @browser_name.setter
     def browser_name(self, browser_name: str) -> None:
         self._browser_name = browser_name
+        
+    @property
+    @abstractmethod
+    def browser_report(self) -> dict[str, Tuple[]]: #TODO: refine structure but probably better to keep simple
+        """
+        Returns a dict for displaying in UI trees
+        """
+        ...
     
     @property
     def renderer(self) -> Optional[vtk.vtkRenderer]:
