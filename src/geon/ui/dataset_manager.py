@@ -1,8 +1,12 @@
-from geon.io.dataset import Dataset
+from geon.io.dataset import Dataset, DocumentState
 from geon.data.document import Document
+from geon.rendering.scene import Scene
+
 from .imports import ImportPLYDialog
 from .common import ElidedLabel, Dock
-from typing import Optional
+
+
+from typing import Optional, cast
 import os.path as osp
 
 from PyQt6.QtWidgets import (QLabel, QPushButton, QHBoxLayout, QTreeWidget, QDockWidget, QWidget, 
@@ -15,11 +19,15 @@ from PyQt6.QtGui import QFontMetrics
 
 class DatasetManager(Dock):
     documentLoaded      = pyqtSignal(Document)
+    
+
     def __init__(self, parent) -> None:
         super().__init__("Datasets", parent)
         self._dataset: Optional[Dataset] = None
+        self.create_intermidiate_folder = True
 
-        # --- Create overlay system ---
+
+        # overlay widget
         self.stack = QStackedWidget()
         self.overlay_label = QLabel("No Dataset Work Directory set")
         self.overlay_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -58,6 +66,32 @@ class DatasetManager(Dock):
             self.stack.setCurrentIndex(1)  # show tree
 
 
+    def on_clear_scene(self, scene: Scene) -> None:
+        if self._dataset is None:
+            return
+        for ref in self._dataset.doc_refs:
+            if ref.name == scene.doc.name and (
+                ref.state is DocumentState.MODIFIED or
+                ref.state is DocumentState.UNSAVED
+                ):
+                if ref.path is None:
+                    work_dir=self._dataset.working_dir
+                    if work_dir is None:
+                        success = self.set_work_dir()
+                        if success:
+                            work_dir = cast(str, self._dataset.working_dir)
+                        else:
+                            return
+                            
+                    ref.path =  osp.join(work_dir, ref.name, f"{ref.name}.h5") if self.create_intermidiate_folder else \
+                                osp.join(work_dir,f"{ref.name}.h5")
+                    
+                scene.doc.save_hdf5(ref.path)
+                ref.state = DocumentState.SAVED
+                
+
+            
+
     def populate_tree(self):
         self.tree.clear()
         if self._dataset is None:
@@ -71,7 +105,10 @@ class DatasetManager(Dock):
         self.tree.expandAll()
         self.update_tree_visibility()
 
-    def set_work_dir(self) -> None:
+    def set_work_dir(self) -> bool:
+        """
+        Set a working dir and return `True` for success
+        """
         
         dir_path = QFileDialog.getExistingDirectory(self,
                                                     "Select dataset working directory (root)", 
@@ -79,13 +116,18 @@ class DatasetManager(Dock):
                                                     QFileDialog.Option.ShowDirsOnly
                                                     )
         if not dir_path:
-            return  
+            return  False
         
         self.work_dir_label.setText(dir_path)
 
         dataset = Dataset(f"working dir: {dir_path}")
         dataset.update_references()
         self.set_dataset(dataset)
+        if self._dataset is None:
+            return False
+        if self._dataset._working_dir is None:
+            return False
+        return True
 
     def import_doc_from_ply(self):
         file_path, _ = QFileDialog.getOpenFileName(self, "Open PLY File", "", "PLY Files (*.ply)")

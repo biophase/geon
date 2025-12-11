@@ -37,10 +37,18 @@ class DocumentReference:
     @property
     def path(self) -> Optional[str]:
         return self._path
+    
+    @path.setter
+    def path(self, path:str)->None:
+        self._path = path
+        
     @property
     def state(self) -> DocumentState:
         return self._state
     
+    @state.setter
+    def state(self, state: DocumentState) -> None:
+        self._state = state
     @property
     def name(self) -> str:
         return self._name

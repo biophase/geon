@@ -1,4 +1,5 @@
 from .dataset_manager import Dock, DatasetManager
+from .scene_manager import SceneManager
 from .viewer import VTKViewer
 from .common_tools import CommonToolsDock
 from .menu_bar import MenuBar
@@ -34,14 +35,20 @@ class MainWindow(QMainWindow):
         # widget initialization
         self.ribbon = ContextRibbon(self)
         self.addToolBar(Qt.ToolBarArea.TopToolBarArea, self.ribbon)
-        self.scene_widget = Dock("Scene", self) # TODO: might need to specialize the tree class
-        self.dataset_manager = DatasetManager(self)
-        self.dataset_manager.documentLoaded.connect(self.scene.set_document)
         
+        self.scene_manager = SceneManager(self) 
+        self.dataset_manager = DatasetManager(self)
         self.menu_bar = MenuBar(self)
         self.setMenuBar(self.menu_bar)
+
+        # signals
+        self.scene_manager.broadcastDeleteScene.connect(self.dataset_manager.on_clear_scene)
+        self.dataset_manager.documentLoaded.connect(self.scene.set_document)
+        self.dataset_manager.documentLoaded.connect(self.scene_manager.on_document_loaded)
+        
         self.menu_bar.setWorkdirRequested.connect(self.dataset_manager.set_work_dir)
         self.menu_bar.importFromRequested.connect(self.dataset_manager.import_doc_from_ply)
+        
         
 
         
@@ -55,7 +62,7 @@ class MainWindow(QMainWindow):
 
         
         # initial float widget placement
-        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.scene_widget)
+        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.scene_manager)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.dataset_manager)
         # self.tabifyDockWidget(self.scene_widget, self.dataset_widget)
 

@@ -4,10 +4,11 @@ from .layer_registry import layer_registry
 from geon.data.document import Document
 from geon.data.base import BaseData
 
-from geon.rendering.base import BrowserGroup
+
 
 from collections import OrderedDict
-from typing import Optional
+from typing import Optional, Mapping
+from types import MappingProxyType
 import vtk
 
 class DuplicateLayerNameError(Exception):
@@ -41,6 +42,10 @@ class Scene:
         if delete_data:
             self._doc.remove_data(layer.id)
 
+    @property
+    def doc(self) -> Document:
+        return self._doc
+    
     def set_document(self, doc: Document) -> None:
         for layer in self._layers.values():
             layer.detach()
@@ -50,16 +55,28 @@ class Scene:
         self._doc = doc
 
     def import_document(self, doc: Document) -> None:
+        # TODO: implement
         raise NotImplementedError
     
     @property
-    def browser_report(self) -> dict:
-        report = {BrowserGroup.get_human_name(group.name): dict() for group in BrowserGroup}
+    def layers(self) -> Mapping[str, BaseLayer]:
+        """
+        Provide a read-only view of the layers
+        """
+        return MappingProxyType(self._layers)
+    
+    # @property
+    # def browser_report(self) -> dict:
+    #     report = {BrowserGroup.get_human_name(group.name): dict() for group in BrowserGroup}
         
-        # group items
-        for k, data in self._doc.scene_items.items():
+    #     # group items
+    #     for k, data in self._doc.scene_items.items():
 
     
+    def clear(self, delete_data: bool) -> None:
+        for k in list(self._layers.keys()):
+            self.remove_layer(k, delete_data)
+
     @property
     def renderer(self) -> vtk.vtkRenderer:
         return self._renderer

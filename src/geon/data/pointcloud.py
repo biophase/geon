@@ -210,7 +210,7 @@ class PointCloudData(BaseData):
         else:
             if field_type is not None:
                 return [f for f in self._fields if f.field_type == field_type]
-            return self._fields
+            return [f for f in self._fields]
         
     
     def __getitem__(self, name: str) -> np.ndarray:
