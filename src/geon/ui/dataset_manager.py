@@ -6,12 +6,12 @@ from .imports import ImportPLYDialog
 from .common import ElidedLabel, Dock
 
 
-from typing import Optional, cast
+from typing import Optional, cast, Union
 import os.path as osp
 
 from PyQt6.QtWidgets import (QLabel, QPushButton, QHBoxLayout, QTreeWidget, QDockWidget, QWidget, 
                              QStackedWidget, QTreeWidgetItem, QFileDialog, QVBoxLayout, QSizePolicy,
-                             QButtonGroup, QRadioButton
+                             QButtonGroup, QRadioButton, QMessageBox
                              )
 from PyQt6.QtCore import Qt, QSize, pyqtSignal
 
@@ -51,6 +51,7 @@ class DatasetManager(Dock):
         self.tree_button_group = QButtonGroup(self)
         self.tree_button_group.setExclusive(True)
         
+        self._active_scene_name: Optional[str] = None
 
 
     def set_dataset(self, dataset: Optional[Dataset]):
@@ -70,22 +71,40 @@ class DatasetManager(Dock):
             self.stack.setCurrentIndex(1)  # show tree
 
 
-    def on_clear_scene(self, scene: Scene) -> None:
+    def on_clear_scene(self, scene: Scene,ignore_state=False) -> None:
         if self._dataset is None:
             return
         for ref in self._dataset.doc_refs:
             if ref.name == scene.doc.name and (
                 ref.state is DocumentState.MODIFIED or
-                ref.state is DocumentState.UNSAVED
+                ref.state is DocumentState.UNSAVED or 
+                ignore_state
                 ):
                 if ref.path is None:
                     work_dir=self._dataset.working_dir
                     if work_dir is None:
+                        QMessageBox.warning(self, 
+                                            "No working directory set",
+                                            f"Please set a working directory to avoid loosing work on {ref.name}!")
                         success = self.set_work_dir()
                         if success:
                             work_dir = cast(str, self._dataset.working_dir)
                         else:
-                            return
+                            # last chance
+                            reply = QMessageBox.question(
+                                self,
+                                "Confirm",
+                                "Do you want to continue without saving?",
+                                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                                QMessageBox.StandardButton.No
+                            )
+
+                            if reply == QMessageBox.StandardButton.Yes:
+                                return
+                            else:
+                                self.on_clear_scene(scene, ignore_state)
+                                return
+
                             
                     ref.path =  osp.join(work_dir, ref.name, f"{ref.name}.h5") if self.create_intermidiate_folder else \
                                 osp.join(work_dir,f"{ref.name}.h5")
@@ -95,8 +114,27 @@ class DatasetManager(Dock):
         self.populate_tree()
                 
 
-            
+    def check_dataset_name_duplicates(self):
+        if self._dataset is None:
+            return
+        unique_names = []
+        for ref_name in self._dataset.doc_ref_names:
+            if ref_name in unique_names:
+                raise ValueError(f'Duplicate names detected in dataset:{ref_name}')
+            unique_names.append(ref_name)
 
+    #
+
+
+                
+
+        
+        
+        
+    def set_active_scene(self, scene_name:str, save_old:bool = True) -> None:
+        # old_scene = self.
+        ...
+        # TODO:
     def populate_tree(self):     
         self.tree.clear()
         if self._dataset is None:
