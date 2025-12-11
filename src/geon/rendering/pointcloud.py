@@ -22,7 +22,7 @@ from typing import Optional, Tuple
 class PointCloudLayer(BaseLayer[PointCloudData]):
     layer_type_id = "pointcloud"
 
-    def __init__(self, data:PointCloudData):
+    def __init__(self, data:PointCloudData, browser_name = 'Point Cloud'):
         super().__init__(data)
         self._poly:         Optional[vtk.vtkPolyData] = None
         self._poly_coarse:  Optional[vtk.vtkPolyData] = None
@@ -34,7 +34,7 @@ class PointCloudLayer(BaseLayer[PointCloudData]):
         self._mapper_coarse:    Optional[vtk.vtkMapper] = None
 
         self._main_actor: Optional[vtk.vtkLODActor] = None
-        
+        self.browser_name = browser_name
         
 
         
@@ -229,7 +229,7 @@ class PointCloudLayer(BaseLayer[PointCloudData]):
     @property
     def browser_name(self) -> str:
         if self._visibility_mask is not None:
-            return f'{super().browser_name}; (visible:{self._visibility_mask.sum()}/{self.   data.points.shape[0]})'
+            return f'{super().browser_name}; ({self._visibility_mask.sum():,} / {self.   data.points.shape[0]:,})'
         else:
             return super().browser_name
 

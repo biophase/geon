@@ -22,8 +22,8 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("geon")
         self.resize(1200,800)
 
-        # content
-        self.scene: Scene = Scene()
+        
+
 
         # settings
         self.setDockOptions(
@@ -43,7 +43,6 @@ class MainWindow(QMainWindow):
 
         # signals
         self.scene_manager.broadcastDeleteScene.connect(self.dataset_manager.on_clear_scene)
-        self.dataset_manager.documentLoaded.connect(self.scene.set_document)
         self.dataset_manager.documentLoaded.connect(self.scene_manager.on_document_loaded)
         
         self.menu_bar.setWorkdirRequested.connect(self.dataset_manager.set_work_dir)

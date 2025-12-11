@@ -65,8 +65,11 @@ class SceneManager(Dock):
         if self._scene is None:
             self.tree.clear()
             self.stack.setCurrentIndex(0)  # show overlay
+            self.scene_label.setText("")
+            
         else:
             self.stack.setCurrentIndex(1)  # show tree
+            self.scene_label.setText(f"{self._scene.doc.name}")
     
     def populate_tree(self):
         self.tree.clear()

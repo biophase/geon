@@ -78,15 +78,25 @@ class Dataset:
         path = str(path)
         self._working_dir = path
 
-    def update_references(self):
-        return
+    def populate_references(self):
+        # self._temp +=1
+        # if self._temp > 1:
+        #     raise Exception
+        
+        # return
         if self.working_dir is None:
             return
         
-        self._doc_refs.clear()
-        file_paths = glob(osp.join(self.working_dir, "*.hdf5"))
-        file_paths.extend(glob(osp.join(self.working_dir, "*", "*.hdf5")))
+        # self._doc_refs.clear()
+        file_paths = list(glob(osp.join(self.working_dir, "*.hdf5")))
+        file_paths+= list(glob(osp.join(self.working_dir, "*.h5")))
+        file_paths+= list(glob(osp.join(self.working_dir, "*", "*.hdf5")))
+        file_paths+= list(glob(osp.join(self.working_dir, "*", "*.h5")))
+        
+        print(f'called populate references {file_paths=}')
+        
         for fp in file_paths:
+
             with h5py.File(fp, "r") as f:
                 version = f["document"].attrs["geon_format_version"]
                 assert not isinstance(version,  h5py.Empty)
@@ -96,20 +106,25 @@ class Dataset:
                         f"current version is {GEON_FORMAT_VERSION}"
                     )
             self._doc_refs.append(DocumentReference(osp.split(fp)[-1],fp))
+            
     @property
     def doc_refs(self):
         for ref in self._doc_refs:
             yield ref
-
+            
+    @property
+    def doc_ref_names(self) -> list[str]:
+        return [ref.name for ref in self.doc_refs]
     def create_new_reference(self, doc: Document) -> None:
         """
         This creates a refernce to a new in-memory doc, that is not yet saved on disk
         """
 
         doc_ref = DocumentReference(doc.name, None, DocumentState.UNSAVED)
+        for ref in self.doc_refs:
+            if doc_ref.name == ref:
+                raise ValueError(f"Attempted to add a DocumentReference with duplicate names: {doc_ref.name}")
         self._doc_refs.append(doc_ref)
         
-        
 
-        self.update_references()
     

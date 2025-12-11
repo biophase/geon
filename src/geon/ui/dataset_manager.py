@@ -10,7 +10,9 @@ from typing import Optional, cast
 import os.path as osp
 
 from PyQt6.QtWidgets import (QLabel, QPushButton, QHBoxLayout, QTreeWidget, QDockWidget, QWidget, 
-                             QStackedWidget, QTreeWidgetItem, QFileDialog, QVBoxLayout, QSizePolicy)
+                             QStackedWidget, QTreeWidgetItem, QFileDialog, QVBoxLayout, QSizePolicy,
+                             QButtonGroup, QRadioButton
+                             )
 from PyQt6.QtCore import Qt, QSize, pyqtSignal
 
 from PyQt6.QtGui import QFontMetrics
@@ -25,7 +27,6 @@ class DatasetManager(Dock):
         super().__init__("Datasets", parent)
         self._dataset: Optional[Dataset] = None
         self.create_intermidiate_folder = True
-
 
         # overlay widget
         self.stack = QStackedWidget()
@@ -45,8 +46,11 @@ class DatasetManager(Dock):
         self.stack.addWidget(page)                  # index 1
 
         self.setWidget(self.stack)
-        self.tree.setHeaderLabels(["Scene name", "Status", "Path on disk"])
+        self.tree.setHeaderLabels(["","Scene name", "Status", "Path on disk"])
         self.tree.setTextElideMode(Qt.TextElideMode.ElideMiddle)
+        self.tree_button_group = QButtonGroup(self)
+        self.tree_button_group.setExclusive(True)
+        
 
 
     def set_dataset(self, dataset: Optional[Dataset]):
@@ -88,20 +92,24 @@ class DatasetManager(Dock):
                     
                 scene.doc.save_hdf5(ref.path)
                 ref.state = DocumentState.SAVED
+        self.populate_tree()
                 
 
             
 
-    def populate_tree(self):
+    def populate_tree(self):     
         self.tree.clear()
         if self._dataset is None:
             return
         
-        self._dataset.update_references()
+        self._dataset.populate_references()
 
         for doc_ref in self._dataset._doc_refs:
-            item = QTreeWidgetItem([doc_ref.name, doc_ref.state.name, doc_ref.path])
+            item = QTreeWidgetItem(["",doc_ref.name, doc_ref.state.name, doc_ref.path])
             self.tree.addTopLevelItem(item)
+            activate_btn = QRadioButton()
+            self.tree_button_group.addButton(activate_btn)
+            self.tree.setItemWidget(item,0,activate_btn)
         self.tree.expandAll()
         self.update_tree_visibility()
 
@@ -120,8 +128,8 @@ class DatasetManager(Dock):
         
         self.work_dir_label.setText(dir_path)
 
-        dataset = Dataset(f"working dir: {dir_path}")
-        dataset.update_references()
+        dataset = Dataset(dir_path)
+        # dataset.populate_references()
         self.set_dataset(dataset)
         if self._dataset is None:
             return False
@@ -131,13 +139,30 @@ class DatasetManager(Dock):
 
     def import_doc_from_ply(self):
         file_path, _ = QFileDialog.getOpenFileName(self, "Open PLY File", "", "PLY Files (*.ply)")
-        dlg = ImportPLYDialog(file_path,{},{},self)
+        allow_doc_appending = False
+        dlg = ImportPLYDialog(
+            ply_path=file_path,
+            semantic_schemas={},
+            color_maps={}, 
+            allow_doc_appending=allow_doc_appending, 
+            parent=self)
         dlg.exec()
         if dlg.point_cloud is None:
             return
         if self._dataset is None:
-            return
-        doc = Document(osp.split(file_path)[-1])
+            self.set_work_dir()
+            if self._dataset is None:
+                return
+                
+        
+        # generate candidate name from imported ply name
+        name_cand = osp.split(file_path)[-1]
+        name = name_cand
+        suffix = 0
+        while name in self._dataset.doc_ref_names:
+            name = f"{name_cand}_{suffix:03}"
+            suffix += 1
+        doc = Document(name)
         doc.add_data(dlg.point_cloud)
         self._dataset.create_new_reference(doc)
         self.populate_tree()

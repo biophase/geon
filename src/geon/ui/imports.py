@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (
     QSpinBox,
     QDialogButtonBox,
     QMessageBox,
+    QCheckBox
 )
 
 # ---------------------------------------------------------------------------
@@ -32,7 +33,7 @@ from geon.data.pointcloud import (
     FieldType,
     SemanticSchema,
 )
-from geon.data.definitions import ColorMap  # adjust if different
+from geon.data.definitions import ColorMap  
 
 
 class ImportPLYDialog(QDialog):
@@ -69,6 +70,8 @@ class ImportPLYDialog(QDialog):
         ply_path: str,
         semantic_schemas: Dict[str, SemanticSchema],
         color_maps: Dict[str, ColorMap],
+        allow_doc_appending = False,
+        taken_doc_names: list[str] = [],
         parent: Optional[QWidget] = None,
     ) -> None:
         super().__init__(parent)
@@ -82,6 +85,9 @@ class ImportPLYDialog(QDialog):
 
         self._suppress_output_item_changed = False
         self._point_cloud: Optional[PointCloudData] = None
+        self._create_new_doc_flag : bool = True
+        self._allow_doc_appending : bool = allow_doc_appending
+        self._taken_doc_names: list[str] = taken_doc_names
 
         self._load_ply()
         self._build_ui()
@@ -96,6 +102,9 @@ class ImportPLYDialog(QDialog):
     @property
     def point_cloud(self) -> Optional[PointCloudData]:
         return self._point_cloud
+    @property
+    def create_new_doc_flag(self) -> bool:
+        return self._create_new_doc_flag
 
     # ------------------------------------------------------------------
     # PLY loading
@@ -174,6 +183,19 @@ class ImportPLYDialog(QDialog):
         splitter.setStretchFactor(1, 1)
 
         # Buttons
+        bottom_layout = QHBoxLayout()
+
+        self.create_new_doc_checkbox = QCheckBox("Create new document", self)
+        self.create_new_doc_checkbox.setChecked(self._create_new_doc_flag)
+        self.create_new_doc_checkbox.toggled.connect(self._on_create_new_doc_toggled)
+        if not self._allow_doc_appending:
+            self.create_new_doc_checkbox.setChecked(True)
+            self.create_new_doc_checkbox.setEnabled(False)
+        
+        bottom_layout.addWidget(self.create_new_doc_checkbox)
+
+        bottom_layout.addStretch()  # push buttons to the right
+
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok
             | QDialogButtonBox.StandardButton.Cancel,
@@ -181,7 +203,13 @@ class ImportPLYDialog(QDialog):
         )
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
-        main_layout.addWidget(buttons)
+        bottom_layout.addWidget(buttons)
+
+        main_layout.addLayout(bottom_layout)
+
+    def _on_create_new_doc_toggled(self, checked: bool) -> None:
+        self._create_new_doc_flag = checked
+
 
     # ------------------------------------------------------------------
     # Populate input table from PLY

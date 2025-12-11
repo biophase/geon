@@ -5,6 +5,9 @@ from geon.version import GEON_FORMAT_VERSION
 from geon.data.registry import data_registry
 from pathlib import Path
 import json
+import os.path as osp
+import os
+
 
 from typing import Optional
 
@@ -18,7 +21,8 @@ class Document:
         
         
     def save_hdf5(self, path : Union[str, Path]):
-        
+        dir_path, file_path = osp.split(path)
+        os.makedirs(dir_path, exist_ok=True)
         path = Path(path)      
         with h5py.File(path,'w') as f:
             root = f.create_group("document")
