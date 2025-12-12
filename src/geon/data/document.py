@@ -12,11 +12,7 @@ import os
 
 from typing import Optional
 
-class LoadedState(Enum):
-    UNSPECIFIED =auto()
-    REFERENCE   =auto()
-    LOADED      =auto()
-    ACTIVE      =auto()
+
 
 
 class Document:
@@ -26,7 +22,7 @@ class Document:
         self.meta: dict[str, Any] = {
             'name':name
             }
-        self._loaded_state: LoadedState = LoadedState.UNSPECIFIED
+        
         
 
     def save_hdf5(self, path : Union[str, Path]):

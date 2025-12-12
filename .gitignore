@@ -5,5 +5,8 @@ data/flatLabels/*
 data/FWF_flat/*
 data/_old/*
 data/_temp/*
+data/test_dataset/*
+*.h5
+*.hdf5
 
 

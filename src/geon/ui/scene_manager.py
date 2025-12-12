@@ -1,5 +1,5 @@
 from .common import Dock, ElidedLabel
-
+from .viewer import VTKViewer
 from geon.data.document import Document
 from geon.rendering.scene import Scene
 from geon.rendering.pointcloud import PointCloudLayer, PointCloudData
@@ -26,10 +26,12 @@ class SceneManager(Dock):
     # signals
     broadcastDeleteScene = pyqtSignal(Scene)
 
-    def __init__(self, parent=None):
+    def __init__(self, viewer: VTKViewer, parent=None, ):
         super().__init__("Scene", parent)
         self._scene : Optional[Scene] =  None
-        self._renderer: vtk.vtkRenderer = vtk.vtkRenderer()
+        # self._renderer: vtk.vtkRenderer = vtk.vtkRenderer()
+        
+        self.viewer: VTKViewer = viewer
         
         # the UI stacks two cases: 1) no scene loaded and 2) scene loaded
         self.stack = QStackedWidget()
@@ -56,9 +58,15 @@ class SceneManager(Dock):
         if self._scene is not None:
             self.broadcastDeleteScene.emit(self._scene)
             self._scene.clear(delete_data=True)
-        self._scene = Scene(self._renderer)
+        self._scene = Scene(self.viewer._renderer)
         self._scene.set_document(doc)
+        scene_main_layer = self._scene.get_layer()
+        if scene_main_layer is not None:
+            scene_main_actor = scene_main_layer.actors[0]
+            self.viewer.focus_on_actor(scene_main_actor)
         self.populate_tree()
+        
+        self.viewer._renderer.Render() # FIXME: more structured pipeline?
 
     def update_tree_visibility(self):
         """

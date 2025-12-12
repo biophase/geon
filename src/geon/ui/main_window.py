@@ -35,8 +35,11 @@ class MainWindow(QMainWindow):
         # widget initialization
         self.ribbon = ContextRibbon(self)
         self.addToolBar(Qt.ToolBarArea.TopToolBarArea, self.ribbon)
+
+        self.viewer = VTKViewer(self)
+        self.setCentralWidget(self.viewer)
         
-        self.scene_manager = SceneManager(self) 
+        self.scene_manager = SceneManager(self.viewer, self) 
         self.dataset_manager = DatasetManager(self)
         self.menu_bar = MenuBar(self)
         self.setMenuBar(self.menu_bar)
@@ -52,8 +55,6 @@ class MainWindow(QMainWindow):
 
         
         
-        self.viewer = VTKViewer(self)
-        self.setCentralWidget(self.viewer)
 
         self.tool_dock = CommonToolsDock("Tools", self)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea,self.tool_dock)

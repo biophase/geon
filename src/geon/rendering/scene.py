@@ -13,10 +13,7 @@ from types import MappingProxyType
 import vtk
 
 
-class SceneState(Enum):
-    REFERENCE   =auto()
-    LOADED      =auto()
-    ACTIVE      =auto()
+
 
 
 
@@ -28,10 +25,11 @@ class Scene:
     Represents the currently visible physical objects.
     Only one scene can be active at any given point
     """
-    def __init__(self) -> None:
+    def __init__(self, renderer: vtk.vtkRenderer) -> None:
         self._layers : OrderedDict[str, BaseLayer] = OrderedDict()
-        self._renderer: vtk.vtkRenderer = vtk.vtkRenderer()
+        self._renderer: vtk.vtkRenderer = renderer
         self._doc: Document = Document()
+
 
     def add_data(self, data: BaseData) -> BaseLayer:
         layer = layer_registry.create_layer_for(data)
@@ -42,7 +40,11 @@ class Scene:
         return layer
         
         
-    def get_layer(self, name:str) -> BaseLayer:
+    def get_layer(self, name:Optional[str]=None) -> Optional[BaseLayer]:
+        if len(self.layers) == 0:
+            return
+        if name is None:
+            return list(self._layers.values())[0]
         return self._layers[name]
     
     def remove_layer(self, name:str, delete_data=True) -> None:

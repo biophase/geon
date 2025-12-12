@@ -105,7 +105,7 @@ class BaseLayer(Generic[TData], ABC):
     
     @property
     def actors(self) -> Sequence[vtk.vtkProp]:
-        return self.actors
+        return self._actors
     
     def set_visible(self, visible: bool) -> None:
         self.visible = visible
