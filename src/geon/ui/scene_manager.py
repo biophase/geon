@@ -9,6 +9,8 @@ from PyQt6.QtWidgets import (QStackedWidget, QLabel, QWidget, QVBoxLayout, QTree
 from PyQt6.QtCore import Qt, pyqtSignal
 
 from typing import Optional, cast
+import vtk
+import traceback
 
 
 class CheckBoxActive(QCheckBox):
@@ -27,6 +29,7 @@ class SceneManager(Dock):
     def __init__(self, parent=None):
         super().__init__("Scene", parent)
         self._scene : Optional[Scene] =  None
+        self._renderer: vtk.vtkRenderer = vtk.vtkRenderer()
         
         # the UI stacks two cases: 1) no scene loaded and 2) scene loaded
         self.stack = QStackedWidget()
@@ -53,7 +56,7 @@ class SceneManager(Dock):
         if self._scene is not None:
             self.broadcastDeleteScene.emit(self._scene)
             self._scene.clear(delete_data=True)
-        self._scene = Scene()
+        self._scene = Scene(self._renderer)
         self._scene.set_document(doc)
         self.populate_tree()
 
@@ -74,6 +77,7 @@ class SceneManager(Dock):
     def populate_tree(self):
         self.tree.clear()
         print(f"called populate_tree")
+        
         if self._scene is None:
             return
         
@@ -97,9 +101,3 @@ class SceneManager(Dock):
             self.tree.setItemWidget(field_item,1,CheckBoxActive()) # TODO: hook up to a visibility / activate method
             self.tree.setItemWidget(field_item,2,CheckBoxVisible()) # TODO: hook up to a visibility / activate method
 
-
-
-            
-
-            
-    

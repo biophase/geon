@@ -43,7 +43,7 @@ class MainWindow(QMainWindow):
 
         # signals
         self.scene_manager.broadcastDeleteScene.connect(self.dataset_manager.on_clear_scene)
-        self.dataset_manager.documentLoaded.connect(self.scene_manager.on_document_loaded)
+        self.dataset_manager.requestSetActiveDocInScene.connect(self.scene_manager.on_document_loaded)
         
         self.menu_bar.setWorkdirRequested.connect(self.dataset_manager.set_work_dir)
         self.menu_bar.importFromRequested.connect(self.dataset_manager.import_doc_from_ply)

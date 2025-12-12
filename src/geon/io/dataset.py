@@ -9,19 +9,26 @@ from geon.version import GEON_FORMAT_VERSION
 from typing import Union, Optional
 from dataclasses import dataclass
 from enum import Enum, auto
+import traceback
 
-class DocumentState(Enum):
-    UNSAVED     = auto()
+
+class RefModState(Enum):
+    UNSPECIFIED = auto()
     MODIFIED    = auto()
     SAVED       = auto()
 
-
+class RefLoadedState(Enum):
+    UNSPECIFIED =auto()
+    REFERENCE   =auto()
+    LOADED      =auto()
+    ACTIVE      =auto()
 
 @dataclass
 class DocumentReference:
     _name: str
     _path: Optional[str]
-    _state: DocumentState = DocumentState.SAVED
+    _modState: RefModState      = RefModState.UNSPECIFIED
+    _loadedState:RefLoadedState = RefLoadedState.UNSPECIFIED
 
     # @classmethod
     # def create(cls, path: str) -> "DocumentReference":
@@ -31,7 +38,7 @@ class DocumentReference:
         if self.path is None:
             raise Exception("Attempted to load a reference with no path")
         doc = Document.load_hdf5(self.path)
-        self._state = DocumentState.SAVED
+        self._modState = RefModState.SAVED
         return doc
     
     @property
@@ -43,12 +50,21 @@ class DocumentReference:
         self._path = path
         
     @property
-    def state(self) -> DocumentState:
-        return self._state
+    def modState(self) -> RefModState:
+        return self._modState
+
+    @modState.setter
+    def modState(self, state: RefModState) -> None:
+        self._modState = state
+        
+    @property
+    def loadedState(self) -> RefLoadedState:
+        return self._loadedState
     
-    @state.setter
-    def state(self, state: DocumentState) -> None:
-        self._state = state
+    @loadedState.setter
+    def loadedState(self, state: RefLoadedState) -> None:
+        self._loadedState = state
+
     @property
     def name(self) -> str:
         return self._name
@@ -56,15 +72,20 @@ class DocumentReference:
         # if not len(split):
         #     return '<Corrupted path>'
         # return split[-1]
-    
-
-
 
 
 class Dataset:
+    """
+    The task of the dataset is two-fold:
+        1. It manages references to documents on disk
+        2. It holds onto loaded documents for modifications by a user
+    """
     def __init__(self, working_dir = None) -> None:
-        self._working_dir : Optional[str] = working_dir
-        self._doc_refs : list[DocumentReference] = []
+        self._working_dir:      Optional[str] = working_dir
+        self._doc_refs:         list[DocumentReference] = []
+        self._loaded_docs:      dict[str, Document] = {}
+        self._max_loaded_docs:  int = 5
+
 
         self.use_intermid_dirs: bool = True
 
@@ -72,6 +93,64 @@ class Dataset:
     @property
     def working_dir(self) -> Optional[str]:
         return self._working_dir
+    
+    def add_document(self, doc: Document) -> DocumentReference:
+        """
+        add a constructed document and create the reference for it
+        """
+        assert doc.name not in self.doc_ref_names
+        doc_ref = self.create_new_reference(doc)
+        self._loaded_docs[doc.name] = doc
+        self.pop_old_loaded()
+        return doc_ref
+        
+        
+        
+        
+    def pop_old_loaded(self) -> None:
+        if len(self._loaded_docs) > self._max_loaded_docs:
+                oldest_doc_name = list(self._loaded_docs.keys())[-1]
+                self._loaded_docs.pop(oldest_doc_name) 
+                for r in self.doc_refs:
+                    if r.name == oldest_doc_name:
+                        r._loadedState = RefLoadedState.REFERENCE
+                        
+    
+    def activate_reference(self, doc_ref: DocumentReference) -> Document:
+        """ load doc and move active pointer to reference """
+        doc = self._load_reference(doc_ref)
+        doc_ref.loadedState = RefLoadedState.ACTIVE
+        return doc
+    
+    def deactivate_current_ref(self) -> None:
+        for ref in self.doc_refs:
+            if ref.loadedState == RefLoadedState.ACTIVE:
+                ref._loadedState = RefLoadedState.LOADED
+    
+    def _load_reference(self, doc_ref: DocumentReference) -> Document:
+        
+        # check if already loaded and move to front
+        if doc_ref.name in self._loaded_docs.keys():
+            doc = self._loaded_docs.pop(doc_ref.name)
+            self._loaded_docs[doc.name] = doc
+            return doc
+        else:
+            doc = doc_ref.load()
+            doc_ref._loadedState = RefLoadedState.LOADED
+            self._loaded_docs[doc.name] = doc
+            self.pop_old_loaded()
+            return doc
+            
+    
+    def _unload_reference(self, doc_ref: DocumentReference):
+        # check if at all loaded
+        if doc_ref.name not in self._loaded_docs.keys():
+            return
+        else:
+            doc = self._loaded_docs.pop(doc_ref.name)
+            doc_ref._loadedState = RefLoadedState.REFERENCE
+            print(f"Unloaded document {doc.name}")
+            
     
     @working_dir.setter
     def working_dir(self, path: Union[Path,str]):
@@ -94,7 +173,7 @@ class Dataset:
         file_paths+= list(glob(osp.join(self.working_dir, "*", "*.h5")))
         
         print(f'called populate references {file_paths=}')
-        
+        traceback.print_stack()
         for fp in file_paths:
 
             with h5py.File(fp, "r") as f:
@@ -105,7 +184,15 @@ class Dataset:
                         f"Unsupported GEON format version {version} in {fp}; "
                         f"current version is {GEON_FORMAT_VERSION}"
                     )
-            self._doc_refs.append(DocumentReference(osp.split(fp)[-1],fp))
+            doc_ref = DocumentReference(
+                osp.split(fp)[-1],
+                fp,
+                RefModState.SAVED,
+                RefLoadedState.REFERENCE
+                )
+            if doc_ref.name not in self.doc_ref_names:
+                self._doc_refs.append(doc_ref)
+                
             
     @property
     def doc_refs(self):
@@ -115,16 +202,17 @@ class Dataset:
     @property
     def doc_ref_names(self) -> list[str]:
         return [ref.name for ref in self.doc_refs]
-    def create_new_reference(self, doc: Document) -> None:
+    def create_new_reference(self, doc: Document) -> DocumentReference:
         """
         This creates a refernce to a new in-memory doc, that is not yet saved on disk
         """
 
-        doc_ref = DocumentReference(doc.name, None, DocumentState.UNSAVED)
+        doc_ref = DocumentReference(doc.name, None, RefModState.MODIFIED)
         for ref in self.doc_refs:
             if doc_ref.name == ref:
                 raise ValueError(f"Attempted to add a DocumentReference with duplicate names: {doc_ref.name}")
         self._doc_refs.append(doc_ref)
+        return doc_ref
         
 
     

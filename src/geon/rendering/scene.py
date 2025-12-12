@@ -7,9 +7,18 @@ from geon.data.base import BaseData
 
 
 from collections import OrderedDict
+from enum import Enum, auto
 from typing import Optional, Mapping
 from types import MappingProxyType
 import vtk
+
+
+class SceneState(Enum):
+    REFERENCE   =auto()
+    LOADED      =auto()
+    ACTIVE      =auto()
+
+
 
 class DuplicateLayerNameError(Exception):
     pass

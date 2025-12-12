@@ -1,4 +1,4 @@
-from geon.io.dataset import Dataset, DocumentState
+from geon.io.dataset import Dataset, RefModState, DocumentReference, RefLoadedState
 from geon.data.document import Document
 from geon.rendering.scene import Scene
 
@@ -20,14 +20,18 @@ from PyQt6.QtGui import QFontMetrics
 
 
 class DatasetManager(Dock):
-    documentLoaded      = pyqtSignal(Document)
+    requestSetActiveDocInScene      = pyqtSignal(Document)
     
 
     def __init__(self, parent) -> None:
         super().__init__("Datasets", parent)
+        
+        # containers
         self._dataset: Optional[Dataset] = None
+        self._active_doc_name: Optional[str] = None
+        
+        # settings
         self.create_intermidiate_folder = True
-
         # overlay widget
         self.stack = QStackedWidget()
         self.overlay_label = QLabel("No Dataset Work Directory set")
@@ -46,12 +50,12 @@ class DatasetManager(Dock):
         self.stack.addWidget(page)                  # index 1
 
         self.setWidget(self.stack)
-        self.tree.setHeaderLabels(["","Scene name", "Status", "Path on disk"])
+        self.tree.setHeaderLabels(["","Scene name", "Modified", "Loaded", "Path on disk"])
         self.tree.setTextElideMode(Qt.TextElideMode.ElideMiddle)
         self.tree_button_group = QButtonGroup(self)
         self.tree_button_group.setExclusive(True)
         
-        self._active_scene_name: Optional[str] = None
+        
 
 
     def set_dataset(self, dataset: Optional[Dataset]):
@@ -70,14 +74,23 @@ class DatasetManager(Dock):
         else:
             self.stack.setCurrentIndex(1)  # show tree
 
+    def set_active_doc(self, doc_ref: DocumentReference) -> Optional[Document]:
+        if self._dataset is None:
+            return
+        if doc_ref.loadedState == RefLoadedState.ACTIVE:
+            print(f"Reference {doc_ref.name} is already active.")
+            return
+        self._dataset.deactivate_current_ref()
+        doc = self._dataset.activate_reference(doc_ref)        
+        self.requestSetActiveDocInScene.emit(doc)
+        return doc
 
     def on_clear_scene(self, scene: Scene,ignore_state=False) -> None:
         if self._dataset is None:
             return
         for ref in self._dataset.doc_refs:
             if ref.name == scene.doc.name and (
-                ref.state is DocumentState.MODIFIED or
-                ref.state is DocumentState.UNSAVED or 
+                ref.modState is RefModState.MODIFIED or
                 ignore_state
                 ):
                 if ref.path is None:
@@ -110,7 +123,7 @@ class DatasetManager(Dock):
                                 osp.join(work_dir,f"{ref.name}.h5")
                     
                 scene.doc.save_hdf5(ref.path)
-                ref.state = DocumentState.SAVED
+                ref.modState = RefModState.SAVED
         self.populate_tree()
                 
 
@@ -123,18 +136,10 @@ class DatasetManager(Dock):
                 raise ValueError(f'Duplicate names detected in dataset:{ref_name}')
             unique_names.append(ref_name)
 
-    #
+    
 
 
-                
-
-        
-        
-        
-    def set_active_scene(self, scene_name:str, save_old:bool = True) -> None:
-        # old_scene = self.
-        ...
-        # TODO:
+    
     def populate_tree(self):     
         self.tree.clear()
         if self._dataset is None:
@@ -143,14 +148,23 @@ class DatasetManager(Dock):
         self._dataset.populate_references()
 
         for doc_ref in self._dataset._doc_refs:
-            item = QTreeWidgetItem(["",doc_ref.name, doc_ref.state.name, doc_ref.path])
+            item = QTreeWidgetItem([
+                "",
+                doc_ref.name, 
+                doc_ref.modState.name, 
+                doc_ref.loadedState.name, 
+                doc_ref.path])
             self.tree.addTopLevelItem(item)
             activate_btn = QRadioButton()
             self.tree_button_group.addButton(activate_btn)
             self.tree.setItemWidget(item,0,activate_btn)
+            activate_btn.clicked.connect(
+                lambda checked, ref=doc_ref: checked and self.set_active_doc(ref)
+                ) 
         self.tree.expandAll()
         self.update_tree_visibility()
-
+    
+        
     def set_work_dir(self) -> bool:
         """
         Set a working dir and return `True` for success
@@ -202,9 +216,12 @@ class DatasetManager(Dock):
             suffix += 1
         doc = Document(name)
         doc.add_data(dlg.point_cloud)
-        self._dataset.create_new_reference(doc)
+        
+        doc_ref = self._dataset.add_document(doc)
         self.populate_tree()
-        print(list(self._dataset._doc_refs))
-        self.documentLoaded.emit(doc)
+        self.set_active_doc(doc_ref)
+       
+        
+        
 
         

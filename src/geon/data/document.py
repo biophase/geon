@@ -1,4 +1,5 @@
 from typing import Any, Union
+from enum import Enum, auto
 import h5py
 from geon.data.base import BaseData
 from geon.version import GEON_FORMAT_VERSION
@@ -11,6 +12,13 @@ import os
 
 from typing import Optional
 
+class LoadedState(Enum):
+    UNSPECIFIED =auto()
+    REFERENCE   =auto()
+    LOADED      =auto()
+    ACTIVE      =auto()
+
+
 class Document:
     def __init__(self, name:str = 'Untitled'):
         self.name = name
@@ -18,8 +26,9 @@ class Document:
         self.meta: dict[str, Any] = {
             'name':name
             }
+        self._loaded_state: LoadedState = LoadedState.UNSPECIFIED
         
-        
+
     def save_hdf5(self, path : Union[str, Path]):
         dir_path, file_path = osp.split(path)
         os.makedirs(dir_path, exist_ok=True)
