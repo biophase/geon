@@ -1,4 +1,4 @@
-from typing import Type, Dict
+from typing import Type, Dict, Any, TypeVar, Callable
 from geon.data.base import BaseData
 from .base import BaseLayer
 
@@ -18,9 +18,12 @@ class LayerRegistry:
 
 layer_registry = LayerRegistry()
 
-def layer_for(data_cls: Type[BaseData]):
+DataT = TypeVar("DataT", bound=BaseData)
+LayerT = TypeVar("LayerT", bound=BaseLayer[Any])
+
+def layer_for(data_cls: type[DataT]) -> Callable[[type[LayerT]], type[LayerT]]:
     """Decorator to register a Layer subclass for a given Data subclass."""
-    def decorator(layer_cls: Type[BaseLayer]):
+    def decorator(layer_cls: type[LayerT]) -> type[LayerT]:
         layer_registry.register(data_cls, layer_cls)
         return layer_cls
     return decorator

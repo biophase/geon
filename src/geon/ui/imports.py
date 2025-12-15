@@ -24,10 +24,7 @@ from PyQt6.QtWidgets import (
     QCheckBox
 )
 
-# ---------------------------------------------------------------------------
-# Adjust these imports to match your package structure
-# ---------------------------------------------------------------------------
-# from .point_cloud_data_module import PointCloudData, FieldType, SemanticSchema, ColorMap
+
 from geon.data.pointcloud import (
     PointCloudData,
     FieldType,
@@ -737,7 +734,7 @@ class ImportPLYDialog(QDialog):
         return True
 
     # ------------------------------------------------------------------
-    # Public: get mappings (if you want raw mapping info)
+    # Public: get mappings 
     # ------------------------------------------------------------------
 
     def get_mappings(self) -> List[Dict[str, Any]]:

@@ -75,6 +75,7 @@ class Scene:
         Provide a read-only view of the layers
         """
         return MappingProxyType(self._layers)
+
     
     # @property
     # def browser_report(self) -> dict:

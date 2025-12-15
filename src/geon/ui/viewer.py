@@ -79,7 +79,7 @@ class VTKViewer(QWidget):
         
         
         
-    def render(self):
+    def rerender(self):
         self.vtkWidget.GetRenderWindow().Render()
         
     
@@ -87,6 +87,6 @@ class VTKViewer(QWidget):
         b = actor.GetBounds()
         self._renderer.ResetCamera(b)
         self._renderer.ResetCameraClippingRange()
-        self.render()
+        self.rerender()
         
 

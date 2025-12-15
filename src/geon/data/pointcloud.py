@@ -269,6 +269,11 @@ class PointCloudData(BaseData):
             structured[name] = values
 
         return structured
+    
+    # def reset_cmap_bounds(self, field_names:list[str]):
+    #     for field in  self.get_fields(names=field_names):
+    #         if field.color_map is not None:
+    #             field.color_map.color_positions[0]
 
    
 @dataclass

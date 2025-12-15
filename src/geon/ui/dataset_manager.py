@@ -1,6 +1,7 @@
 from geon.io.dataset import Dataset, RefModState, DocumentReference, RefLoadedState
 from geon.data.document import Document
 from geon.rendering.scene import Scene
+from config.common import KNOWN_FILE_EXTENSIONS
 
 from .imports import ImportPLYDialog
 from .common import ElidedLabel, Dock
@@ -209,7 +210,13 @@ class DatasetManager(Dock):
         
         # generate candidate name from imported ply name
         name_cand = osp.split(file_path)[-1]
-        name = name_cand
+        
+        file_name, file_ext = osp.splitext(name_cand)
+        if file_ext not in KNOWN_FILE_EXTENSIONS:
+            name = name_cand
+        else:
+            name = file_name
+
         suffix = 0
         while name in self._dataset.doc_ref_names:
             name = f"{name_cand}_{suffix:03}"

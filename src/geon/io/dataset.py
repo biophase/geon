@@ -129,6 +129,7 @@ class Dataset:
     
     def _load_reference(self, doc_ref: DocumentReference) -> Document:
         
+        pass
         # check if already loaded and move to front
         if doc_ref.name in self._loaded_docs.keys():
             doc = self._loaded_docs.pop(doc_ref.name)
@@ -184,8 +185,11 @@ class Dataset:
                         f"Unsupported GEON format version {version} in {fp}; "
                         f"current version is {GEON_FORMAT_VERSION}"
                     )
+                raw_name = f['document'].attrs.get('name')
+                doc_name = raw_name.decode() if isinstance(raw_name, bytes) else str(raw_name)
             doc_ref = DocumentReference(
-                osp.split(fp)[-1],
+                # osp.split(fp)[-1],
+                doc_name,
                 fp,
                 RefModState.SAVED,
                 RefLoadedState.REFERENCE

@@ -57,6 +57,20 @@ class PointCloudLayer(BaseLayer[PointCloudData]):
         self._populate_vf_active_index()
         return self._vf_active_index
 
+    @property
+    def active_field_name(self) -> Optional[str]:
+        return self._active_field_name
+    
+
+    @active_field_name.setter
+    def active_field_name(self, field_name:str) -> None:
+        assert field_name in self.data.field_names
+        self._active_field_name = field_name
+
+    def set_active_field_name(self, name:str):
+        self.active_field_name = name
+        self.update()
+
     def _init_visibility_mask(self)->None:
         if self.data.points.ndim < 2:
             raise Exception\
@@ -111,20 +125,11 @@ class PointCloudLayer(BaseLayer[PointCloudData]):
 
         self._init_visibility_mask()
 
-        # further methods from old code:
-        # self.renderer.RemoveAllViewProps()
-        # self.renderer.AddActor(actor)
-        # self.renderer.ResetCamera()
-        # self.set_pivot_point(initial_pivot)
-        # self.update_interactor()
-        # self.vtkWidget.GetRenderWindow().Render()
-        # # Apply initial colors (which will use the visibility mask)
-        # self.update_point_cloud_actor_colors(self.all_colors)
-
 
 
     def update(self) -> None:
         ctf = None
+        scalar_range = None
 
         if self._poly is None or self._mapper_fine is None:
             return
@@ -140,6 +145,12 @@ class PointCloudLayer(BaseLayer[PointCloudData]):
         colors_np : Optional[NDArray[np.uint8]] = None # (N,3) colors
         scalars_np : Optional[NDArray[np.float32]] = None # (N,) scalar
 
+        def construct_default_cmap(scalars_np: np.ndarray, cmap_type:Optional[str] = None):
+
+            smin, smax = scalars_np.min(), scalars_np.max()
+            c_pos = np.array([smin, smax])
+            cmap = ColorMap.get_cmap(cmap_type,tuple(c_pos.tolist()))
+            return cmap
         
         # get colors/scalars for active field
         # TODO: implement for coarse_mapper without code duplication
@@ -148,7 +159,6 @@ class PointCloudLayer(BaseLayer[PointCloudData]):
             if self._main_actor is not None:
                 r,g,b, = theme.DEFAULT_OBJ_COLOR
                 self._main_actor.GetProperty().SetColor(r,g,b)
-                
 
         else:
             
@@ -163,17 +173,19 @@ class PointCloudLayer(BaseLayer[PointCloudData]):
                 elif np.all(np.logical_and(0 <= data_visible, data_visible <= 255)):
                     colors_np = data_visible.astype(np.uint8)
             
-            elif field.field_type == FieldType.SCALAR:
+            elif field.field_type == FieldType.SCALAR or\
+                    field.field_type == FieldType.INTENSITY:
+                cmap_type = 'gray' if field.field_type == FieldType.INTENSITY else None
                 scalars_np = np.asarray(data_visible, dtype=np.float32).reshape(-1)
-                color_map = field.color_map or ColorMap('default')
-                ctf = build_vtk_color_transfer_function(color_map)
+                color_map = field.color_map or construct_default_cmap(scalars_np, cmap_type)
+                ctf, scalar_range = build_vtk_color_transfer_function(color_map)
             
             elif field.field_type == FieldType.VECTOR:
                 ind = self.vf_active_index[field.name]
                 ind = max(0, min(ind, data_visible.shape[1] - 1))
                 scalars_np = data_visible[:,ind]
-                color_map = field.color_map or ColorMap('default')
-                ctf = build_vtk_color_transfer_function(color_map)
+                color_map = field.color_map or construct_default_cmap(scalars_np)
+                ctf, scalar_range = build_vtk_color_transfer_function(color_map)
 
             elif field.field_type == FieldType.SEMANTIC:
                 assert isinstance(field, SemanticSegmentation), "Unmatching definition."
@@ -210,12 +222,19 @@ class PointCloudLayer(BaseLayer[PointCloudData]):
         elif scalars_np is not None:
             vtk_scalars = ns.numpy_to_vtk(scalars_np, deep=False)
             vtk_scalars.SetNumberOfComponents(1)
+            self._poly.GetPointData().SetScalars(vtk_scalars)
             
             self._mapper_fine.SetScalarModeToUsePointData()
             self._mapper_fine.ScalarVisibilityOn()
-            if ctf is not None:
+
+            if ctf is not None and scalar_range is not None:
+                # print(ctf)
+                # print(scalar_range)
+                # raise Exception
                 self._mapper_fine.SetLookupTable(ctf)
                 self._mapper_fine.SetUseLookupTableScalarRange(True)
+                self._mapper_fine.SetScalarRange(*scalar_range)
+
         else:
             self._mapper_fine.ScalarVisibilityOff()
         self._poly.Modified()
