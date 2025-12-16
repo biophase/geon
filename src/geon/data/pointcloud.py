@@ -3,6 +3,7 @@ import pickle
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Dict, List, Literal, Optional, Tuple, TypedDict, Type, Union, cast
+from pathlib import Path
 
 import h5py
 import numpy as np
@@ -335,8 +336,8 @@ class SemanticClass:
     name:   str
     color:  Tuple[int,int,int]
 
-    def __hash__(self) -> int:
-        return hash((self.id, self.name))
+    # def __hash__(self) -> int:
+    #     return hash((self.id, self.name))
 
 
 class SemanticSchema:
@@ -390,8 +391,12 @@ class SemanticSchema:
         return cls.from_dict(json.loads(s))
         
 
-    def __hash__(self) -> int:
-        return hash(tuple(self.semantic_classes))
+    def signature(self) -> tuple:
+        classes = sorted(self.semantic_classes, key =lambda c: c.id)
+        return tuple((c.id, c.name, tuple(c.color)) for c in classes)
+        
+    # def __hash__(self) -> int:
+    #     return hash(tuple(self.semantic_classes))
     
     def add_semantic_class(self, semantic_class : Union[str, SemanticClass]) -> None:
         if isinstance (semantic_class,str):
@@ -443,6 +448,95 @@ class SemanticSchema:
        
         return map_arr[seg_data]
         
+    @classmethod
+    def scan_h5(cls, path: Union[str, Path]) -> Dict[str, "SemanticSchema"]:
+        """
+        Fast scan of a GEON .h5/.hdf5 document file to extract SemanticSchema objects.
+
+        Key format:
+            "{document_name}/{pointcloud_id}/{semantic_field_name}/{schema_name}"
+
+        Notes:
+        - Does NOT load point cloud points or segmentation data arrays.
+        - Reads only small attributes and the scalar-string 'semantic_schema' dataset.
+        """
+        
+        path = Path(path)
+        out: Dict[str, SemanticSchema] = {}
+        
+        def _decode_utf8(value) -> str:
+            """Local fallback; replace with your decode_utf8 if you prefer."""
+            if isinstance(value, (bytes, bytearray)):
+                return value.decode("utf-8")
+            return str(value)
+
+        with h5py.File(path, "r") as f:
+            doc_grp = f.get("document")
+            if not isinstance(doc_grp, h5py.Group):
+                raise ValueError(f"No '/document' group in file: {path}")
+
+            # document name (stored as attribute on /document)
+            doc_name_attr = doc_grp.attrs.get("name", "UnnamedDocument")
+            document_name = _decode_utf8(doc_name_attr)
+
+            # Iterate document children (e.g. PCD_0001, ...)
+            for pc_id in doc_grp.keys():
+                pc_grp = doc_grp.get(pc_id)
+                if not isinstance(pc_grp, h5py.Group):
+                    continue
+
+                # Optional: ensure it's a PointCloudData group (fast attribute check)
+                type_id = pc_grp.attrs.get("type_id", pc_grp.attrs.get("type"))
+                if type_id is not None:
+                    type_id_str = _decode_utf8(type_id)
+                    # your PointCloudData.save_hdf5 uses type_id = self.get_type_id()
+                    # which is likely "PointCloudData"
+                    if type_id_str not in ("PointCloudData", "PointCloud"):  # keep lenient if you rename later
+                        continue
+
+                fields_grp = pc_grp.get("fields")
+                if not isinstance(fields_grp, h5py.Group):
+                    continue
+
+                # Iterate fields under /fields (e.g. "intensity", "semantics", ...)
+                for field_name in fields_grp.keys():
+                    field_grp = fields_grp.get(field_name)
+                    if not isinstance(field_grp, h5py.Group):
+                        continue
+
+                    # Fast check: field_type is stored on the *data dataset* attrs in your save code
+                    data_ds = field_grp.get("data")
+                    if not isinstance(data_ds, h5py.Dataset):
+                        continue
+
+                    ft = data_ds.attrs.get("field_type")
+                    if ft is None:
+                        continue
+                    field_type = _decode_utf8(ft)
+                    if field_type != "SEMANTIC":
+                        continue
+
+                    # The schema is stored as a scalar-string dataset "semantic_schema" with JSON payload
+                    schema_ds = field_grp.get("semantic_schema")
+                    if not isinstance(schema_ds, h5py.Dataset):
+                        # semantic field without schema dataset: skip (or create default if you prefer)
+                        continue
+
+                    raw = schema_ds[()]  # scalar string/bytes, tiny
+                    schema_json = raw.decode("utf-8") if isinstance(raw, (bytes, bytearray)) else str(raw)
+                    semantic_dict = json.loads(schema_json)
+
+                    schema = SemanticSchema.from_dict(semantic_dict)
+
+                    schema_name_attr = schema_ds.attrs.get("name", schema.name)
+                    schema_name = _decode_utf8(schema_name_attr)
+                    schema.name = schema_name  # keep name consistent with stored attribute
+
+                    # Build key: document_name/pointcloud_name/semantic_field_name/semantic_schema_name
+                    key = f"{document_name}/{pc_id}/{field_name}/{schema_name}"
+                    out[key] = schema
+
+        return out
 
     
 def mex(data:np.ndarray)->int:

@@ -191,21 +191,22 @@ class DatasetManager(Dock):
         return True
 
     def import_doc_from_ply(self):
+        if self._dataset is None:
+            self.set_work_dir()
+            if self._dataset is None:
+                return
+        
         file_path, _ = QFileDialog.getOpenFileName(self, "Open PLY File", "", "PLY Files (*.ply)")
         allow_doc_appending = False
         dlg = ImportPLYDialog(
             ply_path=file_path,
-            semantic_schemas={},
+            semantic_schemas= {s.name : s for s in self._dataset.unique_semantic_schemas},
             color_maps={}, 
             allow_doc_appending=allow_doc_appending, 
             parent=self)
         dlg.exec()
         if dlg.point_cloud is None:
             return
-        if self._dataset is None:
-            self.set_work_dir()
-            if self._dataset is None:
-                return
                 
         
         # generate candidate name from imported ply name

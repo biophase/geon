@@ -1,12 +1,12 @@
 main/*
-
+*pyc
 _archive/*
 data/flatLabels/*
 data/FWF_flat/*
 data/_old/*
 data/_temp/*
+data/cc/*
 data/test_dataset/*
 *.h5
 *.hdf5
-
 

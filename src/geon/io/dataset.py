@@ -5,11 +5,14 @@ from pathlib import Path
 import h5py
 
 from geon.data.document import Document
+from geon.data.pointcloud import SemanticSchema, PointCloudData, SemanticSegmentation
+
 from geon.version import GEON_FORMAT_VERSION
 from typing import Union, Optional
 from dataclasses import dataclass
 from enum import Enum, auto
-import traceback
+# import traceback
+from copy import deepcopy
 
 
 class RefModState(Enum):
@@ -174,7 +177,7 @@ class Dataset:
         file_paths+= list(glob(osp.join(self.working_dir, "*", "*.h5")))
         
         print(f'called populate references {file_paths=}')
-        traceback.print_stack()
+        # traceback.print_stack()
         for fp in file_paths:
 
             with h5py.File(fp, "r") as f:
@@ -197,6 +200,46 @@ class Dataset:
             if doc_ref.name not in self.doc_ref_names:
                 self._doc_refs.append(doc_ref)
                 
+    
+    
+    def _get_semantic_schemas(self) -> tuple[dict[str,SemanticSchema], dict[str,SemanticSchema]]:
+
+        referenced_schemas  : dict[str, SemanticSchema] = dict()
+        loaded_schemas      : dict[str, SemanticSchema] = dict()
+
+        for ref in self.doc_refs:
+            # gather schemas from referenced documents
+            if ref.loadedState == RefLoadedState.REFERENCE:
+                assert ref.path is not None
+                referenced_schemas = referenced_schemas | SemanticSchema.scan_h5(ref.path)
+                
+            # gather schemas from loaded docs
+            elif (ref.loadedState == RefLoadedState.LOADED or 
+                  ref.loadedState == RefLoadedState.ACTIVE):
+                
+                for data_name, data in self._loaded_docs[ref.name].scene_items.items():
+                    if isinstance(data, PointCloudData):
+                        for field in data.get_fields():
+                            if isinstance (field, SemanticSegmentation):
+                                build_key = f"{ref.name}/{data_name}/{field.name}/{field.schema.name}"
+                                loaded_schemas[build_key] = field.schema
+        return referenced_schemas, loaded_schemas
+                
+    @property
+    def unique_semantic_schemas(self) -> list[SemanticSchema]:
+        out = {}
+        # get all schemas in the document
+        schemas = self._get_semantic_schemas()
+        schemas = schemas[0] | schemas[1] # referenced and loaded
+        
+        # reduce to unique
+        for schema in schemas.values():
+            if schema.signature() not in out.keys():
+                out[schema.signature()] = deepcopy(schema)
+                
+        out = list(out.keys())
+        return out
+        
             
     @property
     def doc_refs(self):

@@ -21,7 +21,8 @@ from PyQt6.QtWidgets import (
     QSpinBox,
     QDialogButtonBox,
     QMessageBox,
-    QCheckBox
+    QCheckBox,
+    QSizePolicy
 )
 
 
@@ -60,7 +61,8 @@ class ImportPLYDialog(QDialog):
     OUT_NAME_COL = 0
     OUT_TYPE_COL = 1
     OUT_NCOLS_COL = 2
-    OUT_BTN_COL = 3
+    OUT_RESOURCE_COL = 3
+    OUT_BTN_COL = 4 # script assumes the OUT_BTN_COL is always last
 
     def __init__(
         self,
@@ -85,6 +87,7 @@ class ImportPLYDialog(QDialog):
         self._create_new_doc_flag : bool = True
         self._allow_doc_appending : bool = allow_doc_appending
         self._taken_doc_names: list[str] = taken_doc_names
+        # self._schema_by_output_row: dict[int, Optional[SemanticSchema]] = {}
 
         self._load_ply()
         self._build_ui()
@@ -127,6 +130,79 @@ class ImportPLYDialog(QDialog):
     # UI construction
     # ------------------------------------------------------------------
 
+    def _make_resource_combo(self) -> QComboBox:
+        combo = QComboBox(self.output_table)
+        combo.addItem("_") # placeholder
+        combo.setEnabled(False)
+        return combo
+    
+    def _populate_resource_combo(self, row:int) -> None:
+        if self._is_add_row(row) or self._is_coordinates_row(row):
+            return
+        
+        type_combo = self.output_table.cellWidget(row, self.OUT_TYPE_COL)
+        res_combo = self.output_table.cellWidget(row, self.OUT_RESOURCE_COL)
+        
+        if not isinstance(type_combo, QComboBox) or not isinstance(res_combo, QComboBox):
+            return
+        
+        ftype: FieldType = type_combo.currentData()
+        
+        prev_key = res_combo.currentData()
+        res_combo.blockSignals(True)
+        res_combo.clear()
+        
+        if ftype == FieldType.COLOR:
+            res_combo.setEnabled(False)
+            res_combo.addItem("-", None)
+        
+        elif ftype == FieldType.SEMANTIC:
+            res_combo.setEnabled(True)
+            res_combo.addItem("Empty", None)
+            for key, schema in self.semantic_schemas.items():
+                res_combo.addItem(schema.name, key)
+                
+        else:
+            res_combo.setEnabled(False)
+            res_combo.addItem("-", None)
+            
+        # restore selection if present
+        if prev_key is not None:
+            ix = res_combo.findData(prev_key)
+            if ix >= 0:
+                res_combo.setCurrentIndex(ix)
+            else:
+                res_combo.setCurrentIndex(0)
+                
+        res_combo.blockSignals(False)
+            
+            
+        
+    # def _make_schema_cell_widget(self, row: int) -> QWidget:
+    #     w = QWidget(self.output_table)
+    #     lay = QHBoxLayout(w)
+    #     lay.setContentsMargins(6,0,6,0)
+    #     lay.setSpacing(6)
+        
+        
+    #     label = QLabel(w)
+    #     label.setObjectName('schemaLabel')
+    #     label.setText("Empty")
+    #     label.setStyleSheet('color: rgba(0,0,0,120);')
+    #     label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        
+    #     btn = QPushButton("...", w)
+    #     btn.setObjectName('schemaBtn')
+    #     btn.setFixedWidth(28)
+    #     # btn.clicked.connect(lambda _checked=False, r=row: self._on_choose_schema_clicked(r))
+        
+    #     lay.addWidget(label, 1)
+    #     lay.addWidget(btn,0)
+    #     return w
+    
+    
+        
+        
     def _build_ui(self) -> None:
         main_layout = QVBoxLayout(self)
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -161,9 +237,9 @@ class ImportPLYDialog(QDialog):
         right_label.setStyleSheet("font-weight: bold;")
         right_layout.addWidget(right_label)
 
-        self.output_table = QTableWidget(0, 4, self)
+        self.output_table = QTableWidget(0, 5, self)
         self.output_table.setHorizontalHeaderLabels(
-            ["Name", "Field type", "# columns", ""]
+            ["Name", "Field type", "# columns", "Schema", ""]
         )
         cast(QHeaderView, self.output_table.horizontalHeader()).setSectionResizeMode(
             QHeaderView.ResizeMode.Stretch
@@ -301,10 +377,16 @@ class ImportPLYDialog(QDialog):
         ncols_spin.setEnabled(False)
         self.output_table.setCellWidget(row, self.OUT_NCOLS_COL, ncols_spin)
 
+        # resources
+        res_combo = self._make_resource_combo()
+        self.output_table.setCellWidget(row, self.OUT_RESOURCE_COL, res_combo)
+                
         # Button: none / disabled
         btn = QPushButton("", self.output_table)
         btn.setEnabled(False)
         self.output_table.setCellWidget(row, self.OUT_BTN_COL, btn)
+        
+        
 
     def _insert_output_field_row(
         self,
@@ -343,7 +425,12 @@ class ImportPLYDialog(QDialog):
         )
         self.output_table.setCellWidget(row, self.OUT_NCOLS_COL, ncols_spin)
 
-        # Column 3: remove button
+        # Column 3: schema / colormap selector
+        res_combo = self._make_resource_combo()
+        self.output_table.setCellWidget(row, self.OUT_RESOURCE_COL, res_combo)
+        
+        
+        # Column 4: remove button
         btn = QPushButton("-", self.output_table)
         btn.clicked.connect(
             lambda _checked, r=row: self._remove_output_field_row(r)
@@ -474,6 +561,7 @@ class ImportPLYDialog(QDialog):
                 ncols_spin.setValue(1)
 
         self._update_index_enablement_for_all_inputs()
+        self._populate_resource_combo(row)
 
     # ------------------------------------------------------------------
     # Output table signal handlers
@@ -845,10 +933,12 @@ class ImportPLYDialog(QDialog):
             )
             ncols = ncols_spin.value()
 
-            output_fields[name] = (r, ftype, ncols)
+            res_combo = self.output_table.cellWidget(r, self.OUT_RESOURCE_COL)
+            res_key = res_combo.currentData() if isinstance(res_combo, QComboBox) else None
+            output_fields[name] = r, ftype, ncols, res_key
 
         # For each field, allocate a data array and fill from mappings
-        for out_name, (out_row, ftype, ncols) in output_fields.items():
+        for out_name, (out_row, ftype, ncols, res_key) in output_fields.items():
             # Choose dtype
             if ftype in (FieldType.SEMANTIC, FieldType.INSTANCE):
                 dtype = np.int32
@@ -893,8 +983,8 @@ class ImportPLYDialog(QDialog):
             if ftype == FieldType.SEMANTIC:
                 # Pick a schema (here: first available, or default)
                 schema = None
-                if self.semantic_schemas:
-                    schema = next(iter(self.semantic_schemas.values()))
+                if res_key is not None:
+                    schema = self.semantic_schemas.get(res_key, SemanticSchema())
                 pcd.add_field(
                     name=out_name,
                     data=data,
@@ -909,7 +999,7 @@ class ImportPLYDialog(QDialog):
                     vector_dim_hint=ncols,
                 )
 
-                # Attach ColorMap for COLOR fields (via FieldBase.color_map)
+                # Attach ColorMap for COLOR fields (via FieldBase.color_map) FIXME: fix color maps
                 if ftype == FieldType.COLOR and self.color_maps:
                     cmap = next(iter(self.color_maps.values()))
                     field = pcd.get_fields(names=out_name)[0]
