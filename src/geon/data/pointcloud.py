@@ -93,6 +93,9 @@ class PointCloudData(BaseData):
                     continue
 
                 ft_attr = field_group.attrs.get("field_type")
+                
+                # FIXME: field type needs to be saved as attribute of the group
+                
                 field_type = FieldType[decode_utf8(ft_attr)] if ft_attr is not None else FieldType.SCALAR
                 field_class = FieldType.get_class(field_type)
                 field = field_class.from_hdf5_fieldgroup(field_group)
@@ -286,22 +289,27 @@ class FieldBase:
     
     def save_hdf5(self, fields_group: h5py.Group) -> h5py.Group:
         field_group = fields_group.create_group(self.name)
+        field_group.attrs['field_type'] = self.field_type.name
+        
         field_dataset = field_group.create_dataset('data', self.data.shape,data=self.data)
-        field_dataset.attrs['field_type'] = self.field_type.name
 
         # save cmap
         if self.color_map is not None:
             self.color_map.save_h5py(field_group)
         return field_group
     
-    @classmethod
-    def from_hdf5_fieldgroup(cls, field_group: h5py.Group) -> "FieldBase":
+    @staticmethod
+    def _read_hdf5_fieldgroup(field_group: h5py.Group) -> tuple[str, np.ndarray, FieldType, Optional[ColorMap]]:
+        """
+        returns (name, data, field_type, color_map)
+        """
         main_dataset = field_group.get('data', None)
         if main_dataset is None or not isinstance(main_dataset, h5py.Dataset): 
             raise ValueError("Invalid format.")
         data = main_dataset[()]
 
-        ft_attr = main_dataset.attrs.get("field_type")
+        ft_attr = field_group.attrs.get("field_type")
+        
         field_type = FieldType[decode_utf8(ft_attr)] if ft_attr is not None else FieldType.SCALAR
         name = field_group.name
         assert isinstance(name, str)
@@ -314,6 +322,11 @@ class FieldBase:
         else:
             color_map = None
         
+        return name, data, field_type, color_map
+    
+    @classmethod
+    def from_hdf5_fieldgroup(cls, field_group: h5py.Group) -> "FieldBase":
+        name, data, field_type, color_map = cls._read_hdf5_fieldgroup(field_group)
         return cls(name, data, field_type, color_map)
     
 
@@ -380,7 +393,7 @@ class SemanticSchema:
         ds.attrs['name'] = self.name
     
     @classmethod
-    def from_h5py_fieldgroup(cls, field_group: "h5py.Group"):
+    def from_hdf5_fieldgroup(cls, field_group: "h5py.Group"):
         dataset = field_group.get("semantic_schema")
         assert  isinstance(dataset, h5py.Dataset), "Invalid file."
         val = dataset[()]
@@ -435,18 +448,21 @@ class SemanticSchema:
             raise IndexError(f"Index {id} is not in the schema")
 
     def get_color_array(self, seg_data: NDArray[np.int32]) -> NDArray[np.uint8]:
-        seg_data = np.asarray(seg_data, np.int32)
-        
-        ids = [s.id for s in self.semantic_classes]
-        size = max(max(ids), seg_data.max())
+        seg_data = np.asarray(seg_data, np.int32).reshape(-1)
 
-        # populate the mapping array. -1 maps at end
-        map_arr = np.zeros((size + 2, 3), np.uint8)
-        map_arr[:] = theme.DEFAULT_SEGMENTATION_COLOR
-        for i in range(size):
-            map_arr[i] = np.array(self.by_id(i).color)
-       
-        return map_arr[seg_data]
+        ids = [s.id for s in self.semantic_classes]
+        max_id = max(max(ids), seg_data.max())
+        map_arr = np.full((max_id + 2, 3), theme.DEFAULT_SEGMENTATION_COLOR, np.uint8)
+
+        for cls in self.semantic_classes:
+            if cls.id >= 0:
+                map_arr[cls.id] = np.array(cls.color, dtype=np.uint8)
+            elif cls.id == -1:
+                map_arr[-1] = np.array(cls.color, dtype=np.uint8)
+
+        seg_clipped = np.clip(seg_data, -1, map_arr.shape[0] - 1)
+        return map_arr[seg_clipped]
+
         
     @classmethod
     def scan_h5(cls, path: Union[str, Path]) -> Dict[str, "SemanticSchema"]:
@@ -503,13 +519,18 @@ class SemanticSchema:
                     field_grp = fields_grp.get(field_name)
                     if not isinstance(field_grp, h5py.Group):
                         continue
-
+                    
+                    # if 'field_type' not in field_grp.attrs:
+                    #     continue
+                    ft = field_grp.attrs.get('field_type')
                     # Fast check: field_type is stored on the *data dataset* attrs in your save code
-                    data_ds = field_grp.get("data")
-                    if not isinstance(data_ds, h5py.Dataset):
-                        continue
+                    # data_ds = field_grp.get("data")
+                    # if not isinstance(data_ds, h5py.Dataset):
+                    #     continue
+                    
 
-                    ft = data_ds.attrs.get("field_type")
+
+                    # ft = data_ds.attrs.get("field_type")
                     if ft is None:
                         continue
                     field_type = _decode_utf8(ft)
@@ -579,7 +600,8 @@ class InstanceSegmentation(FieldBase):
         """
         
         # Knuth multiplicative hash
-        hashed = (self.data * 2654435761) & 0xFFFFFFFF
+        data = self.data.reshape(-1)
+        hashed = (data * 2654435761) & 0xFFFFFFFF
         h = (hashed.astype(np.float32) / np.float32(2**32)) 
         s = np.full_like(h, .9, dtype=np.float32)
         v = np.full_like(h, .9, dtype=np.float32)
@@ -610,6 +632,7 @@ class SemanticSegmentation(FieldBase):
                  ):
         if data is not None:
             assert isinstance (data, np.ndarray), f"data should be a numpy array but got {type(data)}"
+            data = np.asarray(data, np.int32).reshape(-1)
             super().__init__(name, data.astype(np.int32), FieldType.SEMANTIC)
         elif size is not None:
             super().__init__(name, np.full(size,-1, dtype=np.int32), FieldType.SEMANTIC)
@@ -630,15 +653,16 @@ class SemanticSegmentation(FieldBase):
     
     @classmethod
     def from_hdf5_fieldgroup(cls, field_group: h5py.Group) -> "SemanticSegmentation":
-        dataset = field_group.get('data')
-        assert isinstance(dataset, h5py.Dataset), "Invalid file."
-        data = dataset[()]
-        name = dataset.name
-        assert isinstance(name, str)
-        name = name.split("/")[-1]
+        # dataset = field_group.get('data')
+        # assert isinstance(dataset, h5py.Dataset), "Invalid file."
+        # data = dataset[()]
+        # name = field_group.name
+        # assert isinstance(name, str)
+        # name = name.split("/")[-1]
         
+        name, data, _, _ = cls._read_hdf5_fieldgroup(field_group)
 
-        schema = SemanticSchema.from_h5py_fieldgroup(field_group)
+        schema = SemanticSchema.from_hdf5_fieldgroup(field_group)
 
         return cls(name=name, data=data, schema=schema)
     

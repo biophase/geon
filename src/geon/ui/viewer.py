@@ -1,9 +1,9 @@
 from PyQt6.QtWidgets import (QWidget, QDockWidget, QLabel, QToolButton, QHBoxLayout, QTreeWidget,
-                             QVBoxLayout, QGridLayout,QPushButton,)
+                             QVBoxLayout, QGridLayout,QPushButton)
 
 from config.theme import *
 
-from PyQt6.QtCore import Qt, QSize
+from PyQt6.QtCore import Qt, QSize, QTimer
 from vtkmodules.qt.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
 
 
@@ -20,7 +20,16 @@ class InteractorStyle(vtk.vtkInteractorStyleTrackballCamera):
         self._viewer = viewer
         self._renderer = renderer
         self.camera = renderer.GetActiveCamera()
+        
         self.last_click_time = 0
+        
+        # selector setup
+        self._selector = vtk.vtkHardwareSelector()
+        self._selector.SetRenderer(self._renderer)
+        self._selector.SetFieldAssociation(vtk.vtkDataObject.FIELD_ASSOCIATION_POINTS)
+        self._selector_tolerance = 5
+        
+        
         self.AddObserver(vtk.vtkCommand.LeftButtonPressEvent, self.left_button_press_event)
         self.AddObserver(vtk.vtkCommand.RightButtonPressEvent, self.right_button_press_event)
         self.AddObserver(vtk.vtkCommand.MouseMoveEvent, self.mouse_move_event)
@@ -31,9 +40,17 @@ class InteractorStyle(vtk.vtkInteractorStyleTrackballCamera):
 
     def left_button_press_event(self, obj, event):
         ... # TODO: add tool hooks
+        
+        
         current_time = time.time()
-        self.last_click_time = current_time
-        self.OnLeftButtonDown()
+        if current_time - self.last_click_time < 0.3:
+            self.double_click_event()
+        else:
+            self.last_click_time = current_time
+            self.OnLeftButtonDown()
+            
+        
+        
     def right_button_press_event(self, obj, event):
         self.OnRightButtonDown()
         
@@ -45,6 +62,8 @@ class InteractorStyle(vtk.vtkInteractorStyleTrackballCamera):
         ...
     def key_press_event(self, obj, event):
         pass
+    
+    
 
 
 class VTKViewer(QWidget):
@@ -69,9 +88,22 @@ class VTKViewer(QWidget):
         
         
         # common scene objects        
-        self._pivot_point = [0,0,0]
+        self._pivot_point = (0,0,0)
         self._pivot_sphere_source = None
         self.pivot_actor = None
+        
+        
+        
+        # Pivot marker shrink animation 
+        self._pivot_shrink_timer = QTimer(self)
+        self._pivot_shrink_timer.timeout.connect(self._update_pivot_shrink)
+        self._pivot_marker_radius0 = 0.05      
+        self._pivot_marker_duration_ms = 800   
+        self._pivot_marker_elapsed_ms = 0
+        self._pivot_shrink_dt_ms = 16          
+
+        
+        
         
         
         self.vtkWidget.GetRenderWindow().Render()
@@ -89,4 +121,82 @@ class VTKViewer(QWidget):
         self._renderer.ResetCameraClippingRange()
         self.rerender()
         
+    def toggle_projection(self):
+        camera = self._renderer.GetActiveCamera()
+        if camera.GetParallelProjection():
+            camera.SetParallelProjection(False)
+        else:
+            camera.SetParallelProjection(True)
+        self._renderer.ResetCamera()
+        self.rerender()
+        
+
+        
+    def set_pivot_point(self, new_pivot: tuple[float, float, float]):
+        self._pivot_point = new_pivot
+
+        self._renderer.GetActiveCamera().SetFocalPoint(*new_pivot)
+        self._renderer.ResetCameraClippingRange()
+        
+        self.uodate_pivot_visualization(reset_radius=True)
+        self._start_pivot_shrink()
+        
+        self.rerender()
+        
+    def uodate_pivot_visualization(self, reset_radius: bool = False):
+        if self._pivot_sphere_source is None:
+            sphere = vtk.vtkSphereSource()
+            sphere.SetRadius(self._pivot_marker_radius0)
+            sphere.SetThetaResolution(16)
+            sphere.SetPhiResolution(16)
+            sphere.SetCenter(*self._pivot_point)
+            self._pivot_sphere_source = sphere
+            
+            mapper = vtk.vtkPolyDataMapper()
+            mapper.SetInputConnection(sphere.GetOutputPort())
+            
+            actor = vtk.vtkActor()
+            actor.SetMapper(mapper)
+            actor.GetProperty().SetColor(0.5, 0.0 ,0.5)
+            actor.GetProperty().SetOpacity(0.5)
+            actor.GetProperty().LightingOff()
+            
+            self.pivot_actor = actor
+            self._renderer.AddActor(actor)
+            
+        else:
+            self._pivot_sphere_source.SetCenter(*self._pivot_point)
+            if reset_radius:
+                self._pivot_sphere_source.SetRadius(self._pivot_marker_radius0)
+                
+    def _start_pivot_shrink(self):
+        self._pivot_marker_elapsed_ms = 0
+        if self._pivot_shrink_timer.isActive():
+            self._pivot_shrink_timer.stop()
+        self._pivot_shrink_timer.start(self._pivot_shrink_dt_ms)
+        
+    def _update_pivot_shrink(self):
+        if self._pivot_sphere_source is None:
+            self._pivot_shrink_timer.stop()
+            return
+        self._pivot_timer_elpased_ms += self._pivot_shrink_dt_ms
+        t = min(1., self._pivot_marker_elapsed_ms / float(self._pivot_marker_duration_ms))
+        
+        radius = self._pivot_marker_radius0 * (1.0 - t) ** 2
+        self._pivot_sphere_source.SetRadius(max(0.0, radius))
+        
+        if t >= 1.0 or radius <= 1e-6:
+            if self.pivot_actor is not None:
+                self._renderer.RemoveActor(self.pivot_actor)
+            self.pivot_actor = None
+            self._pivot_sphere_source = None
+            self._pivot_shrink_timer.stop()
+            
+        self.rerender()
+                
+        
+
+            
+            
+            
 

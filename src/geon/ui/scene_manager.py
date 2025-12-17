@@ -102,7 +102,7 @@ class SceneManager(Dock):
         self.update_tree_visibility()
             
     def populate_point_cloud_layer(self, layer:PointCloudLayer):
-        # other layers implement other methods?
+
         def set_layer_active_field(scene_manager: SceneManager, layer:PointCloudLayer, field_name: str):
             layer.set_active_field_name(field_name)
             scene_manager.viewer.rerender()

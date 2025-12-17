@@ -6,25 +6,12 @@ import numpy as np
 from plyfile import PlyData
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import (
-    QDialog,
-    QVBoxLayout,
-    QHBoxLayout,
-    QSplitter,
-    QWidget,
-    QLabel,
-    QTableWidget,
-    QTableWidgetItem,
-    QHeaderView,
-    QComboBox,
-    QPushButton,
-    QSpinBox,
-    QDialogButtonBox,
-    QMessageBox,
-    QCheckBox,
-    QSizePolicy
+from PyQt6.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,
+    QSplitter,QWidget,QLabel,QTableWidget,QTableWidgetItem,QHeaderView,
+    QComboBox,QPushButton,QSpinBox,QDialogButtonBox,QMessageBox,QCheckBox,QSizePolicy
 )
 
+from PyQt6.QtGui import QColor
 
 from geon.data.pointcloud import (
     PointCloudData,
@@ -32,6 +19,7 @@ from geon.data.pointcloud import (
     SemanticSchema,
 )
 from geon.data.definitions import ColorMap  
+from geon.ui.semantic_schema_dialog import SemanticSchemaCreationDialog
 
 
 class ImportPLYDialog(QDialog):
@@ -63,6 +51,8 @@ class ImportPLYDialog(QDialog):
     OUT_NCOLS_COL = 2
     OUT_RESOURCE_COL = 3
     OUT_BTN_COL = 4 # script assumes the OUT_BTN_COL is always last
+    
+    NEW_SCHEMA_SENTINEL = "__NEW_SCHEMA__"
 
     def __init__(
         self,
@@ -112,6 +102,7 @@ class ImportPLYDialog(QDialog):
 
     def _load_ply(self) -> None:
         """Load the PLY file and store the vertex element."""
+        
         self.ply_data = PlyData.read(self.ply_path)
 
         if "vertex" not in self.ply_data:
@@ -136,7 +127,7 @@ class ImportPLYDialog(QDialog):
         combo.setEnabled(False)
         return combo
     
-    def _populate_resource_combo(self, row:int) -> None:
+    def _populate_resource_combo_for_row(self, row:int) -> None:
         if self._is_add_row(row) or self._is_coordinates_row(row):
             return
         
@@ -161,6 +152,12 @@ class ImportPLYDialog(QDialog):
             res_combo.addItem("Empty", None)
             for key, schema in self.semantic_schemas.items():
                 res_combo.addItem(schema.name, key)
+            res_combo.addItem("<New Schema>", self.NEW_SCHEMA_SENTINEL)
+            ix = res_combo.count() - 1
+            res_combo.setItemData(ix, QColor("dodgerblue"), Qt.ItemDataRole.ForegroundRole)
+            res_combo.currentIndexChanged.connect(lambda _ix, r=row: self._on_resource_changed(r))
+            
+            
                 
         else:
             res_combo.setEnabled(False)
@@ -176,8 +173,94 @@ class ImportPLYDialog(QDialog):
                 
         res_combo.blockSignals(False)
             
-            
+    def _get_ply_fields_mapped_to_output(self, output_field_name: str) -> list[str]:
+        mapped: list[str] = []
+        for r in range(self.input_table.rowCount()):
+            name_item = self.input_table.item(r, self.IN_NAME_COL)
+            ply_name = name_item.text() if name_item else ""
+            combo: QComboBox = cast(QComboBox, self.input_table.cellWidget(r, self.IN_MAP_FIELD_COL))
+            if combo.currentText().strip() == output_field_name and ply_name:
+                mapped.append(ply_name)
+        return mapped       
+    
+    def _required_ids_from_mapped_semantic(self, output_row: int) -> list[int]:
+        # Always include -1 as obligatory
+        required: set[int] = {-1}
+
+        name_item = self.output_table.item(output_row, self.OUT_NAME_COL)
+        out_name = name_item.text().strip() if name_item else ""
+        if not out_name or self.vertex_element is None:
+            return sorted(required)
+
+        vertex_data = self.vertex_element.data  # already loaded by PlyData
+        ply_fields = self._get_ply_fields_mapped_to_output(out_name)
+
+        if not ply_fields:
+            return sorted(required)
+
+        # For SEMANTIC, you typically expect exactly one mapped PLY field.
+        # If multiple are mapped, we union them.
+        for ply_field in ply_fields:
+            arr = np.asarray(vertex_data[ply_field])
+
+            # Flatten: PLY fields can be (N,) or (N,1) etc.
+            if arr.ndim > 1:
+                arr = arr.reshape(arr.shape[0])
+
+            # Convert to int and collect unique values
+            # (use np.unique for speed)
+            try:
+                vals = np.unique(arr.astype(np.int64, copy=False))
+            except Exception:
+                continue
+
+            for v in vals.tolist():
+                required.add(int(v))
+
+        return sorted(required)
+
         
+    def _on_resource_changed(self, row: int) -> None:
+        if self._is_add_row(row) or self._is_coordinates_row(row):
+            return
+
+        type_combo = self.output_table.cellWidget(row, self.OUT_TYPE_COL)
+        res_combo  = self.output_table.cellWidget(row, self.OUT_RESOURCE_COL)
+        if not isinstance(type_combo, QComboBox) or not isinstance(res_combo, QComboBox):
+            return
+
+        ftype: FieldType = type_combo.currentData()
+        data = res_combo.currentData()
+
+        if ftype == FieldType.SEMANTIC and data == self.NEW_SCHEMA_SENTINEL:
+            # Required IDs: for now default [-1]; later you can pass more.
+            required_ids = self._required_ids_from_mapped_semantic(row)
+            dlg = SemanticSchemaCreationDialog(required_ids=required_ids, parent=self)
+            if dlg.exec() == QDialog.DialogCode.Accepted and dlg.schema is not None:
+                schema = dlg.schema  # SemanticSchema
+                # Insert it into semantic_schemas (choose a key strategy)
+                key = schema.name
+                # ensure uniqueness
+                if key in self.semantic_schemas:
+                    i = 1
+                    while f"{key}_{i}" in self.semantic_schemas:
+                        i += 1
+                    key = f"{key}_{i}"
+                    schema.name = key
+
+                self.semantic_schemas[key] = schema
+
+                # repopulate this row combo and select the new schema
+                self._populate_resource_combo_for_row(row)
+                ix = res_combo.findData(key)
+                if ix >= 0:
+                    res_combo.setCurrentIndex(ix)
+            else:
+                # user cancelled: revert to Empty
+                self._populate_resource_combo_for_row(row)
+                res_combo.setCurrentIndex(0)
+
+    
     # def _make_schema_cell_widget(self, row: int) -> QWidget:
     #     w = QWidget(self.output_table)
     #     lay = QHBoxLayout(w)
@@ -482,7 +565,7 @@ class ImportPLYDialog(QDialog):
         self._refresh_input_mapping_targets()
 
     def _generate_unique_scalar_name(self) -> str:
-        base = "ScalarField_"
+        base = "Field_"
         existing = {
             (cast(QTableWidgetItem,self.output_table.item(r, self.OUT_NAME_COL)).text()
              if self.output_table.item(r, self.OUT_NAME_COL)
@@ -561,7 +644,7 @@ class ImportPLYDialog(QDialog):
                 ncols_spin.setValue(1)
 
         self._update_index_enablement_for_all_inputs()
-        self._populate_resource_combo(row)
+        self._populate_resource_combo_for_row(row)
 
     # ------------------------------------------------------------------
     # Output table signal handlers

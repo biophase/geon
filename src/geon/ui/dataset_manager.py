@@ -86,7 +86,10 @@ class DatasetManager(Dock):
         self.requestSetActiveDocInScene.emit(doc)
         return doc
 
-    def on_clear_scene(self, scene: Scene,ignore_state=False) -> None:
+    def save_scene_doc(self, scene: Optional[Scene], ignore_state=False) -> None:
+        print('broski')
+        if scene is None:
+            return
         if self._dataset is None:
             return
         for ref in self._dataset.doc_refs:
@@ -116,7 +119,7 @@ class DatasetManager(Dock):
                             if reply == QMessageBox.StandardButton.Yes:
                                 return
                             else:
-                                self.on_clear_scene(scene, ignore_state)
+                                self.save_scene_doc(scene, ignore_state)
                                 return
 
                             
@@ -192,12 +195,16 @@ class DatasetManager(Dock):
 
     def import_doc_from_ply(self):
         if self._dataset is None:
-            self.set_work_dir()
+            success = self.set_work_dir()
             if self._dataset is None:
+                return
+            if not success:
                 return
         
         file_path, _ = QFileDialog.getOpenFileName(self, "Open PLY File", "", "PLY Files (*.ply)")
         allow_doc_appending = False
+        if file_path is None or file_path=='':
+            return
         dlg = ImportPLYDialog(
             ply_path=file_path,
             semantic_schemas= {s.name : s for s in self._dataset.unique_semantic_schemas},

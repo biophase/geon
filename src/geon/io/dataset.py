@@ -208,21 +208,24 @@ class Dataset:
         loaded_schemas      : dict[str, SemanticSchema] = dict()
 
         for ref in self.doc_refs:
-            # gather schemas from referenced documents
-            if ref.loadedState == RefLoadedState.REFERENCE:
-                assert ref.path is not None
-                referenced_schemas = referenced_schemas | SemanticSchema.scan_h5(ref.path)
+            doc = self._loaded_docs.get(ref.name)
+            if doc is not None:
+            # # gather schemas from loaded docs
+                   
                 
-            # gather schemas from loaded docs
-            elif (ref.loadedState == RefLoadedState.LOADED or 
-                  ref.loadedState == RefLoadedState.ACTIVE):
-                
-                for data_name, data in self._loaded_docs[ref.name].scene_items.items():
+                for data_name, data in doc.scene_items.items():
                     if isinstance(data, PointCloudData):
                         for field in data.get_fields():
                             if isinstance (field, SemanticSegmentation):
                                 build_key = f"{ref.name}/{data_name}/{field.name}/{field.schema.name}"
                                 loaded_schemas[build_key] = field.schema
+                
+            # gather schemas from referenced documents
+            # if ref.loadedState == RefLoadedState.REFERENCE:
+            else:
+                assert ref.path is not None
+                referenced_schemas = referenced_schemas | SemanticSchema.scan_h5(ref.path)
+        pass                
         return referenced_schemas, loaded_schemas
                 
     @property
@@ -237,7 +240,7 @@ class Dataset:
             if schema.signature() not in out.keys():
                 out[schema.signature()] = deepcopy(schema)
                 
-        out = list(out.keys())
+        out = list(out.values())
         return out
         
             

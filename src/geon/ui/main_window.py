@@ -45,11 +45,13 @@ class MainWindow(QMainWindow):
         self.setMenuBar(self.menu_bar)
 
         # signals
-        self.scene_manager.broadcastDeleteScene.connect(self.dataset_manager.on_clear_scene)
+        self.scene_manager.broadcastDeleteScene.connect(self.dataset_manager.save_scene_doc)
+
         self.dataset_manager.requestSetActiveDocInScene.connect(self.scene_manager.on_document_loaded)
         
         self.menu_bar.setWorkdirRequested.connect(self.dataset_manager.set_work_dir)
         self.menu_bar.importFromRequested.connect(self.dataset_manager.import_doc_from_ply)
+        self.menu_bar.saveDocRequested.connect(lambda: self.dataset_manager.save_scene_doc(self.scene_manager._scene))
         
         
 
