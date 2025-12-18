@@ -99,3 +99,8 @@ python -m geon.main
                         └── name: "schema_name"
 
 ```
+for MACOS try
+
+```
+VTK_SMP_BACKEND_IN_USE=Sequential python -c "import vtk; print('ok')"
+```

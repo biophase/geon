@@ -4,6 +4,10 @@ from PyQt6.QtWidgets import (QWidget, QDockWidget, QLabel, QToolButton, QHBoxLay
 from config.theme import *
 
 from PyQt6.QtCore import Qt, QSize, QTimer
+
+import vtkmodules.qt
+vtkmodules.qt.QVTKRWIBase = "QOpenGLWidget"   
+
 from vtkmodules.qt.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
 
 
@@ -83,7 +87,7 @@ class VTKViewer(QWidget):
         self._interactor = self.vtkWidget.GetRenderWindow().GetInteractor()
         self._interactor.Initialize()
         self._interactor.SetInteractorStyle(InteractorStyle(self._renderer, self))
-        self._interactor.Start()
+        # self._interactor.Start()
 
         
         
