@@ -35,6 +35,8 @@ class PointCloudLayer(BaseLayer[PointCloudData]):
 
         self._main_actor: Optional[vtk.vtkLODActor] = None
         self.browser_name = browser_name
+
+        self._point_size: int = 2
         
 
         
@@ -99,8 +101,10 @@ class PointCloudLayer(BaseLayer[PointCloudData]):
             poly = vtk.vtkPolyData()
             poly.SetPoints(vtk_points)
             
-            vertex = vtk.vtkVertexGlyphFilter()
+            vertex = vtk.vtkVertexGlyphFilter() # points -> drawable 'vertex' objects
             vertex.SetInputData(poly)
+            
+    
             
             mapper = vtk.vtkPolyDataMapper()
             mapper.SetInputConnection(vertex.GetOutputPort())
@@ -118,7 +122,7 @@ class PointCloudLayer(BaseLayer[PointCloudData]):
         actor = vtk.vtkLODActor()
         actor.SetMapper(self._mapper_fine)
         actor.AddLODMapper(self._mapper_coarse)
-
+        actor.GetProperty().SetPointSize(self._point_size)
         
         out_actors.append(actor)
         self._main_actor = actor
@@ -240,6 +244,20 @@ class PointCloudLayer(BaseLayer[PointCloudData]):
         self._poly.Modified()
 
 
+
+    def set_point_size(self, size: int) -> None:
+        size = int(max(1, min(size, 50)))  # clamp
+        self._point_size = size
+        if self._main_actor is not None:
+            self._main_actor.GetProperty().SetPointSize(size)
+        # TODO:  also apply to any LOD actors that might be created internally
+        self.update()
+
+    def increase_point_size(self, step: int = 1) -> None:
+        self.set_point_size(self._point_size + step)
+
+    def decrease_point_size(self, step: int = 1) -> None:
+        self.set_point_size(self._point_size - step)
 
     @property
     def id(self) -> str:

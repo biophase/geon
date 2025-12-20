@@ -6,7 +6,10 @@ from config.theme import *
 from PyQt6.QtCore import Qt, QSize, QTimer
 
 import vtkmodules.qt
-vtkmodules.qt.QVTKRWIBase = "QOpenGLWidget"   
+
+import sys
+if sys.platform == 'darwin':
+    vtkmodules.qt.QVTKRWIBase = "QOpenGLWidget"   
 
 from vtkmodules.qt.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
 
@@ -183,7 +186,7 @@ class VTKViewer(QWidget):
         if self._pivot_sphere_source is None:
             self._pivot_shrink_timer.stop()
             return
-        self._pivot_timer_elpased_ms += self._pivot_shrink_dt_ms
+        self._pivot_marker_elapsed_ms += self._pivot_shrink_dt_ms
         t = min(1., self._pivot_marker_elapsed_ms / float(self._pivot_marker_duration_ms))
         
         radius = self._pivot_marker_radius0 * (1.0 - t) ** 2

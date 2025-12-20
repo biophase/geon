@@ -95,13 +95,13 @@ class SceneManager(Dock):
         
         for key, layer in self._scene.layers.items():
             if isinstance (layer, PointCloudLayer):   
-                self.populate_point_cloud_layer(layer)
+                self._populate_point_cloud_layer(layer)
             else:
                 raise NotImplementedError(f"Please implement a `populate` method for type {type(layer)}")
         self.tree.expandAll()
         self.update_tree_visibility()
             
-    def populate_point_cloud_layer(self, layer:PointCloudLayer):
+    def _populate_point_cloud_layer(self, layer:PointCloudLayer):
 
         def set_layer_active_field(scene_manager: SceneManager, layer:PointCloudLayer, field_name: str):
             layer.set_active_field_name(field_name)

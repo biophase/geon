@@ -87,7 +87,6 @@ class DatasetManager(Dock):
         return doc
 
     def save_scene_doc(self, scene: Optional[Scene], ignore_state=False) -> None:
-        print('broski')
         if scene is None:
             return
         if self._dataset is None:
