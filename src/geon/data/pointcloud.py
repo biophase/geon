@@ -13,13 +13,14 @@ from .base import BaseData
 from .definitions import ColorMap
 from .registry import register_data
 
-from geon.utils.common import decode_utf8, generate_vibrant_color
+from geon.util.common import decode_utf8, generate_vibrant_color
 from config import theme
 
 class FieldType(Enum):
     SCALAR = auto()
     VECTOR = auto()
     COLOR  = auto()
+    NORMAL = auto()
     INTENSITY   = auto()
     SEMANTIC    = auto()
     INSTANCE    = auto()
@@ -31,11 +32,18 @@ class FieldType(Enum):
             cls.SCALAR  : "Scalar",
             cls.VECTOR  : "Vector",
             cls.COLOR   : "Color",
+            cls.NORMAL  : "Normals",
             cls.INTENSITY   : "Intensity",
             cls.SEMANTIC    : "Semantic Segmentation",
             cls.INSTANCE    : "Instance Segmentation",
+            
         }
         return map[field_type]
+    
+    
+    @property
+    def human_name(self) -> str:
+        return self.get_human_name(self.__getattribute__(self.name))
     
     @classmethod
     def get_class (cls, field_type:"FieldType") -> Type["FieldBase"]:
@@ -149,7 +157,8 @@ class PointCloudData(BaseData):
         if data is not None:
             assert data.ndim == 2, \
                 f"Fields should have two dims but got: {data.shape}"
-            assert data.shape[0] == self.points.shape[0]
+            assert data.shape[0] == self.points.shape[0],\
+                f"First field shape axis {data.shape[0]} doesn't match point number {self.points.shape[0]}"
             
         # fields with specialized classes
         if field_type == FieldType.SEMANTIC:
@@ -355,9 +364,16 @@ class SemanticClass:
 
 class SemanticSchema:
     
-    def __init__(self, name:str = 'untitled_schema'):
+    def __init__(self, 
+                 name:str = 'untitled_schema',
+                 semantic_classes : List[SemanticClass] = [
+                     SemanticClass(
+                         -1, 
+                         '_unlabeled', 
+                         theme.DEFAULT_SEGMENTATION_COLOR)
+                     ]):
         self.name = name
-        self.semantic_classes : List[SemanticClass] = [SemanticClass(-1, '_unlabeled', theme.DEFAULT_SEGMENTATION_COLOR)]
+        self.semantic_classes = semantic_classes
 
     def to_dict(self) -> Dict[str, dict]:
         return {
@@ -401,7 +417,14 @@ class SemanticSchema:
             s = val.decode("utf-8")
         else:
             s = str(val)
-        return cls.from_dict(json.loads(s))
+        schema = cls.from_dict(json.loads(s))
+        name_attr = dataset.attrs.get("name", None)
+        if name_attr is not None:
+            if isinstance(name_attr, (bytes, bytearray)):
+                schema.name = name_attr.decode("utf-8")
+            else:
+                schema.name = str(name_attr)
+        return schema
         
 
     def signature(self) -> tuple:
@@ -436,6 +459,7 @@ class SemanticSchema:
             s.id = i
             id_map[old_id] = i
         return id_map
+    
     def get_next_id(self) -> int:
         return mex(np.array([c.id for c in self.semantic_classes]))
     
@@ -671,11 +695,29 @@ class SemanticSegmentation(FieldBase):
     def get_next_id(self) -> int:
         return mex(self.data)
          
-    def replace_semantic_schema (self, new_schema : SemanticSchema, by : Literal['id','name'] = 'id') -> None:
-        raise NotImplementedError
+    # def replace_semantic_schema (self, new_schema : SemanticSchema, by : Literal['id','name'] = 'id') -> None:
+    #     raise NotImplementedError
     
-    def reindex_semantic(self):
-        raise NotImplementedError # TODO: should reindex the containers, not only the schema. requires mapping output from schema method
+    def remap(
+        self,
+        old_2_new_ids: list[tuple[int,int]],
+        ):
+        """
+        Remap the field data.
+        :param old_to_new: pairs of indices [(old id, new id), ...]
+        :type old_to_new: list[tuple[int, int]]
+        """
+
+        id_min = int(self.data.min())
+        id_max = int(self.data.max())
+
+        # construct mapping[old_idx - id_min] -> new_idx
+        mapping = np.arange(id_min, id_max + 1, dtype=np.int32)
+        for old_id, new_id in old_2_new_ids:
+            if old_id < id_min or old_id > id_max:
+                continue
+            mapping[old_id - id_min] = new_id
+        self.data = mapping[self.data - id_min]
     
     def save(self, file_path: str) -> None:
         raise DeprecationWarning

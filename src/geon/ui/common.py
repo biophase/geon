@@ -73,3 +73,4 @@ class ElidedLabel(QLabel):
         width = max(self.width(), 0)
         elided = fm.elidedText(self._full_text, self._elide_mode, width)
         super().setText(elided)
+        

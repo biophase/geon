@@ -16,14 +16,29 @@ from PyQt6.QtWidgets import (QApplication, QDialog, QDialogButtonBox, QFrame, QG
                              QSizePolicy, QWidget, QFileDialog, QTabWidget, QTreeWidget, QTreeWidgetItem,
                              QComboBox, QLabel, QLineEdit, QSplitter, QMenu, QColorDialog, QHeaderView,
                              QSpinBox, QCheckBox, QFormLayout, QDoubleSpinBox, QTableWidget, QTableWidgetItem)
+import sys
+if sys.platform == 'darwin':
+    import vtkmodules.qt
+    from PyQt6 import QtCore
+    _prev_msg_handler = None
+    def _qt_msg_filter(mode, ctx, msg):
+        if "QPainter::begin: Paint device returned engine == 0" in msg:
+            return  
+        if _prev_msg_handler:
+            _prev_msg_handler(mode, ctx, msg)
+
+    _prev_msg_handler = QtCore.qInstallMessageHandler(_qt_msg_filter)
+    vtkmodules.qt.QVTKRWIBase = "QOpenGLWidget"   
 from vtkmodules.qt.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
 from vtk.util import numpy_support as ns # type: ignore
 import vtk
 
-from segmentation.interactive_gc import InteractiveGraphCut, Graph
 
 
-import segmentation.reggrow.build.lib.reggrow as rg
+# from segmentation.interactive_gc import InteractiveGraphCut, Graph
+
+
+# import segmentation.reggrow.build.lib.reggrow as rg
 
 # Import segmentation definitions
 from annotation import IndexSegmentation, SemanticSchema, SemanticClass

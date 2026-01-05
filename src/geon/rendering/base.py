@@ -26,7 +26,8 @@ class BaseLayer(Generic[TData], ABC):
 
     data: TData
     visible: bool = True
-    _browser_name: str =            'Untitled'
+    # active: bool = True
+    _browser_name: str = 'Untitled'
 
     
     # VTK
@@ -86,6 +87,12 @@ class BaseLayer(Generic[TData], ABC):
         
         """
         ...
+    @abstractmethod
+    def world_xyz_from_picked_id(self, sub_id: int) -> tuple[float,float,float]:
+        """
+        Called e.g. for setting a 3d camera pivot
+        """
+        ...
     @property
     def id(self) -> str:
         return self.data.id
@@ -93,6 +100,13 @@ class BaseLayer(Generic[TData], ABC):
     @property
     def browser_name(self) -> str:
         return self._browser_name
+    
+    @property
+    def browser_sel_descr(self)->str | None:
+        """
+        Optional text descriptor of the selection (e.g. '<N> points')
+        """
+        return None
     
     @browser_name.setter
     def browser_name(self, browser_name: str) -> None:
@@ -126,3 +140,4 @@ class BaseLayer(Generic[TData], ABC):
         for actor in self._actors:
             if hasattr(actor, "SetVisibility"):
                 actor.SetVisibility(int(self.visible))
+    

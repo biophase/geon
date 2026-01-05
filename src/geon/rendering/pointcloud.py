@@ -1,11 +1,20 @@
 import vtk 
 from vtk.util import numpy_support as ns # type: ignore
+
+from PyQt6.QtCore import QTimer
+
 import numpy as np
 from numpy.typing import NDArray
 
-from geon.data.pointcloud import PointCloudData, FieldType, SemanticSegmentation, InstanceSegmentation
-from geon.data.definitions import ColorMap
+from geon.data.pointcloud import (PointCloudData, FieldType, 
+                                  SemanticSegmentation, InstanceSegmentation,
+                                  FieldBase
+                                  )
+
 from config import theme
+
+from ..data.definitions import ColorMap
+from ..util.common import blend_colors
 from .base import BaseLayer
 from .util import build_vtk_color_transfer_function
 from .layer_registry import layer_for
@@ -13,8 +22,77 @@ from .layer_registry import layer_for
 
 from dataclasses import dataclass, field
 from typing import Optional, Tuple
+import math
 
 
+
+class SelectionOverlay:
+    SELECTION_BASE_COLOR = (1., 1., 1.)
+    SELECTION_PULSE_COLOR = (1., 0.5, 0)
+    SELECTION_TIMER_TICK = 50
+    
+    def __init__(self, layer: "PointCloudLayer") -> None:
+        self.layer : PointCloudLayer = layer
+        self.selection_timer: QTimer = QTimer()
+        self.selection_actor: Optional[vtk.vtkActor] = None
+        self.selection_phase: float = 0.0
+        self.selection_timer.timeout.connect(lambda: self.update_pulse())
+        
+    def update_overlay(self)->None:
+        
+        selection = self.layer.active_selection
+        renderer = self.layer.renderer
+        
+        all_pts = self.layer.data.points
+        selection_pts = all_pts[self.layer.active_selection]
+        if renderer is None:
+            return
+        if renderer is None or selection is None or selection.size == 0:
+            # clean up
+            if self.selection_actor is not None:
+                renderer.RemoveActor(self.selection_actor)
+                self.selection_actor = None
+            self.selection_timer.stop()
+            return
+    
+        # setup new overlay
+        vtk_points = vtk.vtkPoints()
+        vtk_points.SetData(ns.numpy_to_vtk(selection_pts))
+        poly_data = vtk.vtkPolyData()
+        poly_data.SetPoints(vtk_points)
+        vertex = vtk.vtkVertexGlyphFilter()
+        vertex.SetInputData(poly_data)
+        mapper = vtk.vtkPolyDataMapper()
+        mapper.SetInputConnection(vertex.GetOutputPort())
+        mapper.ScalarVisibilityOff()
+        if self.selection_actor is None:
+            self.selection_actor = vtk.vtkActor()
+            pt_size = self.layer.point_size + 2
+            self.selection_actor.GetProperty().SetPointSize(pt_size)
+            renderer.AddActor(self.selection_actor)
+        self.selection_actor.SetMapper(mapper)
+        self.selection_actor.GetProperty().SetColor(*self.SELECTION_PULSE_COLOR)
+        if not self.selection_timer.isActive():
+            self.selection_phase = 0.0
+            self.selection_timer.start(self.SELECTION_TIMER_TICK)
+        
+    def set_point_size(self, base_size: int) -> None:
+        if self.selection_actor is None:
+            return
+        self.selection_actor.GetProperty().SetPointSize(base_size + 2)
+
+            
+
+    def update_pulse(self)->None:
+        renderer = self.layer.renderer
+        if self.selection_actor is None or renderer is None:
+            return
+        self.selection_phase += 0.1
+        t = (math.sin(self.selection_phase*4) + 1) / 2
+        self.selection_actor.GetProperty().SetOpacity(t)
+        renderer.GetRenderWindow().Render()
+    
+        
 
 
 
@@ -29,22 +107,36 @@ class PointCloudLayer(BaseLayer[PointCloudData]):
 
         self._active_field_name:    Optional[str] = None
         self._visibility_mask:      Optional[NDArray[np.bool_]] = None
-
+        self._active_selection:     Optional[NDArray[np.int32]] = None
+        self._selection_overlay:    SelectionOverlay = SelectionOverlay(self)
+        
         self._mapper_fine:      Optional[vtk.vtkMapper] = None
         self._mapper_coarse:    Optional[vtk.vtkMapper] = None
 
         self._main_actor: Optional[vtk.vtkLODActor] = None
+
+        
         self.browser_name = browser_name
-
-        self._point_size: int = 2
+        self.point_size: int = 2
+        
         
 
         
 
-
+    
 
         # index of currently displayed scalar in each vector field
         self._vf_active_index: dict[str, int] = {}
+    
+    @property
+    def active_field(self) -> FieldBase | None:
+        name = self.active_field_name
+        if name is None:
+            return None
+        f = self.data.get_fields(name)
+        if len(f) == 0:
+            return None
+        return f[0]
         
     def _populate_vf_active_index(self) -> None:
         for f_name in self.data.field_names:
@@ -69,6 +161,23 @@ class PointCloudLayer(BaseLayer[PointCloudData]):
         assert field_name in self.data.field_names
         self._active_field_name = field_name
 
+
+    @property
+    def active_selection(self) -> Optional[NDArray[np.int32]]:
+        return self._active_selection
+    
+    @active_selection.setter
+    def active_selection(self, selection: Optional[NDArray[np.int32]]) -> None:
+        if selection is not None:
+            assert selection.max() < self.data.points.shape[0]
+            assert selection.min() >= 0
+        self._active_selection = selection
+        self._selection_overlay.update_overlay()
+        
+        
+        
+    
+    
     def set_active_field_name(self, name:str):
         self.active_field_name = name
         self.update()
@@ -82,6 +191,24 @@ class PointCloudLayer(BaseLayer[PointCloudData]):
     def _reset_visibility_mask(self)->None:
         self._visibility_mask = None
 
+    def set_visibility_mask(self, mask: Optional[NDArray[np.bool_]]) -> None:
+        if mask is None:
+            self._visibility_mask = None
+            self.update()
+            return
+        mask_arr = np.asarray(mask, dtype=bool)
+        if mask_arr.ndim != 1:
+            raise ValueError(f"Expected 1D visibility mask, got shape {mask_arr.shape}")
+        if mask_arr.shape[0] != self.data.points.shape[0]:
+            raise ValueError(
+                "Visibility mask length does not match point count: "
+                f"{mask_arr.shape[0]} vs {self.data.points.shape[0]}"
+            )
+        self._visibility_mask = mask_arr
+        
+        self.update()
+
+    
     def _build_pipeline(
         self,
         renderer: vtk.vtkRenderer,
@@ -122,7 +249,7 @@ class PointCloudLayer(BaseLayer[PointCloudData]):
         actor = vtk.vtkLODActor()
         actor.SetMapper(self._mapper_fine)
         actor.AddLODMapper(self._mapper_coarse)
-        actor.GetProperty().SetPointSize(self._point_size)
+        actor.GetProperty().SetPointSize(self.point_size)
         
         out_actors.append(actor)
         self._main_actor = actor
@@ -184,7 +311,8 @@ class PointCloudLayer(BaseLayer[PointCloudData]):
                 color_map = field.color_map or construct_default_cmap(scalars_np, cmap_type)
                 ctf, scalar_range = build_vtk_color_transfer_function(color_map)
             
-            elif field.field_type == FieldType.VECTOR:
+            elif field.field_type == FieldType.VECTOR or \
+                    field.field_type == FieldType.NORMAL:
                 ind = self.vf_active_index[field.name]
                 ind = max(0, min(ind, data_visible.shape[1] - 1))
                 scalars_np = data_visible[:,ind]
@@ -247,17 +375,23 @@ class PointCloudLayer(BaseLayer[PointCloudData]):
 
     def set_point_size(self, size: int) -> None:
         size = int(max(1, min(size, 50)))  # clamp
-        self._point_size = size
+        self.point_size = size
         if self._main_actor is not None:
             self._main_actor.GetProperty().SetPointSize(size)
+        self._selection_overlay.set_point_size(size)
         # TODO:  also apply to any LOD actors that might be created internally
         self.update()
 
-    def increase_point_size(self, step: int = 1) -> None:
-        self.set_point_size(self._point_size + step)
+    def increase_point_size(self, step: int = 1) -> int:
+        self.set_point_size(self.point_size + step)
+        print(f'Set point size to {self.point_size}')
+        return self.point_size
+        
 
-    def decrease_point_size(self, step: int = 1) -> None:
-        self.set_point_size(self._point_size - step)
+    def decrease_point_size(self, step: int = 1) -> int:
+        self.set_point_size(self.point_size - step)
+        print(f'Set point size to {self.point_size}')
+        return self.point_size
 
     @property
     def id(self) -> str:
@@ -274,8 +408,23 @@ class PointCloudLayer(BaseLayer[PointCloudData]):
     def browser_name(self, browser_name: str) -> None:
         self._browser_name = browser_name
         
-
-# # Here you can choose how to initialize colors: base colors, intensity, etc.
-# # For now: no scalars, just plain white actor.
-# vertex = vtk.vtkVertexGlyphFilter()
-# vertex.SetInputData(poly)
+    @property
+    def browser_sel_descr(self) -> str | None:
+        if self.active_selection is None:
+            return None
+        else:
+            return f"{self.active_selection.shape[0]:,} points"
+        
+    def world_xyz_from_picked_id(self, sub_id: int) -> tuple[float,float,float]:
+        if self._poly is None:
+            raise RuntimeError(f"Build the {self.__class__.__name__} first.")
+        
+        p = self._poly.GetPoint(int(sub_id))
+        return float(p[0]), float(p[1]), float(p[2]) # FIXME: potential errors if the actor has a transform applied
+        
+    def detach(self) -> None:
+        sel_actor = self._selection_overlay.selection_actor
+        if self.renderer is not None and sel_actor is not None:
+            self.renderer.RemoveActor(sel_actor)
+        return super().detach()
+    

@@ -1,9 +1,16 @@
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QPalette, QColor
 
+from enum import Enum
+
 DEFAULT_OBJ_COLOR: tuple[float,float,float] = (0.6,0.6,0.6)
 DEFAULT_SEGMENTATION_COLOR: tuple[int,int,int] = (204, 204, 204)
 DEFAULT_RENDERER_BACKGROUND: tuple[float,float,float] = (.1,.1,.1)
+
+
+class UIStyle(Enum):
+    TYPE_LABEL = "color: rgba(128, 128, 128, 128);"
+
 
 def set_dark_palette(app):
     dark_palette = QPalette()

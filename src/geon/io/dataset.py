@@ -8,11 +8,12 @@ from geon.data.document import Document
 from geon.data.pointcloud import SemanticSchema, PointCloudData, SemanticSegmentation
 
 from geon.version import GEON_FORMAT_VERSION
-from typing import Union, Optional
+from typing import Union, Optional, cast, Callable
 from dataclasses import dataclass
 from enum import Enum, auto
 # import traceback
 from copy import deepcopy
+
 
 
 class RefModState(Enum):
@@ -221,13 +222,64 @@ class Dataset:
                                 loaded_schemas[build_key] = field.schema
                 
             # gather schemas from referenced documents
-            # if ref.loadedState == RefLoadedState.REFERENCE:
             else:
                 assert ref.path is not None
                 referenced_schemas = referenced_schemas | SemanticSchema.scan_h5(ref.path)
         pass                
         return referenced_schemas, loaded_schemas
+    
+    def update_semantic_schema (
+        self,
+        old_schema: SemanticSchema,
+        new_schema: SemanticSchema,
+        old_2_new_ids: list[tuple[int,int]],
+        progress_cb: Optional[Callable[[int, int, str],None]] = None
+        ) -> list[DocumentReference]:
+        """
+        Replace matching semantic schemas across referenced/loaded documents, 
+        remap labels, and save changes.
+        """
+        
+        r_schemas, l_schemas = self._get_semantic_schemas()
+        schemas = r_schemas | l_schemas
+        
+        schemas_matching: dict[str, SemanticSchema]= dict()
+        for bk, schema in schemas.items():
+            if schema.signature() == old_schema.signature() and\
+                schema.name == old_schema.name:
+                    schemas_matching[bk] = schema
+        
+        active_ref = list(
+            [ref for ref in self.doc_refs if 
+             ref.loadedState == RefLoadedState.ACTIVE])
+    
+        saved_refs = []
+        # references:
+        tot_len = len(schemas_matching)
+        for i, (build_key, schema) in enumerate(schemas_matching.items()):
+            
+
+            if progress_cb is not None:
+                progress_cb(i, tot_len, build_key)
                 
+            r_name, data_name, field_name, schema_name = build_key.split('/')
+            ref = list([r for r in self.doc_refs if r.name == r_name])[0]
+            
+            doc = self._loaded_docs.get(ref.name)
+            if doc is None:
+                doc = self._load_reference(ref)
+            
+            data = cast(PointCloudData, doc.scene_items.get(data_name))
+            field = cast(SemanticSegmentation, data.get_fields(field_name)[0])
+            field.remap(old_2_new_ids)
+            field.schema = new_schema
+            if ref.path is None:
+                continue
+            doc.save_hdf5(ref.path)
+            saved_refs.append(ref)
+        return saved_refs
+                    
+
     @property
     def unique_semantic_schemas(self) -> list[SemanticSchema]:
         out = {}

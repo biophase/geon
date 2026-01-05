@@ -110,6 +110,8 @@ class Document:
         
         doc = cls()
         doc.meta = loaded_meta
+        if "name" in loaded_meta:
+            doc.name = str(loaded_meta["name"])
         doc.scene_items = loaded_items
         return doc
     

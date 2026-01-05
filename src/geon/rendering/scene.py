@@ -1,5 +1,5 @@
 from .base import BaseLayer
-from .layer_registry import layer_registry
+from .layer_registry import LAYER_REGISTRY
 
 from geon.data.document import Document
 from geon.data.base import BaseData
@@ -11,11 +11,6 @@ from enum import Enum, auto
 from typing import Optional, Mapping
 from types import MappingProxyType
 import vtk
-
-
-
-
-
 
 class DuplicateLayerNameError(Exception):
     pass
@@ -29,14 +24,19 @@ class Scene:
         self._layers : OrderedDict[str, BaseLayer] = OrderedDict()
         self._renderer: vtk.vtkRenderer = renderer
         self._doc: Document = Document()
+        
 
-
+        self._actor_to_layer: dict[str, BaseLayer] = {}
+        self._active_layer_id : Optional[str] = None
+        
+    
     def add_data(self, data: BaseData) -> BaseLayer:
-        layer = layer_registry.create_layer_for(data)
+        layer = LAYER_REGISTRY.create_layer_for(data)
         if layer.id in self._layers.keys():
             raise DuplicateLayerNameError(f"Can't create duplicate layer names: {layer.id}")
         self._layers[layer.id] = layer
         layer.attach(self._renderer)
+        self._register_layer_actors(layer)
         return layer
         
         
@@ -49,9 +49,25 @@ class Scene:
     
     def remove_layer(self, name:str, delete_data=True) -> None:
         layer = self._layers.pop(name)
+        self._unregister_layer_actors(layer)
         layer.detach()
         if delete_data:
             self._doc.remove_data(layer.id)
+            
+    @property
+    def active_layer(self)->Optional[BaseLayer]:
+        if self._active_layer_id is not None:
+            return self.get_layer(name = self._active_layer_id)
+        
+    @property
+    def active_layer_id(self) -> Optional[str]:
+        return self._active_layer_id
+
+    @active_layer_id.setter
+    def active_layer_id(self, id:str) -> None:
+        assert id in self._layers.keys()
+        self._active_layer_id = id
+        
 
     @property
     def doc(self) -> Document:
@@ -76,15 +92,7 @@ class Scene:
         """
         return MappingProxyType(self._layers)
 
-    
-    # @property
-    # def browser_report(self) -> dict:
-    #     report = {BrowserGroup.get_human_name(group.name): dict() for group in BrowserGroup}
-        
-    #     # group items
-    #     for k, data in self._doc.scene_items.items():
 
-    
     def clear(self, delete_data: bool) -> None:
         for k in list(self._layers.keys()):
             self.remove_layer(k, delete_data)
@@ -92,8 +100,21 @@ class Scene:
     @property
     def renderer(self) -> vtk.vtkRenderer:
         return self._renderer
-        
-
     
+    def _key(self, prop: vtk.vtkProp) -> str:
+        return prop.GetAddressAsString("")
+    
+    def _register_layer_actors(self, layer: BaseLayer) -> None:
+        for act in layer.actors:
+            self._actor_to_layer[self._key(act)] = layer
+            
+    def _unregister_layer_actors(self, layer:BaseLayer) -> None:
+        dead = []
+        for k, v in self._actor_to_layer.items():
+            if v is layer:
+                dead.append(k)
+        for k in dead:
+            self._actor_to_layer.pop(k, None)
 
-
+    def layer_for_prop(self, prop: vtk.vtkProp) -> BaseLayer | None:
+        return self._actor_to_layer.get(self._key(prop))

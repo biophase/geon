@@ -3,33 +3,42 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional, List, Dict, Tuple
 
+from config.theme import *
+
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QWidget,
     QPushButton, QTableWidget, QTableWidgetItem,
     QHeaderView, QSpinBox, QColorDialog, QLineEdit,
-    QDialogButtonBox, QMessageBox
+    QDialogButtonBox, QMessageBox, QLabel, QComboBox,
+    QRadioButton
 )
 
-
 from geon.data.pointcloud import SemanticSchema, SemanticClass
-
 
 @dataclass
 class _RowMeta:
     required: bool = False
+    original_id: Optional[int] = None
 
 
-class SemanticSchemaCreationDialog(QDialog):
+class _SemanticSchemaDialogBase(QDialog):
     COL_ID = 0
     COL_COLOR = 1
     COL_NAME = 2
     COL_BTN = 3
 
-    def __init__(self, required_ids: Optional[List[int]] = None, parent: Optional[QWidget] = None) -> None:
+    def __init__(
+        self,
+        required_ids: Optional[List[int]] = None,
+        parent: Optional[QWidget] = None,
+        *,
+        taken_schema_names: Optional[List[str]] = None,
+        window_title: str = "Semantic Schema",
+    ) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Create Semantic Schema")
+        self.setWindowTitle(window_title)
         self.resize(820, 520)
 
         if required_ids is None:
@@ -38,9 +47,11 @@ class SemanticSchemaCreationDialog(QDialog):
 
         self.schema: Optional[SemanticSchema] = None
         self._row_meta: Dict[int, _RowMeta] = {}
+        self._taken_schema_names = set(taken_schema_names or [])
+        self._right_layout: Optional[QVBoxLayout] = None
+        self._ok_button: Optional[QPushButton] = None
 
         self._build_ui()
-        self._populate_defaults()
 
     # ---------------- UI ----------------
 
@@ -67,6 +78,7 @@ class SemanticSchemaCreationDialog(QDialog):
 
         # Right main: table + bottom name + ok/cancel
         right = QVBoxLayout()
+        self._right_layout = right
 
         self.table = QTableWidget(0, 4, self)
         self.table.setHorizontalHeaderLabels(["ID", "Color", "Name", ""])
@@ -81,9 +93,18 @@ class SemanticSchemaCreationDialog(QDialog):
 
         # Bottom row: schema name input (left) + ok/cancel (right)
         bottom = QHBoxLayout()
+        name_box = QVBoxLayout()
+        name_box.setContentsMargins(0, 0, 0, 0)
+        name_box.setSpacing(2)
         self.schema_name_edit = QLineEdit(self)
         self.schema_name_edit.setPlaceholderText("Schema name")
-        bottom.addWidget(self.schema_name_edit, 1)
+        self.schema_name_edit.textChanged.connect(self._update_name_state)
+        name_box.addWidget(self.schema_name_edit, 0)
+        self.schema_name_hint = QLabel("", self)
+        self.schema_name_hint.setStyleSheet("color: rgb(180, 40, 40);")
+        self.schema_name_hint.setVisible(False)
+        name_box.addWidget(self.schema_name_hint, 0)
+        bottom.addLayout(name_box, 1)
 
         self.buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
@@ -91,6 +112,7 @@ class SemanticSchemaCreationDialog(QDialog):
         )
         self.buttons.accepted.connect(self.accept)
         self.buttons.rejected.connect(self.reject)
+        self._ok_button = self.buttons.button(QDialogButtonBox.StandardButton.Ok)
         bottom.addWidget(self.buttons, 0)
 
         right.addLayout(bottom)
@@ -100,21 +122,49 @@ class SemanticSchemaCreationDialog(QDialog):
         root.addLayout(right, 1)
 
     def _populate_defaults(self) -> None:
+        # Add '+' row first to keep row meta wiring consistent
+        self._insert_add_row()
+
         # Add required rows first
         for rid in self.required_ids:
             if rid == -1:
-                self._insert_class_row(rid, (128, 128, 128), "_unlabeled", required=True)
+                self._insert_class_row(rid, (128, 128, 128), "_unlabeled", required=True, original_id=None)
             else:
-                self._insert_class_row(rid, (200, 200, 200), f"class_{rid}", required=True)
-
-        # Add '+' row
-        self._insert_add_row()
+                self._insert_class_row(rid, (200, 200, 200), f"class_{rid}", required=True, original_id=None)
 
         # Default schema name
         self.schema_name_edit.setText("new_schema")
 
         # Make sure ids are continuous by default if required_ids were only [-1]
         self._on_reindex()
+        self._update_name_state()
+
+    def _populate_from_schema(self, schema: SemanticSchema) -> None:
+        # Add '+' row first to keep row meta wiring consistent
+        self._insert_add_row()
+
+        present_ids = set()
+        for cls in schema.semantic_classes:
+            required = cls.id in self.required_ids
+            self._insert_class_row(
+                cls.id,
+                cls.color,
+                cls.name,
+                required=required,
+                original_id=cls.id,
+            )
+            present_ids.add(cls.id)
+
+        for rid in self.required_ids:
+            if rid in present_ids:
+                continue
+            if rid == -1:
+                self._insert_class_row(rid, (128, 128, 128), "_unlabeled", required=True, original_id=None)
+            else:
+                self._insert_class_row(rid, (200, 200, 200), f"class_{rid}", required=True, original_id=None)
+
+        self.schema_name_edit.setText(schema.name)
+        self._update_name_state()
 
     # ------------- Row creation helpers -------------
 
@@ -134,19 +184,27 @@ class SemanticSchemaCreationDialog(QDialog):
         btn.clicked.connect(self._on_add_clicked)
         self.table.setCellWidget(r, self.COL_BTN, btn)
 
-    def _insert_class_row(self, class_id: int, color: Tuple[int, int, int], name: str, required: bool) -> None:
+    def _insert_class_row(
+        self,
+        class_id: int,
+        color: Tuple[int, int, int],
+        name: str,
+        required: bool,
+        original_id: Optional[int],
+    ) -> None:
         insert_at = self.table.rowCount()
         if insert_at > 0:
             # keep '+' row at the bottom
             insert_at = max(0, insert_at - 1)
 
         self.table.insertRow(insert_at)
-        self._row_meta[insert_at] = _RowMeta(required=required)
+        self._row_meta[insert_at] = _RowMeta(required=required, original_id=original_id)
 
         # ID spin
         id_spin = QSpinBox(self.table)
         id_spin.setRange(-1, 65535)
         id_spin.setValue(int(class_id))
+        id_spin.setProperty("original_id", original_id)
         if required:
             id_spin.setEnabled(False)  # required ids fixed
         self.table.setCellWidget(insert_at, self.COL_ID, id_spin)
@@ -187,7 +245,11 @@ class SemanticSchemaCreationDialog(QDialog):
             # try to preserve "required" by checking if remove button is disabled
             btn = self.table.cellWidget(r, self.COL_BTN)
             required = isinstance(btn, QPushButton) and (not btn.isEnabled())
-            new_meta[r] = _RowMeta(required=required)
+            spin = self.table.cellWidget(r, self.COL_ID)
+            original_id = spin.property("original_id") if isinstance(spin, QSpinBox) else None
+            if not isinstance(original_id, int):
+                original_id = None
+            new_meta[r] = _RowMeta(required=required, original_id=original_id)
         self._row_meta = new_meta
 
         # reconnect all color/remove buttons with correct rows
@@ -215,6 +277,7 @@ class SemanticSchemaCreationDialog(QDialog):
 
     def _set_color_btn(self, btn: QPushButton, rgb: Tuple[int, int, int]) -> None:
         r, g, b = rgb
+        btn.setProperty("rgb", rgb)
         btn.setStyleSheet(
             "QPushButton {"
             f"background-color: rgb({r},{g},{b});"
@@ -240,7 +303,13 @@ class SemanticSchemaCreationDialog(QDialog):
         new_id = 0
         while new_id in used:
             new_id += 1
-        self._insert_class_row(new_id, (200, 200, 200), f"class_{new_id}", required=False)
+        self._insert_class_row(
+            new_id,
+            (200, 200, 200),
+            f"class_{new_id}",
+            required=False,
+            original_id=None,
+        )
         self._on_reindex()
 
     def _on_remove_clicked(self, row: int) -> None:
@@ -298,8 +367,12 @@ class SemanticSchemaCreationDialog(QDialog):
         if isinstance(a_id, QSpinBox) and isinstance(b_id, QSpinBox):
             av, bv = a_id.value(), b_id.value()
             ae, be = a_id.isEnabled(), b_id.isEnabled()
+            ao = a_id.property("original_id")
+            bo = b_id.property("original_id")
             a_id.setValue(bv); b_id.setValue(av)
             a_id.setEnabled(be); b_id.setEnabled(ae)
+            a_id.setProperty("original_id", bo)
+            b_id.setProperty("original_id", ao)
 
         # swap color properties/styles
         a_col = self.table.cellWidget(a, self.COL_COLOR)
@@ -319,10 +392,10 @@ class SemanticSchemaCreationDialog(QDialog):
             a_name.setText(bt); b_name.setText(at)
 
         # swap required meta
-        am = self._row_meta.get(a, _RowMeta()).required
-        bm = self._row_meta.get(b, _RowMeta()).required
-        self._row_meta[a] = _RowMeta(required=bm)
-        self._row_meta[b] = _RowMeta(required=am)
+        am = self._row_meta.get(a, _RowMeta())
+        bm = self._row_meta.get(b, _RowMeta())
+        self._row_meta[a] = _RowMeta(required=bm.required, original_id=bm.original_id)
+        self._row_meta[b] = _RowMeta(required=am.required, original_id=am.original_id)
 
         # update remove buttons enabled state
         self._refresh_remove_buttons()
@@ -398,6 +471,9 @@ class SemanticSchemaCreationDialog(QDialog):
     def _row_to_data(self, row: int) -> dict:
         spin = self.table.cellWidget(row, self.COL_ID)
         class_id = spin.value() if isinstance(spin, QSpinBox) else 0
+        original_id = spin.property("original_id") if isinstance(spin, QSpinBox) else None
+        if not isinstance(original_id, int):
+            original_id = None
 
         btn = self.table.cellWidget(row, self.COL_COLOR)
         rgb = btn.property("rgb") if isinstance(btn, QPushButton) else (128, 128, 128)
@@ -408,7 +484,33 @@ class SemanticSchemaCreationDialog(QDialog):
         name = name_item.text() if name_item else ""
 
         required = self._row_meta.get(row, _RowMeta()).required
-        return {"class_id": class_id, "color": rgb, "name": name, "required": required}
+        return {
+            "class_id": class_id,
+            "color": rgb,
+            "name": name,
+            "required": required,
+            "original_id": original_id,
+        }
+
+    def _name_error(self, name: str) -> Optional[str]:
+        if not name:
+            return "Schema name cannot be empty."
+        if name in self._taken_schema_names:
+            return "Schema name already exists. Choose a different name."
+        return None
+
+    def _update_name_state(self) -> None:
+        name = self.schema_name_edit.text().strip()
+        err = self._name_error(name)
+        if err is not None:
+            self.schema_name_hint.setText(err)
+            self.schema_name_hint.setVisible(True)
+            if self._ok_button is not None:
+                self._ok_button.setEnabled(False)
+        else:
+            self.schema_name_hint.setVisible(False)
+            if self._ok_button is not None:
+                self._ok_button.setEnabled(True)
 
     # ------------- Validation + accept -------------
 
@@ -427,8 +529,9 @@ class SemanticSchemaCreationDialog(QDialog):
     def _validate(self) -> Optional[str]:
         # schema name
         schema_name = self.schema_name_edit.text().strip()
-        if not schema_name:
-            return "Schema name cannot be empty."
+        name_err = self._name_error(schema_name)
+        if name_err is not None:
+            return name_err
 
         # ids unique
         ids = self._current_ids(include_required=True)
@@ -464,12 +567,7 @@ class SemanticSchemaCreationDialog(QDialog):
 
         return None
 
-    def accept(self) -> None:
-        err = self._validate()
-        if err is not None:
-            QMessageBox.warning(self, "Invalid schema", err)
-            return
-
+    def _build_schema(self) -> SemanticSchema:
         schema_name = self.schema_name_edit.text().strip()
         schema = SemanticSchema(name=schema_name)
         schema.semantic_classes = []
@@ -482,17 +580,222 @@ class SemanticSchemaCreationDialog(QDialog):
             cid = spin.value() if isinstance(spin, QSpinBox) else 0
 
             btn = self.table.cellWidget(r, self.COL_COLOR)
-            rgb = btn.property("rgb") if isinstance(btn, QPushButton) else (128, 128, 128)
+            rgb = btn.property("rgb") if isinstance(btn, QPushButton) \
+                else DEFAULT_SEGMENTATION_COLOR
             if not isinstance(rgb, tuple):
-                rgb = (128, 128, 128)
+                rgb = DEFAULT_SEGMENTATION_COLOR
 
             item = self.table.item(r, self.COL_NAME)
             cname = item.text() if item else ""
 
-            schema.semantic_classes.append(SemanticClass(int(cid), cname, (int(rgb[0]), int(rgb[1]), int(rgb[2]))))
+            schema.semantic_classes.append(
+                SemanticClass(int(cid), cname, (int(rgb[0]), int(rgb[1]), int(rgb[2])))
+            )
 
         # sort by id for canonical form
         schema.semantic_classes.sort(key=lambda c: c.id)
+        return schema
 
-        self.schema = schema
+    def accept(self) -> None:
+        err = self._validate()
+        if err is not None:
+            QMessageBox.warning(self, "Invalid schema", err)
+            return
+
+        self.schema = self._build_schema()
         super().accept()
+
+
+class SemanticSchemaCreationDialog(_SemanticSchemaDialogBase):
+    def __init__(
+        self,
+        required_ids: Optional[List[int]] = None,
+        parent: Optional[QWidget] = None,
+        *,
+        taken_schema_names: Optional[List[str]] = None,
+    ) -> None:
+        super().__init__(
+            required_ids=required_ids,
+            parent=parent,
+            taken_schema_names=taken_schema_names,
+            window_title="Create Semantic Schema",
+        )
+        self._populate_defaults()
+
+
+class _DeletedIdMappingDialog(QDialog):
+    def __init__(
+        self,
+        deleted_ids: List[int],
+        available_ids: List[int],
+        parent: Optional[QWidget] = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Remap Removed Classes")
+        self.resize(420, 240)
+        self._deleted_ids = deleted_ids
+
+        layout = QVBoxLayout(self)
+        label = QLabel("Choose a target class for each removed ID.", self)
+        layout.addWidget(label, 0)
+
+        self.table = QTableWidget(len(deleted_ids), 2, self)
+        self.table.setHorizontalHeaderLabels(["Removed ID", "Map to"])
+        header = self.table.horizontalHeader()
+        assert isinstance(header, QHeaderView)
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        vheader = self.table.verticalHeader()
+        if vheader is not None:
+            vheader.setVisible(False)
+
+        for r, old_id in enumerate(deleted_ids):
+            item = QTableWidgetItem(str(old_id))
+            item.setFlags(Qt.ItemFlag.NoItemFlags)
+            self.table.setItem(r, 0, item)
+
+            combo = QComboBox(self.table)
+            for new_id in available_ids:
+                combo.addItem(str(new_id), int(new_id))
+            self.table.setCellWidget(r, 1, combo)
+
+        layout.addWidget(self.table, 1)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+            parent=self,
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons, 0)
+
+    def mapping(self) -> List[Tuple[int, int]]:
+        out: List[Tuple[int, int]] = []
+        for r, old_id in enumerate(self._deleted_ids):
+            combo = self.table.cellWidget(r, 1)
+            new_id = combo.currentData() if isinstance(combo, QComboBox) else None
+            if new_id is None:
+                continue
+            out.append((int(old_id), int(new_id)))
+        return out
+
+
+class SemanticSchemaEditDialog(_SemanticSchemaDialogBase):
+    def __init__(
+        self,
+        schema: SemanticSchema,
+        required_ids: Optional[List[int]] = None,
+        parent: Optional[QWidget] = None,
+        *,
+        taken_schema_names: Optional[List[str]] = None,
+    ) -> None:
+        super().__init__(
+            required_ids=required_ids,
+            parent=parent,
+            taken_schema_names=taken_schema_names,
+            window_title="Edit Semantic Schema",
+        )
+        self.old_schema = schema
+        self.old_2_new_ids: List[Tuple[int, int]] = []
+        self.update_existing = True
+        self._original_schema_name = schema.name
+        self._original_ids = [cls.id for cls in schema.semantic_classes]
+
+        self._insert_edit_options()
+        self._populate_from_schema(schema)
+
+    def _insert_edit_options(self) -> None:
+        if self._right_layout is None:
+            return
+        row = QHBoxLayout()
+        label = QLabel("Apply edits:", self)
+        label.setStyleSheet("font-weight: bold;")
+        row.addWidget(label, 0)
+
+        self._update_existing_radio = QRadioButton("Update existing schema", self)
+        self._save_as_new_radio = QRadioButton("Save as new", self)
+        self._update_existing_radio.setChecked(True)
+        self._update_existing_radio.toggled.connect(self._on_mode_changed)
+        self._save_as_new_radio.toggled.connect(self._on_mode_changed)
+
+        row.addWidget(self._update_existing_radio, 0)
+        row.addWidget(self._save_as_new_radio, 0)
+        row.addStretch(1)
+
+        insert_index = max(0, self._right_layout.count() - 1)
+        self._right_layout.insertLayout(insert_index, row)
+
+    def _on_mode_changed(self) -> None:
+        self.update_existing = self._update_existing_radio.isChecked()
+        self._update_name_state()
+
+    def _name_error(self, name: str) -> Optional[str]:
+        if not name:
+            return "Schema name cannot be empty."
+        if not hasattr(self, "_save_as_new_radio"):
+            return super()._name_error(name)
+        if self._save_as_new_radio.isChecked():
+            if name == self._original_schema_name:
+                return "Schema name must be different when saving as new."
+            if name in self._taken_schema_names:
+                return "Schema name already exists. Choose a different name."
+        else:
+            if name != self._original_schema_name and name in self._taken_schema_names:
+                return "Schema name already exists. Choose a different name."
+        return None
+
+    def _row_id_value(self, row: int) -> int:
+        spin = self.table.cellWidget(row, self.COL_ID)
+        return int(spin.value()) if isinstance(spin, QSpinBox) else 0
+
+    def _collect_old_to_new_ids(self) -> Optional[List[Tuple[int, int]]]:
+        mapping: List[Tuple[int, int]] = []
+        present_original_ids: set[int] = set()
+
+        for r in range(self.table.rowCount()):
+            if self._is_add_row(r):
+                continue
+            meta = self._row_meta.get(r, _RowMeta())
+            original_id = meta.original_id
+            if original_id is None:
+                continue
+            present_original_ids.add(original_id)
+            mapping.append((int(original_id), self._row_id_value(r)))
+
+        removed_ids = [oid for oid in self._original_ids if oid not in present_original_ids]
+        if removed_ids:
+            current_ids = self._current_ids(include_required=True)
+            if -1 in current_ids:
+                for old_id in removed_ids:
+                    mapping.append((int(old_id), -1))
+            else:
+                if not current_ids:
+                    QMessageBox.warning(
+                        self,
+                        "Remap required",
+                        "No class IDs are available for remapping.",
+                    )
+                    return None
+                dlg = _DeletedIdMappingDialog(removed_ids, current_ids, parent=self)
+                if dlg.exec() != QDialog.DialogCode.Accepted:
+                    return None
+                for old_id, new_id in dlg.mapping():
+                    mapping.append((int(old_id), int(new_id)))
+
+        return mapping
+
+    def accept(self) -> None:
+        err = self._validate()
+        if err is not None:
+            QMessageBox.warning(self, "Invalid schema", err)
+            return
+
+        new_schema = self._build_schema()
+        mapping = self._collect_old_to_new_ids()
+        if mapping is None:
+            return
+
+        self.schema = new_schema
+        self.old_2_new_ids = mapping
+        self.update_existing = self._update_existing_radio.isChecked()
+        QDialog.accept(self)

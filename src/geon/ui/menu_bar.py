@@ -11,6 +11,8 @@ class MenuBar(QMenuBar):
     updateDocumentsRequested    = pyqtSignal()
     importFromRequested         = pyqtSignal()
     saveDocRequested            = pyqtSignal()
+    undoRequested               = pyqtSignal()
+    redoRequested               = pyqtSignal()
     
     def __init__(self, parent):
         super().__init__(parent)
@@ -25,6 +27,18 @@ class MenuBar(QMenuBar):
         act_update.triggered.connect(self.updateDocumentsRequested)
 
         self.addMenu(self.dataset_menu)
+        
+        # edit menu
+        self.edit_menu = QMenu("&Edit", self)
+        act_undo = cast(QAction, self.edit_menu.addAction("&Undo"))
+        act_undo.setShortcut(QKeySequence.StandardKey.Undo)
+        act_undo.triggered.connect(self.undoRequested)
+        
+        act_redo = cast(QAction, self.edit_menu.addAction("&Redo"))
+        act_redo.setShortcut(QKeySequence.StandardKey.Redo)
+        act_redo.triggered.connect(self.redoRequested)        
+        self.addMenu(self.edit_menu)
+        
 
         
 

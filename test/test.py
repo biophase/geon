@@ -157,7 +157,7 @@ def test_reindexing_sync():
     # 2. Execute Reindex
     # NOTE: This will fail until you implement the method in SemanticSegmentation!
     try:
-        seg.reindex_semantic()
+        seg.remap()
     except NotImplementedError:
         pytest.fail("reindex_semantic is not implemented yet!")
         

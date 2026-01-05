@@ -1,13 +1,14 @@
-from geon.io.dataset import Dataset, RefModState, DocumentReference, RefLoadedState
+from geon.io.dataset import (Dataset, RefModState, DocumentReference, 
+                             RefLoadedState)
 from geon.data.document import Document
 from geon.rendering.scene import Scene
 from config.common import KNOWN_FILE_EXTENSIONS
 
 from .imports import ImportPLYDialog
 from .common import ElidedLabel, Dock
+from ..data.pointcloud import SemanticSchema
 
-
-from typing import Optional, cast, Union
+from typing import Optional, cast, Union, Callable
 import os.path as osp
 
 from PyQt6.QtWidgets import (QLabel, QPushButton, QHBoxLayout, QTreeWidget, QDockWidget, QWidget, 
@@ -20,12 +21,13 @@ from PyQt6.QtGui import QFontMetrics
 
 
 
+
 class DatasetManager(Dock):
     requestSetActiveDocInScene      = pyqtSignal(Document)
     
 
     def __init__(self, parent) -> None:
-        super().__init__("Datasets", parent)
+        super().__init__("Dataset", parent)
         
         # containers
         self._dataset: Optional[Dataset] = None
@@ -52,9 +54,12 @@ class DatasetManager(Dock):
 
         self.setWidget(self.stack)
         self.tree.setHeaderLabels(["","Scene name", "Modified", "Loaded", "Path on disk"])
+        self.tree.setColumnWidth(0, 20) # selection column can be small
+        self.tree.setTreePosition(1) # tree indent in second column
         self.tree.setTextElideMode(Qt.TextElideMode.ElideMiddle)
         self.tree_button_group = QButtonGroup(self)
         self.tree_button_group.setExclusive(True)
+
         
         
 
@@ -87,15 +92,27 @@ class DatasetManager(Dock):
         return doc
 
     def save_scene_doc(self, scene: Optional[Scene], ignore_state=False) -> None:
+        print(
+            "[save_scene_doc] called"
+            f" ignore_state={ignore_state}"
+            f" scene_name={(scene.doc.name if scene is not None else None)}"
+        )
         if scene is None:
+            print("[save_scene_doc] no scene; abort")
             return
         if self._dataset is None:
+            print("[save_scene_doc] no dataset; abort")
             return
         for ref in self._dataset.doc_refs:
             if ref.name == scene.doc.name and (
                 ref.modState is RefModState.MODIFIED or
                 ignore_state
                 ):
+                print(
+                    "[save_scene_doc] saving ref"
+                    f" name={ref.name} modState={ref.modState.name}"
+                    f" loadedState={ref.loadedState.name} path={ref.path}"
+                )
                 if ref.path is None:
                     work_dir=self._dataset.working_dir
                     if work_dir is None:
@@ -124,9 +141,21 @@ class DatasetManager(Dock):
                             
                     ref.path =  osp.join(work_dir, ref.name, f"{ref.name}.h5") if self.create_intermidiate_folder else \
                                 osp.join(work_dir,f"{ref.name}.h5")
+                    print(f"[save_scene_doc] assigned path={ref.path}")
                     
-                scene.doc.save_hdf5(ref.path)
+                try:
+                    scene.doc.save_hdf5(ref.path)
+                except Exception as e:
+                    print(f"[save_scene_doc] save failed for {ref.path}: {e}")
+                    raise
                 ref.modState = RefModState.SAVED
+                print(f"[save_scene_doc] save completed for {ref.name}")
+            elif ref.name == scene.doc.name:
+                print(
+                    "[save_scene_doc] skip save"
+                    f" name={ref.name} modState={ref.modState.name}"
+                    f" ignore_state={ignore_state}"
+                )
         self.populate_tree()
                 
 
@@ -140,7 +169,20 @@ class DatasetManager(Dock):
             unique_names.append(ref_name)
 
     
-
+    def update_semantic_schema (
+        self,
+        old_schema: SemanticSchema,
+        new_schema: SemanticSchema,
+        old_2_new_ids: list[tuple[int,int]],
+        progress_cb: Optional[Callable[[int, int, str],None]] = None
+        ) -> None:
+        
+        if self._dataset is None:
+            return
+        updated_refs = self._dataset.update_semantic_schema(
+            old_schema, new_schema, old_2_new_ids, progress_cb
+        )
+        
 
     
     def populate_tree(self):     
@@ -234,6 +276,12 @@ class DatasetManager(Dock):
         doc_ref = self._dataset.add_document(doc)
         self.populate_tree()
         self.set_active_doc(doc_ref)
+        
+    def disable(self) -> None:
+        self.tree.setEnabled(False)
+    
+    def enable(self) -> None:
+        self.tree.setEnabled(True)    
        
         
         

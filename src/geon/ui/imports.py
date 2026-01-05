@@ -53,6 +53,66 @@ class ImportPLYDialog(QDialog):
     OUT_BTN_COL = 4 # script assumes the OUT_BTN_COL is always last
     
     NEW_SCHEMA_SENTINEL = "__NEW_SCHEMA__"
+    AUTO_INPUT_FIELD_MAPPINGS: Dict[str, tuple[Optional[str], FieldType, int]] = {
+        # colors 
+        "red": ("colors", FieldType.COLOR, 0),
+        "r": ("colors", FieldType.COLOR, 0),
+        "green": ("colors", FieldType.COLOR, 1),
+        "g": ("colors", FieldType.COLOR, 1),
+        "blue": ("colors", FieldType.COLOR, 2),
+        "b": ("colors", FieldType.COLOR, 2),
+        # normals 
+        "nx": ("normals", FieldType.NORMAL, 0),
+        "ny": ("normals", FieldType.NORMAL, 1),
+        "nz": ("normals", FieldType.NORMAL, 2),
+        "normalx": ("normals", FieldType.NORMAL, 0),
+        "normaly": ("normals", FieldType.NORMAL, 1),
+        "normalz": ("normals", FieldType.NORMAL, 2),
+        "normal_x": ("normals", FieldType.NORMAL, 0),
+        "normal_y": ("normals", FieldType.NORMAL, 1),
+        "normal_z": ("normals", FieldType.NORMAL, 2),
+        # intensity-like scalars 
+        "intensity": ("intensity", FieldType.INTENSITY, 0),
+        "intensities": ("intensity", FieldType.INTENSITY, 0),
+        "reflectance": ("intensity", FieldType.INTENSITY, 0),
+        "reflectivity": ("intensity", FieldType.INTENSITY, 0),
+        "luminosity": ("intensity", FieldType.INTENSITY, 0),
+        "luminance": ("intensity", FieldType.INTENSITY, 0),
+        # semantic segmentation 
+        "label": (None, FieldType.SEMANTIC, 0),
+        "labels": (None, FieldType.SEMANTIC, 0),
+        "class": (None, FieldType.SEMANTIC, 0),
+        "classes": (None, FieldType.SEMANTIC, 0),
+        "semantic": (None, FieldType.SEMANTIC, 0),
+        "semantic_label": (None, FieldType.SEMANTIC, 0),
+        "ground_truth": (None, FieldType.SEMANTIC, 0),
+        "groundtruth": (None, FieldType.SEMANTIC, 0),
+        "gt": (None, FieldType.SEMANTIC, 0),
+        "seg": (None, FieldType.SEMANTIC, 0),
+        "segmentation": (None, FieldType.SEMANTIC, 0),
+        "semantic_segmentation": (None, FieldType.SEMANTIC, 0),
+        # instance segmentation 
+        "instance": (None, FieldType.INSTANCE, 0),
+        "instance_id": (None, FieldType.INSTANCE, 0),
+        "instanceid": (None, FieldType.INSTANCE, 0),
+        "object_id": (None, FieldType.INSTANCE, 0),
+        "objectid": (None, FieldType.INSTANCE, 0),
+        "inst": (None, FieldType.INSTANCE, 0),
+    }
+    AUTO_INPUT_COORD_MAPPINGS: Dict[str, int] = {
+        "x": 0,
+        "y": 1,
+        "z": 2,
+        "posx": 0,
+        "posy": 1,
+        "posz": 2,
+        "positionx": 0,
+        "positiony": 1,
+        "positionz": 2,
+        "coordx": 0,
+        "coordy": 1,
+        "coordz": 2,
+    }
 
     def __init__(
         self,
@@ -83,7 +143,7 @@ class ImportPLYDialog(QDialog):
         self._build_ui()
         self._populate_input_fields()
         self._setup_default_output_fields()
-        self._refresh_input_mapping_targets()
+        self._apply_auto_mappings()
 
     # ------------------------------------------------------------------
     # Accessor for the resulting PointCloudData
@@ -235,18 +295,24 @@ class ImportPLYDialog(QDialog):
         if ftype == FieldType.SEMANTIC and data == self.NEW_SCHEMA_SENTINEL:
             # Required IDs: for now default [-1]; later you can pass more.
             required_ids = self._required_ids_from_mapped_semantic(row)
-            dlg = SemanticSchemaCreationDialog(required_ids=required_ids, parent=self)
+            dlg = SemanticSchemaCreationDialog(
+                required_ids=required_ids,
+                taken_schema_names=list(self.semantic_schemas.keys()),
+                parent=self,
+            )
             if dlg.exec() == QDialog.DialogCode.Accepted and dlg.schema is not None:
                 schema = dlg.schema  # SemanticSchema
                 # Insert it into semantic_schemas (choose a key strategy)
                 key = schema.name
-                # ensure uniqueness
                 if key in self.semantic_schemas:
-                    i = 1
-                    while f"{key}_{i}" in self.semantic_schemas:
-                        i += 1
-                    key = f"{key}_{i}"
-                    schema.name = key
+                    QMessageBox.warning(
+                        self,
+                        "Schema name exists",
+                        "Schema name already exists. Choose a different name.",
+                    )
+                    self._populate_resource_combo_for_row(row)
+                    res_combo.setCurrentIndex(0)
+                    return
 
                 self.semantic_schemas[key] = schema
 
@@ -382,6 +448,110 @@ class ImportPLYDialog(QDialog):
         for name in names:
             field_dtype = dtype.fields[name][0]
             self._add_input_row(name, str(field_dtype))
+            
+    def _normalize_auto_field_name(self, name: str) -> str:
+        return name.strip().lower()
+
+    def _default_ncols_for_type(self, ftype: FieldType) -> int:
+        if ftype in (FieldType.COLOR, FieldType.NORMAL):
+            return 3
+        if ftype in (
+            FieldType.SCALAR,
+            FieldType.INTENSITY,
+            FieldType.SEMANTIC,
+            FieldType.INSTANCE,
+        ):
+            return 1
+        return 3
+
+    def _apply_auto_mappings(self) -> None:
+        """
+        Create output fields and input mappings based on AUTO_INPUT_FIELD_MAPPINGS.
+        """
+        if self.vertex_element is None:
+            return
+
+        output_needs: Dict[str, tuple[FieldType, set[int]]] = {}
+        for row in range(self.input_table.rowCount()):
+            name_item = self.input_table.item(row, self.IN_NAME_COL)
+            if not name_item:
+                continue
+            input_name = name_item.text().strip()
+            key = self._normalize_auto_field_name(input_name)
+            mapping = self.AUTO_INPUT_FIELD_MAPPINGS.get(key)
+            if mapping is None:
+                continue
+            out_name, ftype, out_index = mapping
+            if out_name is None:
+                out_name = input_name
+            if out_name not in output_needs:
+                output_needs[out_name] = (ftype, set())
+            output_needs[out_name][1].add(out_index)
+
+        for out_name, (ftype, _indices) in output_needs.items():
+            out_row = self._get_output_row_by_name(out_name)
+            if out_row is not None:
+                continue
+            insert_row = self._real_output_row_count()
+            self._insert_output_field_row(
+                row=insert_row,
+                name=out_name,
+                ftype=ftype,
+                ncols=self._default_ncols_for_type(ftype),
+            )
+
+        self._refresh_input_mapping_targets()
+
+        for row in range(self.input_table.rowCount()):
+            name_item = self.input_table.item(row, self.IN_NAME_COL)
+            if not name_item:
+                continue
+            input_name = name_item.text().strip()
+            key = self._normalize_auto_field_name(input_name)
+            coord_index = self.AUTO_INPUT_COORD_MAPPINGS.get(key)
+            if coord_index is not None:
+                combo: QComboBox = cast(QComboBox, self.input_table.cellWidget(
+                    row, self.IN_MAP_FIELD_COL
+                ))
+                index_spin: QSpinBox = cast(QSpinBox, self.input_table.cellWidget(
+                    row, self.IN_MAP_INDEX_COL
+                ))
+                combo.blockSignals(True)
+                coord_idx = combo.findText("coordinates")
+                if coord_idx >= 0:
+                    combo.setCurrentIndex(coord_idx)
+                combo.blockSignals(False)
+                self._update_index_enablement_for_row(row)
+                index_spin.blockSignals(True)
+                index_spin.setValue(coord_index)
+                index_spin.blockSignals(False)
+                self._on_input_mapping_changed(row)
+                continue
+
+            mapping = self.AUTO_INPUT_FIELD_MAPPINGS.get(key)
+            if mapping is None:
+                continue
+            out_name, _ftype, out_index = mapping
+            if out_name is None:
+                out_name = input_name
+
+            combo: QComboBox = cast(QComboBox, self.input_table.cellWidget(
+                row, self.IN_MAP_FIELD_COL
+            ))
+            index_spin: QSpinBox = cast(QSpinBox, self.input_table.cellWidget(
+                row, self.IN_MAP_INDEX_COL
+            ))
+            combo.blockSignals(True)
+            idx = combo.findText(out_name)
+            if idx >= 0:
+                combo.setCurrentIndex(idx)
+            combo.blockSignals(False)
+            self._update_index_enablement_for_row(row)
+            if index_spin.isEnabled():
+                index_spin.blockSignals(True)
+                index_spin.setValue(out_index)
+                index_spin.blockSignals(False)
+            self._on_input_mapping_changed(row)
 
     def _add_input_row(self, name: str, dtype_str: str) -> None:
         row = self.input_table.rowCount()
@@ -635,7 +805,7 @@ class ImportPLYDialog(QDialog):
         ):
             ncols_spin.setValue(1)
             ncols_spin.setEnabled(False)
-        elif ftype == FieldType.COLOR:
+        elif ftype in (FieldType.COLOR, FieldType.NORMAL):
             ncols_spin.setValue(3)
             ncols_spin.setEnabled(False)
         elif ftype == FieldType.VECTOR:
@@ -738,7 +908,7 @@ class ImportPLYDialog(QDialog):
     def _update_index_enablement_for_row(self, row: int) -> None: 
         """
         Enable/disable index spin based on mapped output field type:
-        - Enabled for coordinates / VECTOR / COLOR
+        - Enabled for coordinates / VECTOR / COLOR / NORMAL
         - Disabled otherwise
         """
         combo: QComboBox = cast(QComboBox, self.input_table.cellWidget(
@@ -778,7 +948,7 @@ class ImportPLYDialog(QDialog):
         ftype: FieldType = type_combo.currentData()
         ncols = ncols_spin.value()
 
-        if ftype in (FieldType.VECTOR, FieldType.COLOR):
+        if ftype in (FieldType.VECTOR, FieldType.COLOR, FieldType.NORMAL):
             index_spin.setEnabled(True)
             index_spin.setMaximum(max(0, ncols - 1))
             if index_spin.value() >= ncols:
@@ -825,7 +995,7 @@ class ImportPLYDialog(QDialog):
         ftype: FieldType = type_combo.currentData()
         ncols = ncols_spin.value()
 
-        if ftype in (FieldType.VECTOR, FieldType.COLOR):
+        if ftype in (FieldType.VECTOR, FieldType.COLOR, FieldType.NORMAL):
             if not index_spin.isEnabled():
                 cast(QTableWidgetItem, status_item).setText("?")
                 return
@@ -1047,11 +1217,11 @@ class ImportPLYDialog(QDialog):
                 if src.ndim > 1:
                     src = src.reshape(num_points)
 
-                if ftype in (FieldType.VECTOR, FieldType.COLOR):
+                if ftype in (FieldType.VECTOR, FieldType.COLOR, FieldType.NORMAL):
                     idx = m["output_index"]
                     if idx is None:
                         raise RuntimeError(
-                            f"Missing index mapping for VECTOR/COLOR field '{out_name}'."
+                            f"Missing index mapping for VECTOR/COLOR/NORMAL field '{out_name}'."
                         )
                     if idx < 0 or idx >= ncols:
                         raise RuntimeError(
