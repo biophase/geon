@@ -161,6 +161,7 @@ class VTKViewer(QWidget):
         self._interactor.Initialize()
         self._interactor_style = InteractorStyle(self._renderer, self)
         self._interactor.SetInteractorStyle(self._interactor_style)
+        self._edl_pass: Optional[vtk.vtkEDLShading] = None
         
 
         self.picker = PointPicker(self._renderer)
@@ -208,6 +209,36 @@ class VTKViewer(QWidget):
         
     def rerender(self):
         self.vtkWidget.GetRenderWindow().Render()
+
+    def enable_edl(self) -> None:
+        basic_passes = vtk.vtkRenderStepsPass()
+        edl_pass = vtk.vtkEDLShading()
+        edl_pass.SetDelegatePass(basic_passes)
+
+        gl_renderer = vtk.vtkOpenGLRenderer.SafeDownCast(self._renderer)
+        if gl_renderer is None:
+            raise TypeError("Renderer must be an OpenGL renderer (vtkOpenGLRenderer).")
+
+        gl_renderer.SetPass(edl_pass)
+        gl_renderer.Modified()
+        self._edl_pass = edl_pass
+        self.rerender()
+
+    def disable_edl(self) -> None:
+        gl_renderer = vtk.vtkOpenGLRenderer.SafeDownCast(self._renderer)
+        if gl_renderer is None:
+            return
+        basic_passes = vtk.vtkRenderStepsPass()
+        gl_renderer.SetPass(basic_passes)
+        gl_renderer.Modified()
+        self._edl_pass = None
+        self.rerender()
+
+    def toggle_edl(self) -> None:
+        if self._edl_pass is None:
+            self.enable_edl()
+        else:
+            self.disable_edl()
         
     def set_camera_enabled(self, enabled: bool) -> None:
         self._interactor_style.camera_enabled = enabled
@@ -224,7 +255,7 @@ class VTKViewer(QWidget):
             camera.SetParallelProjection(False)
         else:
             camera.SetParallelProjection(True)
-        self._renderer.ResetCamera()
+        # self._renderer.ResetCamera()
         self.rerender()
         
 

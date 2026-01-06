@@ -1,0 +1,1 @@
+data/test_dataset/labeled-snrw-npy/4605567_0.npy	data/_temp/bw52-130/BW-0103_SC-00/preprocessed/set-06_wb_DH_4605567_0-mls.ply

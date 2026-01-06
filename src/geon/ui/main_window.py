@@ -4,17 +4,19 @@ from .viewer import VTKViewer
 from .toolbar import CommonToolsDock
 from .menu_bar import MenuBar
 from .context_ribbon import ContextRibbon
+from .imports import FieldEditorDialog
 
 
 from ..io.ply import ply_to_pcd
 from ..tools.controller import ToolController
 from ..ui.layers import LAYER_UI
+from ..rendering.pointcloud import PointCloudLayer
+from ..data.pointcloud import FieldType, SemanticSegmentation, SemanticSchema
 
 
-from PyQt6.QtWidgets import (QMainWindow, QDialog, QFileDialog,  QApplication,  
-                             QMenu)
+from PyQt6.QtWidgets import (QMainWindow, QApplication, QMenu)
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QShortcut, QKeySequence
+from PyQt6.QtGui import QShortcut, QKeySequence, QAction
 
 from typing import cast
 
@@ -49,6 +51,18 @@ class MainWindow(QMainWindow):
         view_menu = cast(QMenu, self.menu_bar.addMenu("&View"))
         view_menu.addAction(self.scene_manager.toggleViewAction())
         view_menu.addAction(self.dataset_manager.toggleViewAction())
+        view_menu.addSeparator()
+        act_toggle_edl = cast(QAction, view_menu.addAction("Toggle EDL"))
+        act_toggle_edl.setCheckable(True)
+        act_toggle_edl.toggled.connect(lambda checked: self.viewer.enable_edl() if checked else self.viewer.disable_edl())
+        
+        doc_menu = self.menu_bar.doc_menu
+        doc_menu.addSeparator()
+        import_field_menu = cast(QMenu, doc_menu.addMenu("Import field from"))
+        act_import_npy = cast(QAction, import_field_menu.addAction(".NPY"))
+        act_import_npy.triggered.connect(self._on_import_field_from_npy)
+        act_edit_fields = cast(QAction, doc_menu.addAction("Edit fields"))
+        act_edit_fields.triggered.connect(self._on_edit_fields)
 
         ###########
         # signals #
@@ -131,4 +145,64 @@ class MainWindow(QMainWindow):
         title = "Active selection"
         widget = hooks.ribbon_sel_widget(layer, self.ribbon, self.tool_controller)
         self.ribbon.set_group(title, widget, 'selection')
+
+    def _get_active_pointcloud_layer(self) -> PointCloudLayer | None:
+        scene = self.scene_manager._scene
+        if scene is None:
+            return None
+        layer = scene.active_layer
+        if not isinstance(layer, PointCloudLayer):
+            return None
+        return layer
+
+    def _collect_semantic_schemas(self, layer: PointCloudLayer) -> dict[str, SemanticSchema]:
+        schemas: dict[str, SemanticSchema] = {}
+        dataset = self.dataset_manager._dataset
+        if dataset is not None:
+            for schema in dataset.unique_semantic_schemas:
+                schemas[schema.name] = schema
+            return schemas
+
+        for field in layer.data.get_fields(field_type=FieldType.SEMANTIC):
+            if isinstance(field, SemanticSegmentation):
+                schemas[field.schema.name] = field.schema
+        return schemas
+
+    def _on_import_field_from_npy(self) -> None:
+        layer = self._get_active_pointcloud_layer()
+        if layer is None:
+            return
+        dlg = FieldEditorDialog.from_npy_picker(
+            parent=self,
+            semantic_schemas=self._collect_semantic_schemas(layer),
+            color_maps={},
+            target_point_cloud=layer.data,
+        )
+        if dlg is None:
+            return
+        dlg.exec()
+        if dlg.point_cloud is None:
+            return
+        layer.update()
+        self.scene_manager.populate_tree()
+        self.viewer.rerender()
+
+    def _on_edit_fields(self) -> None:
+        layer = self._get_active_pointcloud_layer()
+        if layer is None:
+            return
+        dlg = FieldEditorDialog(
+            ply_path=None,
+            semantic_schemas=self._collect_semantic_schemas(layer),
+            color_maps={},
+            target_point_cloud=layer.data,
+            edit_only=True,
+            parent=self,
+        )
+        dlg.exec()
+        if dlg.point_cloud is None:
+            return
+        layer.update()
+        self.scene_manager.populate_tree()
+        self.viewer.rerender()
  

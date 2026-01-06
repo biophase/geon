@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 from typing import Dict, Any, Optional, List, cast
+import os.path as osp
 
 import numpy as np
 from plyfile import PlyData
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QPoint
 from PyQt6.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,
     QSplitter,QWidget,QLabel,QTableWidget,QTableWidgetItem,QHeaderView,
-    QComboBox,QPushButton,QSpinBox,QDialogButtonBox,QMessageBox,QCheckBox,QSizePolicy
+    QComboBox,QPushButton,QSpinBox,QDialogButtonBox,QMessageBox,QCheckBox,QSizePolicy,
+    QToolButton, QFileDialog
 )
 
 from PyQt6.QtGui import QColor
@@ -17,25 +19,18 @@ from geon.data.pointcloud import (
     PointCloudData,
     FieldType,
     SemanticSchema,
+    SemanticSegmentation,
+    InstanceSegmentation,
+    FieldBase,
 )
 from geon.data.definitions import ColorMap  
 from geon.ui.semantic_schema_dialog import SemanticSchemaCreationDialog
 
 
-class ImportPLYDialog(QDialog):
+class FieldEditorDialog(QDialog):
     """
-    Dialog that maps a .ply point cloud to your PointCloudData structure.
-
-    Parameters
-    ----------
-    ply_path : str
-        Path to the .ply file to import.
-    semantic_schemas : Dict[str, SemanticSchema]
-        Mapping of schema name -> SemanticSchema.
-        (Currently used by picking the first available schema for semantic fields.)
-    color_maps : Dict[str, ColorMap]
-        Mapping of colormap name -> ColorMap.
-        (Currently used by picking the first available colormap for color fields.)
+    Dialog that maps input fields into PointCloudData fields.
+    Supports PLY import, generic input arrays, and edit-only modes.
     """
 
     # Input table columns
@@ -53,6 +48,8 @@ class ImportPLYDialog(QDialog):
     OUT_BTN_COL = 4 # script assumes the OUT_BTN_COL is always last
     
     NEW_SCHEMA_SENTINEL = "__NEW_SCHEMA__"
+    SOURCE_NAME_ROLE = Qt.ItemDataRole.UserRole
+    SOURCE_KIND_ROLE = Qt.ItemDataRole.UserRole + 1
     AUTO_INPUT_FIELD_MAPPINGS: Dict[str, tuple[Optional[str], FieldType, int]] = {
         # colors 
         "red": ("colors", FieldType.COLOR, 0),
@@ -116,20 +113,36 @@ class ImportPLYDialog(QDialog):
 
     def __init__(
         self,
-        ply_path: str,
+        ply_path: Optional[str],
         semantic_schemas: Dict[str, SemanticSchema],
         color_maps: Dict[str, ColorMap],
         allow_doc_appending = False,
         taken_doc_names: list[str] = [],
         parent: Optional[QWidget] = None,
+        input_fields: Optional[Dict[str, np.ndarray]] = None,
+        input_field_dtypes: Optional[Dict[str, str]] = None,
+        input_source_name: Optional[str] = None,
+        target_point_cloud: Optional[PointCloudData] = None,
+        edit_only: bool = False,
     ) -> None:
         super().__init__(parent)
 
         self.ply_path = ply_path
         self.semantic_schemas = semantic_schemas
         self.color_maps = color_maps
+        self._target_pointcloud = target_point_cloud
+        self._edit_only = edit_only
+        self._allow_coordinate_mapping = self._target_pointcloud is None and not self._edit_only
+        self._allow_field_duplicate = self._edit_only or self._target_pointcloud is not None
+        self._input_fields: Dict[str, np.ndarray] = {}
+        self._input_field_dtypes: Dict[str, str] = {}
+        self._input_field_names: list[str] = []
+        self._input_source_name = input_source_name or ("PLY" if ply_path else "Input")
 
-        self.setWindowTitle("Import PLY")
+        if self._edit_only:
+            self.setWindowTitle("Edit Fields")
+        else:
+            self.setWindowTitle(f"Import {self._input_source_name}")
         self.resize(1100, 650)
 
         self._suppress_output_item_changed = False
@@ -139,11 +152,81 @@ class ImportPLYDialog(QDialog):
         self._taken_doc_names: list[str] = taken_doc_names
         # self._schema_by_output_row: dict[int, Optional[SemanticSchema]] = {}
 
-        self._load_ply()
+        if input_fields is not None:
+            self._set_input_fields(input_fields, input_field_dtypes)
+        elif self.ply_path:
+            self._load_ply()
         self._build_ui()
         self._populate_input_fields()
         self._setup_default_output_fields()
         self._apply_auto_mappings()
+
+    @staticmethod
+    def load_npy_fields(npy_path: str) -> tuple[Dict[str, np.ndarray], Dict[str, str]]:
+        arr = np.load(npy_path)
+        if isinstance(arr, np.lib.npyio.NpzFile):
+            raise ValueError("Unsupported format: expected .npy, got .npz archive.")
+        arr = np.asarray(arr)
+
+        base = osp.splitext(osp.basename(npy_path))[0].strip()
+        if not base:
+            base = "field"
+
+        def _column_names_for_base(base_name: str, ncols: int) -> list[str]:
+            name = base_name.strip().lower()
+            if ncols == 3:
+                if "normal" in name:
+                    return ["nx", "ny", "nz"]
+                if name in {"color", "colors", "rgb"} or "color" in name:
+                    return ["red", "green", "blue"]
+            return [f"{base_name}_{i}" for i in range(ncols)]
+
+        if arr.ndim == 1:
+            fields = {base: arr}
+        elif arr.ndim == 2:
+            if arr.shape[1] == 1:
+                fields = {base: arr.reshape(-1)}
+            else:
+                names = _column_names_for_base(base, arr.shape[1])
+                fields = {names[i]: arr[:, i] for i in range(arr.shape[1])}
+        else:
+            raise ValueError(f"Unsupported array shape: {arr.shape}. Expected 1D or 2D array.")
+
+        dtypes = {name: str(np.asarray(val).dtype) for name, val in fields.items()}
+        return fields, dtypes
+
+    @classmethod
+    def from_npy_picker(
+        cls,
+        parent: QWidget,
+        semantic_schemas: Dict[str, SemanticSchema],
+        color_maps: Dict[str, ColorMap],
+        target_point_cloud: Optional[PointCloudData],
+    ) -> Optional["FieldEditorDialog"]:
+        file_path, _ = QFileDialog.getOpenFileName(
+            parent, "Open NumPy File", "", "NumPy Files (*.npy)"
+        )
+        if not file_path:
+            return None
+        try:
+            input_fields, input_dtypes = cls.load_npy_fields(file_path)
+        except Exception as exc:
+            QMessageBox.critical(
+                parent,
+                "Import .npy failed",
+                f"Could not load NumPy file:\n{exc}",
+            )
+            return None
+        return cls(
+            ply_path=None,
+            semantic_schemas=semantic_schemas,
+            color_maps=color_maps,
+            input_fields=input_fields,
+            input_field_dtypes=input_dtypes,
+            input_source_name="NPY",
+            target_point_cloud=target_point_cloud,
+            parent=parent,
+        )
 
     # ------------------------------------------------------------------
     # Accessor for the resulting PointCloudData
@@ -162,7 +245,10 @@ class ImportPLYDialog(QDialog):
 
     def _load_ply(self) -> None:
         """Load the PLY file and store the vertex element."""
-        
+        if not self.ply_path:
+            self.vertex_element = None
+            return
+
         self.ply_data = PlyData.read(self.ply_path)
 
         if "vertex" not in self.ply_data:
@@ -176,6 +262,36 @@ class ImportPLYDialog(QDialog):
             return
 
         self.vertex_element = self.ply_data["vertex"]
+        vertex_data = self.vertex_element.data
+        names = vertex_data.dtype.names or []
+        input_fields = {name: np.asarray(vertex_data[name]) for name in names}
+        input_dtypes = {
+            name: str(vertex_data.dtype.fields[name][0]) for name in names
+            if vertex_data.dtype.fields.get(name)
+        }
+        self._set_input_fields(input_fields, input_dtypes, field_order=list(names))
+
+    def _set_input_fields(
+        self,
+        fields: Dict[str, np.ndarray],
+        dtypes: Optional[Dict[str, str]] = None,
+        field_order: Optional[list[str]] = None,
+    ) -> None:
+        self._input_fields = {name: np.asarray(arr) for name, arr in fields.items()}
+        if field_order is None:
+            self._input_field_names = list(self._input_fields.keys())
+        else:
+            self._input_field_names = [n for n in field_order if n in self._input_fields]
+        if dtypes is None:
+            self._input_field_dtypes = {
+                name: str(self._input_fields[name].dtype)
+                for name in self._input_field_names
+            }
+        else:
+            self._input_field_dtypes = {
+                name: dtypes.get(name, str(self._input_fields[name].dtype))
+                for name in self._input_field_names
+            }
 
     # ------------------------------------------------------------------
     # UI construction
@@ -249,10 +365,9 @@ class ImportPLYDialog(QDialog):
 
         name_item = self.output_table.item(output_row, self.OUT_NAME_COL)
         out_name = name_item.text().strip() if name_item else ""
-        if not out_name or self.vertex_element is None:
+        if not out_name or not self._input_fields:
             return sorted(required)
 
-        vertex_data = self.vertex_element.data  # already loaded by PlyData
         ply_fields = self._get_ply_fields_mapped_to_output(out_name)
 
         if not ply_fields:
@@ -261,7 +376,9 @@ class ImportPLYDialog(QDialog):
         # For SEMANTIC, you typically expect exactly one mapped PLY field.
         # If multiple are mapped, we union them.
         for ply_field in ply_fields:
-            arr = np.asarray(vertex_data[ply_field])
+            if ply_field not in self._input_fields:
+                continue
+            arr = np.asarray(self._input_fields[ply_field])
 
             # Flatten: PLY fields can be (N,) or (N,1) etc.
             if arr.ndim > 1:
@@ -354,15 +471,7 @@ class ImportPLYDialog(QDialog):
         
     def _build_ui(self) -> None:
         main_layout = QVBoxLayout(self)
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-        main_layout.addWidget(splitter)
-
-        # Left: Input fields (PLY)
-        left_widget = QWidget()
-        left_layout = QVBoxLayout(left_widget)
-        left_label = QLabel("Input fields (PLY)")
-        left_label.setStyleSheet("font-weight: bold;")
-        left_layout.addWidget(left_label)
+        show_input = bool(self._input_fields) and not self._edit_only
 
         self.input_table = QTableWidget(0, 5, self)
         self.input_table.setHorizontalHeaderLabels(
@@ -377,14 +486,6 @@ class ImportPLYDialog(QDialog):
         self.input_table.setEditTriggers(
             QTableWidget.EditTrigger.NoEditTriggers
         )
-        left_layout.addWidget(self.input_table)
-
-        # Right: Output fields (PointCloudData)
-        right_widget = QWidget()
-        right_layout = QVBoxLayout(right_widget)
-        right_label = QLabel("Point cloud data")
-        right_label.setStyleSheet("font-weight: bold;")
-        right_layout.addWidget(right_label)
 
         self.output_table = QTableWidget(0, 5, self)
         self.output_table.setHorizontalHeaderLabels(
@@ -397,12 +498,39 @@ class ImportPLYDialog(QDialog):
             QTableWidget.SelectionBehavior.SelectRows
         )
         self.output_table.itemChanged.connect(self._on_output_item_changed)
-        right_layout.addWidget(self.output_table)
 
-        splitter.addWidget(left_widget)
-        splitter.addWidget(right_widget)
-        splitter.setStretchFactor(0, 1)
-        splitter.setStretchFactor(1, 1)
+        if show_input:
+            splitter = QSplitter(Qt.Orientation.Horizontal)
+            main_layout.addWidget(splitter)
+
+            # Left: Input fields
+            left_widget = QWidget()
+            left_layout = QVBoxLayout(left_widget)
+            left_label = QLabel(f"Input fields ({self._input_source_name})")
+            left_label.setStyleSheet("font-weight: bold;")
+            left_layout.addWidget(left_label)
+            left_layout.addWidget(self.input_table)
+
+            # Right: Output fields
+            right_widget = QWidget()
+            right_layout = QVBoxLayout(right_widget)
+            right_label = QLabel("Point cloud data")
+            right_label.setStyleSheet("font-weight: bold;")
+            right_layout.addWidget(right_label)
+            right_layout.addWidget(self.output_table)
+
+            splitter.addWidget(left_widget)
+            splitter.addWidget(right_widget)
+            splitter.setStretchFactor(0, 1)
+            splitter.setStretchFactor(1, 1)
+        else:
+            right_widget = QWidget()
+            right_layout = QVBoxLayout(right_widget)
+            right_label = QLabel("Point cloud data")
+            right_label.setStyleSheet("font-weight: bold;")
+            right_layout.addWidget(right_label)
+            right_layout.addWidget(self.output_table)
+            main_layout.addWidget(right_widget)
 
         # Buttons
         bottom_layout = QHBoxLayout()
@@ -413,6 +541,10 @@ class ImportPLYDialog(QDialog):
         if not self._allow_doc_appending:
             self.create_new_doc_checkbox.setChecked(True)
             self.create_new_doc_checkbox.setEnabled(False)
+        if self._target_pointcloud is not None or self._edit_only:
+            self.create_new_doc_checkbox.setChecked(False)
+            self.create_new_doc_checkbox.setEnabled(False)
+            self.create_new_doc_checkbox.setVisible(False)
         
         bottom_layout.addWidget(self.create_new_doc_checkbox)
 
@@ -438,16 +570,13 @@ class ImportPLYDialog(QDialog):
     # ------------------------------------------------------------------
 
     def _populate_input_fields(self) -> None:
-        if self.vertex_element is None:
+        self.input_table.setRowCount(0)
+        if not self._input_fields:
             return
 
-        self.input_table.setRowCount(0)
-        dtype = self.vertex_element.data.dtype
-        names = dtype.names or []
-
-        for name in names:
-            field_dtype = dtype.fields[name][0]
-            self._add_input_row(name, str(field_dtype))
+        for name in self._input_field_names:
+            dtype_str = self._input_field_dtypes.get(name, "")
+            self._add_input_row(name, dtype_str)
             
     def _normalize_auto_field_name(self, name: str) -> str:
         return name.strip().lower()
@@ -468,7 +597,7 @@ class ImportPLYDialog(QDialog):
         """
         Create output fields and input mappings based on AUTO_INPUT_FIELD_MAPPINGS.
         """
-        if self.vertex_element is None:
+        if self._edit_only or not self._input_fields:
             return
 
         output_needs: Dict[str, tuple[FieldType, set[int]]] = {}
@@ -509,7 +638,7 @@ class ImportPLYDialog(QDialog):
             input_name = name_item.text().strip()
             key = self._normalize_auto_field_name(input_name)
             coord_index = self.AUTO_INPUT_COORD_MAPPINGS.get(key)
-            if coord_index is not None:
+            if coord_index is not None and self._allow_coordinate_mapping:
                 combo: QComboBox = cast(QComboBox, self.input_table.cellWidget(
                     row, self.IN_MAP_FIELD_COL
                 ))
@@ -600,20 +729,48 @@ class ImportPLYDialog(QDialog):
         - A 'coordinates' row (special, not a FieldType).
         - A '+' row to add new fields.
         """
+        if self._target_pointcloud is not None:
+            self._setup_output_fields_from_point_cloud(self._target_pointcloud)
+            return
+
         self.output_table.setRowCount(0)
 
         # Coordinates row (row 0), special
-        self._insert_coordinates_row(0)
+        self._insert_coordinates_row(0, editable=self._allow_coordinate_mapping)
 
         # Add-row at bottom
         self._insert_add_row()
 
-    def _insert_coordinates_row(self, row: int) -> None:
+    def _setup_output_fields_from_point_cloud(self, pcd: PointCloudData) -> None:
+        self.output_table.setRowCount(0)
+        self._insert_coordinates_row(0, editable=False)
+
+        insert_row = 1
+        for field in pcd.get_fields():
+            data = field.data
+            ncols = 1 if data.ndim == 1 else data.shape[1]
+            res_key = field.schema.name if isinstance(field, SemanticSegmentation) else None
+            self._insert_output_field_row(
+                row=insert_row,
+                name=field.name,
+                ftype=field.field_type,
+                ncols=ncols,
+                source_field_name=field.name,
+                source_kind="existing",
+                res_key=res_key,
+            )
+            insert_row += 1
+
+        self._insert_add_row()
+
+    def _insert_coordinates_row(self, row: int, editable: bool = True) -> None:
         """Insert the special coordinates row."""
         self.output_table.insertRow(row)
 
         # Name
         name_item = QTableWidgetItem("coordinates")
+        if not editable:
+            name_item.setFlags(name_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
         # You *could* allow renaming; if you don't want that, clear the editable flag:
         # name_item.setFlags(name_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
         self.output_table.setItem(row, self.OUT_NAME_COL, name_item)
@@ -647,6 +804,9 @@ class ImportPLYDialog(QDialog):
         name: str,
         ftype: FieldType,
         ncols: int,
+        source_field_name: Optional[str] = None,
+        source_kind: str = "new",
+        res_key: Optional[str] = None,
     ) -> None:
         """
         Insert a 'real' (non-coordinates) output field row at the given index.
@@ -655,6 +815,8 @@ class ImportPLYDialog(QDialog):
 
         # Column 0: name
         name_item = QTableWidgetItem(name)
+        name_item.setData(self.SOURCE_NAME_ROLE, source_field_name)
+        name_item.setData(self.SOURCE_KIND_ROLE, source_kind)
         self.output_table.setItem(row, self.OUT_NAME_COL, name_item)
 
         # Column 1: field type (combo)
@@ -683,15 +845,17 @@ class ImportPLYDialog(QDialog):
         self.output_table.setCellWidget(row, self.OUT_RESOURCE_COL, res_combo)
         
         
-        # Column 4: remove button
-        btn = QPushButton("-", self.output_table)
-        btn.clicked.connect(
-            lambda _checked, r=row: self._remove_output_field_row(r)
-        )
-        self.output_table.setCellWidget(row, self.OUT_BTN_COL, btn)
+        # Column 4: row actions
+        self.output_table.setCellWidget(row, self.OUT_BTN_COL, self._make_row_action_widget())
 
         # Apply ncols rules based on type
         self._apply_type_rules_to_row(row)
+        if res_key is not None:
+            res_combo = self.output_table.cellWidget(row, self.OUT_RESOURCE_COL)
+            if isinstance(res_combo, QComboBox):
+                ix = res_combo.findData(res_key)
+                if ix >= 0:
+                    res_combo.setCurrentIndex(ix)
 
     def _insert_add_row(self) -> None:
         """Insert the bottom '+' row."""
@@ -706,6 +870,37 @@ class ImportPLYDialog(QDialog):
         btn = QPushButton("+", self.output_table)
         btn.clicked.connect(self._on_add_field_clicked)
         self.output_table.setCellWidget(row, self.OUT_BTN_COL, btn)
+
+    def _row_from_widget(self, widget: QWidget) -> int:
+        pos = widget.mapTo(self.output_table.viewport(), QPoint(1, 1))
+        return self.output_table.indexAt(pos).row()
+
+    def _make_row_action_widget(self) -> QWidget:
+        w = QWidget(self.output_table)
+        layout = QHBoxLayout(w)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+
+        if self._allow_field_duplicate:
+            dup_btn = QToolButton(w)
+            dup_btn.setText("Dup")
+            dup_btn.clicked.connect(
+                lambda _checked=False, btn=dup_btn: self._duplicate_output_field_row(
+                    self._row_from_widget(btn)
+                )
+            )
+            layout.addWidget(dup_btn)
+
+        del_btn = QToolButton(w)
+        del_btn.setText("Del")
+        del_btn.clicked.connect(
+            lambda _checked=False, btn=del_btn: self._remove_output_field_row(
+                self._row_from_widget(btn)
+            )
+        )
+        layout.addWidget(del_btn)
+
+        return w
 
     # ------------------------------------------------------------------
     # Output table helpers
@@ -750,6 +945,23 @@ class ImportPLYDialog(QDialog):
                 return name
             idx += 1
 
+    def _generate_unique_field_name(self, base: str) -> str:
+        existing = {
+            (cast(QTableWidgetItem, self.output_table.item(r, self.OUT_NAME_COL)).text()
+             if self.output_table.item(r, self.OUT_NAME_COL)
+             else "")
+            for r in range(self._real_output_row_count())
+            if not self._is_coordinates_row(r)
+        }
+        if base not in existing:
+            return base
+        idx = 1
+        while True:
+            name = f"{base}_{idx:03d}"
+            if name not in existing:
+                return name
+            idx += 1
+
     def _remove_output_field_row(self, row: int) -> None:
         """Remove an output field row (not coordinates, not '+')."""
         if row < 0 or self._is_add_row(row) or self._is_coordinates_row(row):
@@ -768,6 +980,37 @@ class ImportPLYDialog(QDialog):
         if field_name:
             self._clear_mappings_to_field(field_name)
 
+        self._refresh_input_mapping_targets()
+
+    def _duplicate_output_field_row(self, row: int) -> None:
+        if row < 0 or self._is_add_row(row) or self._is_coordinates_row(row):
+            return
+
+        name_item = self.output_table.item(row, self.OUT_NAME_COL)
+        if not name_item:
+            return
+        name = name_item.text().strip()
+        if not name:
+            return
+
+        type_combo = self.output_table.cellWidget(row, self.OUT_TYPE_COL)
+        ncols_spin = self.output_table.cellWidget(row, self.OUT_NCOLS_COL)
+        if not isinstance(type_combo, QComboBox) or not isinstance(ncols_spin, QSpinBox):
+            return
+
+        ftype: FieldType = type_combo.currentData()
+        ncols = ncols_spin.value()
+        source_name = name_item.data(self.SOURCE_NAME_ROLE) or name
+        new_name = self._generate_unique_field_name(f"{name}_copy")
+        insert_row = min(row + 1, self._real_output_row_count())
+        self._insert_output_field_row(
+            row=insert_row,
+            name=new_name,
+            ftype=ftype,
+            ncols=ncols,
+            source_field_name=source_name,
+            source_kind="duplicate",
+        )
         self._refresh_input_mapping_targets()
 
     def _clear_mappings_to_field(self, field_name: str) -> None:
@@ -859,9 +1102,13 @@ class ImportPLYDialog(QDialog):
 
     def _refresh_input_mapping_targets(self) -> None:
         """Update the mapping combos for input fields."""
+        if self._edit_only or not self._input_fields:
+            return
         # Get output field names (including coordinates, excluding '+')
         field_names: List[str] = []
         for r in range(self._real_output_row_count()):
+            if self._is_coordinates_row(r) and not self._allow_coordinate_mapping:
+                continue
             item = self.output_table.item(r, self.OUT_NAME_COL)
             if item:
                 text = item.text().strip()
@@ -1011,13 +1258,81 @@ class ImportPLYDialog(QDialog):
     # Validation and acceptance
     # ------------------------------------------------------------------
 
+    def _validate_output_fields(self) -> bool:
+        names: set[str] = set()
+        for r in range(self._real_output_row_count()):
+            if self._is_coordinates_row(r):
+                continue
+            item = self.output_table.item(r, self.OUT_NAME_COL)
+            name = item.text().strip() if item else ""
+            if not name:
+                QMessageBox.critical(
+                    self,
+                    "Invalid field name",
+                    "Field names cannot be empty.",
+                )
+                return False
+            if name == "points":
+                QMessageBox.critical(
+                    self,
+                    "Invalid field name",
+                    "Field name 'points' is reserved.",
+                )
+                return False
+            if name in names:
+                QMessageBox.critical(
+                    self,
+                    "Duplicate field name",
+                    f"Field name '{name}' is used more than once.",
+                )
+                return False
+            names.add(name)
+        return True
+
     def accept(self) -> None:
         """
         Validate coordinates mapping and build PointCloudData.
         """
-        if self.vertex_element is None:
+        if self._edit_only:
+            if self._target_pointcloud is None:
+                QMessageBox.critical(
+                    self, "Error", "No target point cloud provided."
+                )
+                return
+            if not self._validate_output_fields():
+                return
+            try:
+                self._apply_output_fields_to_point_cloud(self._target_pointcloud)
+            except Exception as e:
+                QMessageBox.critical(
+                    self,
+                    "Error",
+                    f"Failed to update fields:\n{e}",
+                )
+                return
+            self._point_cloud = self._target_pointcloud
+            super().accept()
+            return
+
+        if self._target_pointcloud is not None:
+            if not self._validate_output_fields():
+                return
+            try:
+                self._apply_mappings_to_point_cloud(self._target_pointcloud)
+            except Exception as e:
+                QMessageBox.critical(
+                    self,
+                    "Error",
+                    f"Failed to update fields:\n{e}",
+                )
+                return
+            self._point_cloud = self._target_pointcloud
+            super().accept()
+            return
+
+        if not self._input_fields:
             QMessageBox.critical(
-                self, "Error", "No vertex data loaded from PLY."
+                self, "Error", "No input data loaded."
             )
             return
 
@@ -1040,6 +1355,8 @@ class ImportPLYDialog(QDialog):
         """
         Ensure that the coordinates row exists and indices 0,1,2 are mapped.
         """
+        if not self._allow_coordinate_mapping:
+            return True
         # Coordinates row is row 0 by construction
         if self.output_table.rowCount() < 2:
             QMessageBox.critical(
@@ -1117,6 +1434,215 @@ class ImportPLYDialog(QDialog):
 
         return mappings
 
+    def _field_ncols(self, field: FieldBase) -> int:
+        data = field.data
+        return 1 if data.ndim == 1 else data.shape[1]
+
+    def _collect_output_specs(self) -> List[Dict[str, Any]]:
+        specs: List[Dict[str, Any]] = []
+        for r in range(self._real_output_row_count()):
+            if self._is_coordinates_row(r):
+                continue
+            name_item = self.output_table.item(r, self.OUT_NAME_COL)
+            type_widget = self.output_table.cellWidget(r, self.OUT_TYPE_COL)
+            ncols_spin = self.output_table.cellWidget(r, self.OUT_NCOLS_COL)
+            if not name_item or not isinstance(type_widget, QComboBox) or not isinstance(ncols_spin, QSpinBox):
+                continue
+            name = name_item.text().strip()
+            ftype: FieldType = type_widget.currentData()
+            ncols = ncols_spin.value()
+            res_combo = self.output_table.cellWidget(r, self.OUT_RESOURCE_COL)
+            res_key = res_combo.currentData() if isinstance(res_combo, QComboBox) else None
+            source_name = name_item.data(self.SOURCE_NAME_ROLE)
+            source_kind = name_item.data(self.SOURCE_KIND_ROLE) or "new"
+            specs.append(
+                {
+                    "name": name,
+                    "ftype": ftype,
+                    "ncols": ncols,
+                    "res_key": res_key,
+                    "source_name": source_name,
+                    "source_kind": source_kind,
+                }
+            )
+        return specs
+
+    def _collect_mappings_by_output(self) -> Dict[str, List[Dict[str, Any]]]:
+        by_output: Dict[str, List[Dict[str, Any]]] = {}
+        for m in self.get_mappings():
+            out_name = m["output_field"]
+            if out_name:
+                by_output.setdefault(out_name, []).append(m)
+        return by_output
+
+    def _build_output_data_from_mappings(
+        self,
+        out_name: str,
+        ftype: FieldType,
+        ncols: int,
+        num_points: int,
+        mappings_by_output: Dict[str, List[Dict[str, Any]]],
+    ) -> Optional[np.ndarray]:
+        mappings = mappings_by_output.get(out_name)
+        if not mappings:
+            return None
+
+        dtype = np.int32 if ftype in (FieldType.SEMANTIC, FieldType.INSTANCE) else np.float32
+        data = np.zeros((num_points, ncols), dtype=dtype)
+        for m in mappings:
+            ply_field = m["ply_field"]
+            if ply_field not in self._input_fields:
+                raise ValueError(f"Missing input field '{ply_field}'.")
+            src = np.asarray(self._input_fields[ply_field])
+            if src.shape[0] != num_points:
+                raise ValueError(
+                    f"Field '{ply_field}' length mismatch: {src.shape[0]} vs {num_points}."
+                )
+            if src.ndim > 1:
+                src = src.reshape(src.shape[0])
+
+            if ftype in (FieldType.VECTOR, FieldType.COLOR, FieldType.NORMAL):
+                idx = m["output_index"]
+                if idx is None:
+                    raise RuntimeError(
+                        f"Missing index mapping for VECTOR/COLOR/NORMAL field '{out_name}'."
+                    )
+                if idx < 0 or idx >= ncols:
+                    raise RuntimeError(
+                        f"Index {idx} out of range for field '{out_name}' with {ncols} columns."
+                    )
+                data[:, idx] = src.astype(dtype, copy=False)
+            else:
+                data[:, 0] = src.astype(dtype, copy=False)
+
+        return data
+
+    def _assign_field_data(self, field: FieldBase, data: np.ndarray, ftype: FieldType) -> None:
+        if ftype in (FieldType.SEMANTIC, FieldType.INSTANCE):
+            field.data = np.asarray(data, np.int32).reshape(-1)
+        else:
+            arr = np.asarray(data)
+            if arr.ndim == 1:
+                arr = arr.reshape(-1, 1)
+            field.data = arr
+
+    def _make_field_for_spec(
+        self,
+        spec: Dict[str, Any],
+        data: Optional[np.ndarray],
+        num_points: int,
+        source_field: Optional[FieldBase],
+    ) -> FieldBase:
+        ftype: FieldType = spec["ftype"]
+        name = spec["name"]
+        ncols = spec["ncols"]
+        schema = None
+        if ftype == FieldType.SEMANTIC:
+            res_key = spec.get("res_key")
+            if res_key == self.NEW_SCHEMA_SENTINEL:
+                res_key = None
+            if res_key is not None:
+                schema = self.semantic_schemas.get(res_key, SemanticSchema())
+            elif isinstance(source_field, SemanticSegmentation):
+                schema = source_field.schema
+
+        if data is None:
+            if ftype == FieldType.SEMANTIC:
+                return SemanticSegmentation(name, size=num_points, schema=schema)
+            if ftype == FieldType.INSTANCE:
+                return InstanceSegmentation(name, size=num_points)
+            arr = np.zeros((num_points, ncols), dtype=np.float32)
+            field = FieldBase(name, arr, ftype)
+        else:
+            if ftype == FieldType.SEMANTIC:
+                return SemanticSegmentation(name, data=data, schema=schema)
+            if ftype == FieldType.INSTANCE:
+                return InstanceSegmentation(name, data=data)
+            arr = np.asarray(data, np.float32)
+            if arr.ndim == 1:
+                arr = arr.reshape(-1, 1)
+            field = FieldBase(name, arr, ftype)
+
+        if ftype == FieldType.COLOR and isinstance(source_field, FieldBase):
+            field.color_map = source_field.color_map
+        return field
+
+    def _apply_output_specs_to_point_cloud(
+        self,
+        pcd: PointCloudData,
+        mappings_by_output: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+    ) -> None:
+        specs = self._collect_output_specs()
+        existing_by_name = {f.name: f for f in pcd.get_fields()}
+        new_fields: List[FieldBase] = []
+        num_points = pcd.points.shape[0]
+
+        for spec in specs:
+            source_kind = spec.get("source_kind", "new")
+            source_name = spec.get("source_name") if source_kind in ("existing", "duplicate") else None
+            source_field = existing_by_name.get(source_name) if source_name else None
+
+            mapped_data = None
+            if mappings_by_output is not None:
+                mapped_data = self._build_output_data_from_mappings(
+                    spec["name"],
+                    spec["ftype"],
+                    spec["ncols"],
+                    num_points,
+                    mappings_by_output,
+                )
+
+            if mapped_data is not None and source_field is not None:
+                if (source_field.field_type == spec["ftype"] and
+                        self._field_ncols(source_field) == spec["ncols"]):
+                    self._assign_field_data(source_field, mapped_data, spec["ftype"])
+                    source_field.name = spec["name"]
+                    new_fields.append(source_field)
+                    continue
+
+            if mapped_data is None:
+                if source_kind == "existing" and source_field is not None:
+                    if (source_field.field_type == spec["ftype"] and
+                            self._field_ncols(source_field) == spec["ncols"]):
+                        source_field.name = spec["name"]
+                        new_fields.append(source_field)
+                        continue
+                if source_kind == "duplicate" and source_field is not None:
+                    dup_data = np.array(source_field.data, copy=True)
+                    new_fields.append(
+                        self._make_field_for_spec(spec, dup_data, num_points, source_field)
+                    )
+                    continue
+
+            new_fields.append(
+                self._make_field_for_spec(spec, mapped_data, num_points, source_field)
+            )
+
+        pcd._fields = new_fields
+
+    def _apply_output_fields_to_point_cloud(self, pcd: PointCloudData) -> None:
+        self._apply_output_specs_to_point_cloud(pcd, mappings_by_output=None)
+
+    def _apply_mappings_to_point_cloud(self, pcd: PointCloudData) -> None:
+        if not self._input_fields:
+            raise RuntimeError("No input data loaded.")
+        mappings_by_output = self._collect_mappings_by_output()
+        num_points = pcd.points.shape[0]
+        used_fields = {
+            m["ply_field"]
+            for mappings in mappings_by_output.values()
+            for m in mappings
+        }
+        for name in used_fields:
+            if name not in self._input_fields:
+                raise ValueError(f"Missing input field '{name}'.")
+            arr = self._input_fields[name]
+            if arr.shape[0] != num_points:
+                raise ValueError(
+                    f"Input field '{name}' length mismatch: {arr.shape[0]} vs {num_points}."
+                )
+        self._apply_output_specs_to_point_cloud(pcd, mappings_by_output=mappings_by_output)
+
     # ------------------------------------------------------------------
     # PointCloudData construction
     # ------------------------------------------------------------------
@@ -1125,8 +1651,9 @@ class ImportPLYDialog(QDialog):
         """
         Construct a PointCloudData object based on the current mapping.
         """
-        vertex_data = self.vertex_element.data # type:ignore
-        num_points = len(vertex_data)
+        if not self._input_fields:
+            raise RuntimeError("No input data loaded.")
+        num_points: Optional[int] = None
 
         # ---- Build coordinates (points) ---------------------------------
         coord_item = self.output_table.item(0, self.OUT_NAME_COL)
@@ -1148,19 +1675,27 @@ class ImportPLYDialog(QDialog):
                 if ply_field_item:
                     coord_map[idx] = ply_field_item.text()
 
-        points = np.zeros((num_points, 3), dtype=np.float32)
+        points = None
         for dim in (0, 1, 2):
             field_name = coord_map.get(dim)
             if field_name is None:
                 raise RuntimeError(f"Missing mapping for coordinate index {dim}.")
-            values = np.asarray(vertex_data[field_name], dtype=np.float32)
+            if field_name not in self._input_fields:
+                raise RuntimeError(f"Missing input field '{field_name}'.")
+            values = np.asarray(self._input_fields[field_name], dtype=np.float32)
+            if num_points is None:
+                num_points = values.shape[0]
+                points = np.zeros((num_points, 3), dtype=np.float32)
             if values.shape[0] != num_points:
                 raise ValueError(
                     f"Coordinate field '{field_name}' length mismatch: "
                     f"{values.shape[0]} vs {num_points}."
                 )
+            assert points is not None
             points[:, dim] = values
 
+        if points is None or num_points is None:
+            raise RuntimeError("Failed to build coordinates.")
         pcd = PointCloudData(points)
 
         # ---- Build other fields -----------------------------------------
@@ -1206,7 +1741,9 @@ class ImportPLYDialog(QDialog):
                     continue
 
                 ply_field = m["ply_field"]
-                src = np.asarray(vertex_data[ply_field])
+                if ply_field not in self._input_fields:
+                    raise ValueError(f"Missing input field '{ply_field}'.")
+                src = np.asarray(self._input_fields[ply_field])
                 if src.shape[0] != num_points:
                     raise ValueError(
                         f"Field '{ply_field}' length mismatch: "

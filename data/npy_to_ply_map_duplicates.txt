@@ -1,0 +1,8 @@
+4605568_0.npy	BW-0077_SC-00.ply, set-10_wb_DH_4605568_0-mls.ply
+4607621_0.npy	BW-0125_SC-00.ply, set-05_wb_DH_4607621_0-mls.ply
+4607623_0.npy	BW-0110_SC-00.ply, set-04_wb_DH_4607623_0-mls.ply
+4607624_0.npy	BW-0085_SC-00.ply, set-09_wb_DH_4607624_0-mls.ply
+4608583_1.npy	BW-0062_SC-00.ply, set-08_wb_DH_4608583_1-mls.ply
+4608592_0.npy	BW-0093_SC-00.ply, set-02_wb_DH_4608592_0-mls.ply
+4705571_0.npy	BW-0104_SC-00.ply, set-07_wb_DH_4705571_0-mls.ply
+4708589_B.npy	BW-0095_SC-00.ply, set-01_wb_DH_4708589_B-mls.ply

@@ -4,7 +4,7 @@ from geon.data.document import Document
 from geon.rendering.scene import Scene
 from config.common import KNOWN_FILE_EXTENSIONS
 
-from .imports import ImportPLYDialog
+from .imports import FieldEditorDialog
 from .common import ElidedLabel, Dock
 from ..data.pointcloud import SemanticSchema
 
@@ -246,7 +246,7 @@ class DatasetManager(Dock):
         allow_doc_appending = False
         if file_path is None or file_path=='':
             return
-        dlg = ImportPLYDialog(
+        dlg = FieldEditorDialog(
             ply_path=file_path,
             semantic_schemas= {s.name : s for s in self._dataset.unique_semantic_schemas},
             color_maps={}, 
