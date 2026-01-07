@@ -231,17 +231,22 @@ class VTKViewer(QWidget):
         result = self.picker.pick(interactor, x, y)
         if result is None or self.scene is None:
             return PickResult(None, None, None, None)
-        picked_prop, point_id = result
-        
+        picked_prop, visible_id = result
+
+        layer = None
         if picked_prop is not None :
             layer = self.scene.layer_for_prop(picked_prop)
             if layer is None:
                 print(f'No layer found for prop {picked_prop}')
-                return PickResult(None, picked_prop, point_id, None)
-            world_xyz = layer.world_xyz_from_picked_id(point_id)
+                return PickResult(None, picked_prop, visible_id, None)
+            world_xyz = layer.world_xyz_from_picked_id(visible_id)
+            data_id = layer.data_index_from_picked_id(visible_id)
+            return PickResult(layer, picked_prop, data_id, world_xyz)
         else:
-            world_xyz = None
-        return PickResult(layer, picked_prop, point_id, world_xyz)
+            return PickResult(None, None, None, None)
+
+
+        
         
         
 

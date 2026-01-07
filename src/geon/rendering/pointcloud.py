@@ -257,6 +257,16 @@ class PointCloudLayer(BaseLayer[PointCloudData]):
         self._init_visibility_mask()
 
 
+    @property
+    def visible_inds(self):
+        inds = np.arange(self.data.points.shape[0])
+        if self._visibility_mask is None:
+            return inds
+        else:
+            return inds[self._visibility_mask]
+        
+    def data_index_from_picked_id(self, sub_id: int) -> int:
+        return self.visible_inds[sub_id]
 
     def update(self) -> None:
         ctf = None

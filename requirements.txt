@@ -1,9 +1,4 @@
 vtk
 pyqt6
-scipy
-pybind11
-pybind11-stubgen
 plyfile
-pymaxflow
-torch_geometric
 h5py

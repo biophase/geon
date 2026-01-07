@@ -93,6 +93,17 @@ class BaseLayer(Generic[TData], ABC):
         Called e.g. for setting a 3d camera pivot
         """
         ...
+
+    @abstractmethod
+    def data_index_from_picked_id(self, sub_id: int) -> int:
+        """
+        returns the index of a picked point after applying visibility filters
+        
+        :param sub_id: index in the visible subset
+        :type sub_id: int
+        :return: index in the data
+        :rtype: int
+        """
     @property
     def id(self) -> str:
         return self.data.id
@@ -109,7 +120,7 @@ class BaseLayer(Generic[TData], ABC):
         return None
     
     @browser_name.setter
-    def browser_name(self, browser_name: str) -> None:
+    def browser_name(self, browser_name: str) -> None: 
         self._browser_name = browser_name
         
       
