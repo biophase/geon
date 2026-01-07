@@ -13,9 +13,10 @@ import os.path as osp
 
 from PyQt6.QtWidgets import (QLabel, QPushButton, QHBoxLayout, QTreeWidget, QDockWidget, QWidget, 
                              QStackedWidget, QTreeWidgetItem, QFileDialog, QVBoxLayout, QSizePolicy,
-                             QButtonGroup, QRadioButton, QMessageBox
+                             QButtonGroup, QRadioButton, QMessageBox, QDialog, QDialogButtonBox,
+                             QTextEdit, QProgressDialog, QApplication
                              )
-from PyQt6.QtCore import Qt, QSize, pyqtSignal
+from PyQt6.QtCore import Qt, QSize, pyqtSignal, QThread, QEventLoop, pyqtSlot
 
 from PyQt6.QtGui import QFontMetrics
 
@@ -24,6 +25,7 @@ from PyQt6.QtGui import QFontMetrics
 
 class DatasetManager(Dock):
     requestSetActiveDocInScene      = pyqtSignal(Document)
+    requestClearUndoStacks          = pyqtSignal()
     
 
     def __init__(self, parent) -> None:
@@ -34,7 +36,7 @@ class DatasetManager(Dock):
         self._active_doc_name: Optional[str] = None
         
         # settings
-        self.create_intermidiate_folder = True
+        self.create_intermidiate_folder = False
         # overlay widget
         self.stack = QStackedWidget()
         self.overlay_label = QLabel("No Dataset Work Directory set")
@@ -72,7 +74,7 @@ class DatasetManager(Dock):
     def update_tree_visibility(self):
         """
         Show the tree only if a dataset is loaded,
-        otherwise show centered overlay text.
+        otherwise show overlay.
         """
         if self._dataset is None:
             self.tree.clear()
@@ -175,13 +177,114 @@ class DatasetManager(Dock):
         new_schema: SemanticSchema,
         old_2_new_ids: list[tuple[int,int]],
         progress_cb: Optional[Callable[[int, int, str],None]] = None
-        ) -> None:
-        
+        ) -> bool:
+        """
+        returns `True` on successfull remapping
+        """
         if self._dataset is None:
-            return
-        updated_refs = self._dataset.update_semantic_schema(
-            old_schema, new_schema, old_2_new_ids, progress_cb
+            return False
+        
+        matching_schemas = self._dataset.get_matching_schemas(old_schema)
+        
+        build_keys = [str(k) for k in matching_schemas.keys()]
+        confirm_text = (
+            f"You are about to edit the semantic schema {old_schema.name} globally. "
+            f"This will affect {len(build_keys)} matching schemas:"
         )
+
+        confirm = QDialog(self)
+        confirm.setWindowTitle("Confirm global semantic schema edit")
+        vbox = QVBoxLayout(confirm)
+        label = QLabel(confirm_text, confirm)
+        label.setWordWrap(True)
+        vbox.addWidget(label)
+        text_box = QTextEdit(confirm)
+        text_box.setReadOnly(True)
+        text_box.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
+        text_box.setText("\n".join(build_keys))
+        text_box.setMinimumWidth(360)
+        text_box.setMinimumHeight(140)
+        vbox.addWidget(text_box)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+            parent=confirm,
+        )
+        buttons.accepted.connect(confirm.accept)
+        buttons.rejected.connect(confirm.reject)
+        vbox.addWidget(buttons)
+        if confirm.exec() != QDialog.DialogCode.Accepted:
+            return False
+
+        if not build_keys:
+            return True
+
+        class _SchemaUpdateWorker(QThread):
+            progress = pyqtSignal(int, int, str)
+            errored = pyqtSignal(str)
+            finished_refs = pyqtSignal(list)
+
+            def __init__(self, dataset: Dataset):
+                super().__init__()
+                self._dataset = dataset
+                self._old_schema = old_schema
+                self._new_schema = new_schema
+                self._old_2_new_ids = old_2_new_ids
+
+            def _progress(self, idx: int, total: int, key: str) -> None:
+                self.progress.emit(idx, total, key)
+
+            def run(self) -> None:
+                try:
+                    refs = self._dataset.update_semantic_schema(
+                        self._old_schema,
+                        self._new_schema,
+                        self._old_2_new_ids,
+                        self._progress,
+                    )
+                    self.finished_refs.emit(refs)
+                except Exception as exc:  # pragma: no cover - GUI path
+                    self.errored.emit(str(exc))
+
+        progress_dialog = QProgressDialog(
+            "Updating semantic schemas...", None, 0, max(1, len(build_keys)), self
+        )
+        progress_dialog.setWindowTitle("Updating schemas")
+        progress_dialog.setWindowModality(Qt.WindowModality.ApplicationModal)
+        progress_dialog.setMinimumDuration(0)
+        progress_dialog.setCancelButton(None)
+
+        loop = QEventLoop(self)
+        success = {"value": False}
+
+        def _on_progress(idx: int, total: int, key: str) -> None:
+            progress_dialog.setMaximum(max(1, total))
+            progress_dialog.setValue(idx + 1)
+            progress_dialog.setLabelText(f"Processing: {key}")
+            QApplication.processEvents()
+
+        def _on_finished(_refs: list[DocumentReference]) -> None:
+            progress_dialog.setValue(progress_dialog.maximum())
+            progress_dialog.close()
+            success["value"] = True
+            loop.quit()
+
+        def _on_error(msg: str) -> None:
+            progress_dialog.close()
+            QMessageBox.critical(self, "Schema update failed", msg)
+            loop.quit()
+
+        worker = _SchemaUpdateWorker(self._dataset)
+        worker.progress.connect(_on_progress)
+        worker.finished_refs.connect(_on_finished)
+        worker.errored.connect(_on_error)
+        worker.start()
+        progress_dialog.show()
+        loop.exec()
+        worker.wait()
+
+        if success["value"]:
+            self.requestClearUndoStacks.emit()
+        return success["value"]
         
 
     

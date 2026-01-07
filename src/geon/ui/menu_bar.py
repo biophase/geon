@@ -50,9 +50,11 @@ class MenuBar(QMenuBar):
         
         # self.doc_menu.addAction("&Load")
         self.doc_menu.addSeparator()  
-        act_import_from = cast(QAction, self.doc_menu.addAction("Import from"))
+        import_menu = cast(QMenu, self.doc_menu.addMenu("Import document from ..."))
+        act_import_from = cast(QAction, import_menu.addAction(".PLY"))
+        self.doc_menu.addMenu(import_menu,)
         act_import_from.triggered.connect(self.importFromRequested)
-        self.doc_menu.addAction("Export to")
+        self.doc_menu.addAction("Export document to ...")
         self.addMenu(self.doc_menu)
 
 

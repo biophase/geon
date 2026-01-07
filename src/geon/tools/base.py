@@ -189,7 +189,13 @@ class ModeTool(BaseTool):
 
     def key_press_hook(self, event: Event) -> None:
         """
-        override to define tool behaviour on mouse wheel backward
+        override to define tool behaviour on a keyboard key press
+        """
+        pass
+    
+    def key_release_hook(self, event: Event) -> None:
+        """
+        override to define tool behaviour on a keyboard key press
         """
         pass
     

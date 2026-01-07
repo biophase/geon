@@ -130,4 +130,15 @@ class ToolController(QObject):
             )):
             return
         self.activate_tool(tool_id)
+
+    def clear_undo_stacks(self) -> None:
+        """
+        Clear undo/redo stacks for global and active tool managers.
+        """
+        self._global_command_manager.undo_stack.clear()
+        self._global_command_manager.redo_stack.clear()
+        if self._active_tool is not None and self._active_tool.use_local_cm:
+            cm = self._active_tool.command_manager
+            cm.undo_stack.clear()
+            cm.redo_stack.clear()
         

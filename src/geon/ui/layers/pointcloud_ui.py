@@ -142,10 +142,11 @@ def _ribbon(
         af_name.setAlignment(Qt.AlignmentFlag.AlignLeft)
         ft_label = QLabel("Field type: ")
         ft_label.setStyleSheet(UIStyle.TYPE_LABEL.value)
+        ft_label.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
         ft_name = QLabel(af.field_type.human_name)
-        ft_name.setAlignment(Qt.AlignmentFlag.AlignLeft)
-        col_1.addWidget(ft_label, 1, 2)
-        col_1.addWidget(ft_name, 1, 3)
+        ft_name.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+        col_1.addWidget(ft_label, 1, 2, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+        col_1.addWidget(ft_name, 1, 3, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
         
     else:
         af_name = QLabel("No active field")
@@ -176,9 +177,11 @@ def _ribbon(
             schema_label = QLabel("Schema: ")
             schema_label.setStyleSheet(UIStyle.TYPE_LABEL.value)
             schema_name = QLabel(af.schema.name)
-            schema_name.setAlignment(Qt.AlignmentFlag.AlignLeft)
-            row_21.addWidget(schema_label)
-            row_21.addWidget(schema_name)
+            schema_label.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+            schema_name.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+            row_21.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+            row_21.addWidget(schema_label, alignment=Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+            row_21.addWidget(schema_name, alignment=Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
             edit_btn = QToolButton (w)
             edit_btn.setFixedHeight(18)
             edit_btn.setText("Edit Schema")
@@ -190,39 +193,44 @@ def _ribbon(
                 if dataset_manager is None:
                     return
                 taken_names = _collect_schema_names(layer, dataset_manager)
-                dlg = SemanticSchemaEditDialog(
-                    schema=af.schema,
-                    required_ids=[],
-                    taken_schema_names=taken_names,
-                    parent=parent,
-                )
-                if dlg.exec() != QDialog.DialogCode.Accepted or dlg.schema is None:
-                    return
-
-                use_dataset_update = (
-                    dlg.update_existing and dataset_manager is not None
-                    and getattr(dataset_manager, "_dataset", None) is not None
-                )
-                if use_dataset_update:
-                    dataset_manager.update_semantic_schema(
-                        dlg.old_schema,
-                        dlg.schema,
-                        dlg.old_2_new_ids,
+                current_schema = af.schema
+                while True:
+                    dlg = SemanticSchemaEditDialog(
+                        schema=current_schema,
+                        required_ids=[],
+                        taken_schema_names=taken_names,
+                        parent=parent,
                     )
-                else:
-                    if dlg.update_existing:
-                        QMessageBox.information(
-                            parent,
-                            "Dataset unavailable",
-                            "Dataset not available. Applying changes only to this field.",
-                        )
-                    af.remap(dlg.old_2_new_ids)
-                    af.schema = dlg.schema
+                    if dlg.exec() != QDialog.DialogCode.Accepted or dlg.schema is None:
+                        return
 
-                schema_name.setText(dlg.schema.name)
-                layer.update()
-                if controller.ctx is not None:
-                    controller.ctx.viewer.rerender()
+                    use_dataset_update = (
+                        dlg.update_existing and dataset_manager is not None
+                        and getattr(dataset_manager, "_dataset", None) is not None
+                    )
+                    if use_dataset_update:
+                        confirmed = dataset_manager.update_semantic_schema(
+                            dlg.old_schema,
+                            dlg.schema,
+                            dlg.old_2_new_ids,
+                        )
+                        if not confirmed:
+                            current_schema = dlg.schema
+                            continue
+                    else:
+                        if dlg.update_existing:
+                            QMessageBox.information(
+                                parent,
+                                "Dataset unavailable",
+                                "Dataset not available. Applying changes only to this field.",
+                            )
+                        af.remap(dlg.old_2_new_ids)
+                        af.schema = dlg.schema
+                    schema_name.setText(dlg.schema.name)
+                    layer.update()
+                    if controller.ctx is not None:
+                        controller.ctx.viewer.rerender()
+                    break
 
             edit_btn.clicked.connect(_on_edit_schema_clicked)
 

@@ -228,6 +228,24 @@ class Dataset:
         pass                
         return referenced_schemas, loaded_schemas
     
+    def get_matching_schemas(
+        self,
+        schema: SemanticSchema
+    ) -> dict[str, SemanticSchema]:
+        
+        
+        schemas_matching: dict[str, SemanticSchema]= dict()
+        r_schemas, l_schemas = self._get_semantic_schemas()
+        schemas = r_schemas | l_schemas
+        
+        schemas_matching: dict[str, SemanticSchema]= dict()
+        for bk, schema in schemas.items():
+            if schema.signature() == schema.signature() and\
+                schema.name == schema.name:
+                    schemas_matching[bk] = schema
+        
+        return schemas_matching
+    
     def update_semantic_schema (
         self,
         old_schema: SemanticSchema,
@@ -240,14 +258,7 @@ class Dataset:
         remap labels, and save changes.
         """
         
-        r_schemas, l_schemas = self._get_semantic_schemas()
-        schemas = r_schemas | l_schemas
-        
-        schemas_matching: dict[str, SemanticSchema]= dict()
-        for bk, schema in schemas.items():
-            if schema.signature() == old_schema.signature() and\
-                schema.name == old_schema.name:
-                    schemas_matching[bk] = schema
+        schemas_matching = self.get_matching_schemas(old_schema)
         
         active_ref = list(
             [ref for ref in self.doc_refs if 

@@ -8,6 +8,8 @@ from .lasso import LassoTool
 from .selection import DeselectTool
 from .visibility import HideTool, IsolateTool, ShowTool
 from .annotate import AnnotateTool
+from .wand import WandTool
+from .inspect import InspectTool
 from .camera import (
     TogglePerspectiveTool,
     CameraTopTool,
@@ -19,7 +21,9 @@ from .camera import (
 )
 
 # NOTE: Tool register order determines order in ui tool zones
+TOOL_REGISTRY.register(InspectTool)
 TOOL_REGISTRY.register(LassoTool)
+TOOL_REGISTRY.register(WandTool)
 TOOL_REGISTRY.register(DeselectTool)
 TOOL_REGISTRY.register(HideTool)
 TOOL_REGISTRY.register(IsolateTool)

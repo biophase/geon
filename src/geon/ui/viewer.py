@@ -28,7 +28,15 @@ import vtk
 
 from typing import Optional, cast
 import time
+from dataclasses import dataclass        
 
+
+@dataclass
+class PickResult:
+    layer: BaseLayer | None
+    prop: vtk.vtkProp| None
+    element_idx: int | None
+    world_xyz: tuple[float,float,float] | None
 
 class InteractorStyle(vtk.vtkInteractorStyleTrackballCamera):
     def __init__(self, 
@@ -54,6 +62,7 @@ class InteractorStyle(vtk.vtkInteractorStyleTrackballCamera):
         self.AddObserver(vtk.vtkCommand.MouseWheelForwardEvent, self.mouse_wheel_forward_event)
         self.AddObserver(vtk.vtkCommand.MouseWheelBackwardEvent, self.mouse_wheel_backward_event)
         self.AddObserver(vtk.vtkCommand.KeyPressEvent, self.key_press_event)
+        self.AddObserver(vtk.vtkCommand.KeyReleaseEvent, self.key_release_event)
 
 
     @property
@@ -119,27 +128,35 @@ class InteractorStyle(vtk.vtkInteractorStyleTrackballCamera):
             self.OnMouseWheelBackward()
         
     def key_press_event(self, _vtk_obj, _vtk_event):
-        print(f"Interactor key press event")
+        print(f"[Interactor] key press event")
         if self.mode_tool is not None:
             self.mode_tool.key_press_hook(self.event_info)
 
-    
-    
+    def key_release_event(self, _vtk_obj, _vtk_event):
+        print(f"[Interactor] key release event")
+        if self.mode_tool is not None:
+            self.mode_tool.key_release_hook(self.event_info)
+            
+        
     def _focus_camera(self):
-        if self._viewer.scene is None:
+        result = self._viewer.pick()
+        if result.world_xyz is None:
             return
-        x, y = self.GetInteractor().GetEventPosition()
-        picker = self._viewer.picker
-        result = picker.pick(self._viewer._interactor, x, y)
-        if result is not None:
-            picked_prop, point_id = result
-            if picked_prop is not None:
-                layer = self._viewer.scene.layer_for_prop(picked_prop)
-                if layer is None:
-                    print(f"DEBUG: no layer found for prop {picked_prop}")
-                    return
-                world_xyz = layer.world_xyz_from_picked_id(point_id)
-                self._viewer.set_pivot_point(world_xyz)
+        self._viewer.set_pivot_point(result.world_xyz)
+        # if self._viewer.scene is None:
+        #     return
+        # x, y = self.GetInteractor().GetEventPosition()
+        # picker = self._viewer.picker
+        # result = picker.pick(self._viewer._interactor, x, y)
+        # if result is not None:
+        #     picked_prop, point_id = result
+        #     if picked_prop is not None:
+        #         layer = self._viewer.scene.layer_for_prop(picked_prop)
+        #         if layer is None:
+        #             print(f"DEBUG: no layer found for prop {picked_prop}")
+        #             return
+        #         world_xyz = layer.world_xyz_from_picked_id(point_id)
+        #         self._viewer.set_pivot_point(world_xyz)
     
     
 class VTKViewer(QWidget):
@@ -163,12 +180,9 @@ class VTKViewer(QWidget):
         self._interactor.SetInteractorStyle(self._interactor_style)
         self._edl_pass: Optional[vtk.vtkEDLShading] = None
         
-
         self.picker = PointPicker(self._renderer)
         
-
-
-        
+       
         # common scene objects        
         self._pivot_point = (0,0,0)
         self._pivot_sphere_source = None
@@ -204,11 +218,32 @@ class VTKViewer(QWidget):
 
         self.vtkWidget.GetRenderWindow().Render()
         
+
         
         
         
     def rerender(self):
         self.vtkWidget.GetRenderWindow().Render()
+        
+    def pick(self) -> PickResult:
+        interactor = self._interactor_style.GetInteractor()
+        x, y = interactor.GetEventPosition()
+        result = self.picker.pick(interactor, x, y)
+        if result is None or self.scene is None:
+            return PickResult(None, None, None, None)
+        picked_prop, point_id = result
+        
+        if picked_prop is not None :
+            layer = self.scene.layer_for_prop(picked_prop)
+            if layer is None:
+                print(f'No layer found for prop {picked_prop}')
+                return PickResult(None, picked_prop, point_id, None)
+            world_xyz = layer.world_xyz_from_picked_id(point_id)
+        else:
+            world_xyz = None
+        return PickResult(layer, picked_prop, point_id, world_xyz)
+        
+        
 
     def enable_edl(self) -> None:
         basic_passes = vtk.vtkRenderStepsPass()

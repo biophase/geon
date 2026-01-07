@@ -16,7 +16,7 @@ from ..data.pointcloud import FieldType, SemanticSegmentation, SemanticSchema
 
 from PyQt6.QtWidgets import (QMainWindow, QApplication, QMenu)
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QShortcut, QKeySequence, QAction
+from PyQt6.QtGui import QShortcut, QKeySequence, QAction, QIcon
 
 from typing import cast
 
@@ -24,7 +24,9 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("geon")
+        
         QApplication.setApplicationName("geon")
+        QApplication.setWindowIcon(QIcon("resources/geon_icon.png"))
         self.resize(1200,800)
 
         # settings
@@ -47,7 +49,7 @@ class MainWindow(QMainWindow):
         self.dataset_manager = DatasetManager(self)
         self.menu_bar = MenuBar(self)
         
-        
+        # menu bar
         view_menu = cast(QMenu, self.menu_bar.addMenu("&View"))
         view_menu.addAction(self.scene_manager.toggleViewAction())
         view_menu.addAction(self.dataset_manager.toggleViewAction())
@@ -58,11 +60,12 @@ class MainWindow(QMainWindow):
         
         doc_menu = self.menu_bar.doc_menu
         doc_menu.addSeparator()
-        import_field_menu = cast(QMenu, doc_menu.addMenu("Import field from"))
+        import_field_menu = cast(QMenu, doc_menu.addMenu("Import field from ..."))
         act_import_npy = cast(QAction, import_field_menu.addAction(".NPY"))
         act_import_npy.triggered.connect(self._on_import_field_from_npy)
         act_edit_fields = cast(QAction, doc_menu.addAction("Edit fields"))
         act_edit_fields.triggered.connect(self._on_edit_fields)
+        self.setMenuBar(self.menu_bar)
 
         ###########
         # signals #
@@ -73,6 +76,8 @@ class MainWindow(QMainWindow):
 
         self.dataset_manager.requestSetActiveDocInScene\
             .connect(self.scene_manager.on_document_loaded)
+        self.dataset_manager.requestClearUndoStacks\
+            .connect(self.tool_controller.clear_undo_stacks)
         
         self.menu_bar.setWorkdirRequested\
             .connect(self.dataset_manager.set_work_dir)

@@ -331,7 +331,10 @@ class LassoTool(ModeTool):
         N = points.shape[0]
         pts_hom = np.hstack([points, np.ones((N,1))])
         pts_clip = pts_hom @ proj_matrix.T
-        pts_ndc = pts_clip[:,:3] / pts_clip[:,3:4]
+        w = pts_clip[:, 3]
+        pts_ndc = np.full((N, 3), np.nan, dtype=float)
+        valid = w > 0
+        pts_ndc[valid] = pts_clip[valid, :3] / w[valid, None]
         display_x = (pts_ndc[:,0] + 1) /2 * window_width
         display_y = (pts_ndc[:,1] + 1) /2 * window_height
         return np.column_stack([display_x, display_y])
@@ -453,7 +456,6 @@ class LassoTool(ModeTool):
             
     def deactivate(self) -> None:
 
-        super().deactivate()
         self._remove_polygon_actor()
         self.ctx.viewer.set_camera_enabled(True)
         self.layer.set_visibility_mask(self.vis_mask_backup)
@@ -477,6 +479,7 @@ class LassoTool(ModeTool):
             # finilize command from global command manager
             self.ctx.controller.do_global(cmd)
         self.ctx.viewer.rerender()
+        super().deactivate()
     
     def left_button_press_hook(self, event: Event) -> None:
         super().left_button_press_hook(event)

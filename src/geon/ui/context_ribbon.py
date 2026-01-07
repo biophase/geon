@@ -75,7 +75,10 @@ class ContextRibbon(QToolBar):
         outer.setContentsMargins(4, 2, 4, 2)
 
         title_label = QLabel(title)
-        title_label.setStyleSheet("QLabel { font-weight: bold; font-size: 12pt; }")
+        # title_label.setStyleSheet("QLabel { font-weight: bold; font-size: 12pt; }")
+        font = title_label.font()
+        font.setBold(True)
+        title_label.setFont(font)
         title_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
         title_label.setAlignment(Qt.AlignmentFlag.AlignTop)
 
