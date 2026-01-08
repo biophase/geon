@@ -10,6 +10,7 @@ from typing import ClassVar, Optional
 import weakref
 
 import numpy as np
+from geon.util.resources import resource_path
 
 
 
@@ -57,7 +58,7 @@ class SelectPointsCmd(Command):
 class DeselectTool(CommandTool):
     label:      ClassVar = "deselect"
     tooltip:    ClassVar = "Deselect"
-    icon_path:  ClassVar = "resources/deselect.png"
+    icon_path:  ClassVar = resource_path("deselect.png")
     shortcut:   ClassVar = "Ctrl+D"
     ui_zones:   ClassVar = {
         ToolZone.SIDEBAR_RIGHT_ESSENTIALS,

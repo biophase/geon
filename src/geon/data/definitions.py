@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal, Optional
 
 import numpy as np
@@ -13,8 +13,8 @@ npa = np.array
 class ColorMap:
     name: str
     color_type: Literal['rgb', 'hsv'] = 'rgb'
-    color_positions:    NDArray[np.float32] = np.array([0.,1]) 
-    color_definitions:  NDArray[np.float32] = np.array([[1.,0.,0.],[0.,1.,0.]])
+    color_positions:    NDArray[np.float32] = field(default_factory=lambda: np.array([0., 1.], dtype=np.float32))
+    color_definitions:  NDArray[np.float32] = field(default_factory=lambda: np.array([[1.,0.,0.],[0.,1.,0.]], dtype=np.float32))
 
     
     

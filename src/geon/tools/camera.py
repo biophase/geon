@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import QPushButton
 
 import vtk
 from geon.ui.toolbar import CommonToolsDock, CommonToolsWidget
+from geon.util.resources import resource_path
 
 
 def _get_active_actor(ctx: ToolContext) -> Optional[vtk.vtkProp]:
@@ -83,7 +84,7 @@ class TogglePerspectiveTool(CommandTool):
     """
     label:      ClassVar = "toggle_perspective"
     tooltip:    ClassVar = "Toggle between perspective and isometric projection"
-    icon_path:  ClassVar = "resources/camera_perspective_toggle.png"
+    icon_path:  ClassVar = resource_path("camera_perspective_toggle.png")
     shortcut:   ClassVar = "F3" # TODO: correct shortcut string?
     ui_zones:   ClassVar = {ToolZone.SIDEBAR_RIGHT_VIEWPORT}
     use_local_cm:    ClassVar = False
@@ -96,9 +97,9 @@ class TogglePerspectiveTool(CommandTool):
     def _sync_icon_with_state(self) -> None:
         camera = self.ctx.viewer._renderer.GetActiveCamera()
         if camera.GetParallelProjection():
-            type(self).icon_path = "resources/camera_isometric_toggle.png"
+            type(self).icon_path = resource_path("camera_isometric_toggle.png")
         else:
-            type(self).icon_path = "resources/camera_perspective_toggle.png"
+            type(self).icon_path = resource_path("camera_perspective_toggle.png")
         
         icon_path = TogglePerspectiveTool.icon_path
         if self.tooltip is not None and icon_path is not None:
@@ -121,7 +122,7 @@ class CameraTopTool(CommandTool):
     """
     label:      ClassVar = "camera_top"
     tooltip:    ClassVar = "Set camera to top view."
-    icon_path:  ClassVar = "resources/camera_top.png"
+    icon_path:  ClassVar = resource_path("camera_top.png")
     shortcut:   ClassVar = None
     ui_zones:   ClassVar = {ToolZone.SIDEBAR_RIGHT_VIEWPORT}
     use_local_cm:    ClassVar = False
@@ -138,7 +139,7 @@ class CameraTopTool(CommandTool):
 class CameraBottomTool(CommandTool):
     label:      ClassVar = "camera_bottom"
     tooltip:    ClassVar = "Set camera to bottom view."
-    icon_path:  ClassVar = "resources/camera_bot.png"
+    icon_path:  ClassVar = resource_path("camera_bot.png")
     shortcut:   ClassVar = ""
     ui_zones:   ClassVar = {ToolZone.SIDEBAR_RIGHT_VIEWPORT}
     use_local_cm:    ClassVar = False
@@ -156,7 +157,7 @@ class CameraBottomTool(CommandTool):
 class CameraLeftTool(CommandTool):
     label:      ClassVar = "camera_left"
     tooltip:    ClassVar = "Set camera to left view."
-    icon_path:  ClassVar = "resources/camera_left.png"
+    icon_path:  ClassVar = resource_path("camera_left.png")
     shortcut:   ClassVar = None
     ui_zones:   ClassVar = {ToolZone.SIDEBAR_RIGHT_VIEWPORT}
     use_local_cm:    ClassVar = False
@@ -174,7 +175,7 @@ class CameraLeftTool(CommandTool):
 class CameraRightTool(CommandTool):
     label:      ClassVar = "camera_right"
     tooltip:    ClassVar = "Set camera to right view."
-    icon_path:  ClassVar = "resources/camera_right.png"
+    icon_path:  ClassVar = resource_path("camera_right.png")
     shortcut:   ClassVar = None
     ui_zones:   ClassVar = {ToolZone.SIDEBAR_RIGHT_VIEWPORT}
     use_local_cm:    ClassVar = False
@@ -192,7 +193,7 @@ class CameraRightTool(CommandTool):
 class CameraFrontTool(CommandTool):
     label:      ClassVar = "camera_front"
     tooltip:    ClassVar = "Set camera to front view."
-    icon_path:  ClassVar = "resources/camera_front.png"
+    icon_path:  ClassVar = resource_path("camera_front.png")
     shortcut:   ClassVar = None
     ui_zones:   ClassVar = {ToolZone.SIDEBAR_RIGHT_VIEWPORT}
     use_local_cm:    ClassVar = False
@@ -210,7 +211,7 @@ class CameraFrontTool(CommandTool):
 class CameraBackTool(CommandTool):
     label:      ClassVar = "camera_back"
     tooltip:    ClassVar = "Set camera to back view."
-    icon_path:  ClassVar = "resources/camera_back.png"
+    icon_path:  ClassVar = resource_path("camera_back.png")
     shortcut:   ClassVar = None
     ui_zones:   ClassVar = {ToolZone.SIDEBAR_RIGHT_VIEWPORT}
     use_local_cm:    ClassVar = False

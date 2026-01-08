@@ -1,0 +1,8 @@
+numpy>=1.23
+h5py>=3.8
+PyQt6>=6.6
+vtk>=9.2
+plyfile>=0.8.1
+
+[dev]
+pytest>=7.4

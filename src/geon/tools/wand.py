@@ -13,6 +13,7 @@ import weakref
 from PyQt6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QLabel, QDoubleSpinBox
 
 import numpy as np
+from geon.util.resources import resource_path
 
 
 @dataclass
@@ -20,12 +21,12 @@ class WandTool(ModeTool):
     # general settings
     label: ClassVar = 'wand'
     tooltip: ClassVar = "Magic wand tool"
-    icon_path: ClassVar = 'resources/wand.png'
+    icon_path: ClassVar = resource_path('wand.png')
     shortcut: ClassVar = 'w'
     ui_zones: ClassVar = {ToolZone.SIDEBAR_RIGHT_ESSENTIALS}
     use_local_cm: ClassVar[bool] = False
     show_in_toolbar: ClassVar[bool] = True
-    cursor_icon_path : ClassVar = 'resources/wand.png'
+    cursor_icon_path : ClassVar = resource_path('wand.png')
     cursor_hot: ClassVar = (3, 3) 
     
     # mode tool settings

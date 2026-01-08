@@ -15,6 +15,7 @@ from ..rendering.pointcloud import PointCloudLayer
 from ..data.pointcloud import FieldType, SemanticSegmentation, SemanticSchema
 from geon.settings import Preferences
 from geon.version import get_version
+from geon.util.resources import resource_path
 
 
 from PyQt6.QtWidgets import (QMainWindow, QApplication, QMenu, QDialog, QLabel, QVBoxLayout)
@@ -30,7 +31,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("geon")
         
         QApplication.setApplicationName("geon")
-        QApplication.setWindowIcon(QIcon("resources/geon_icon.png"))
+        QApplication.setWindowIcon(QIcon(resource_path("geon_icon.png")))
         self.resize(1200,800)
 
         # settings
@@ -216,7 +217,7 @@ class MainWindow(QMainWindow):
         dlg = QDialog(self)
         dlg.setWindowTitle("About geon")
         layout = QVBoxLayout(dlg)
-        pix = QPixmap("resources/logo/geometric-red.png")
+        pix = QPixmap(resource_path("logo/geometric-red.png"))
         img_label = QLabel(dlg)
         img_label.setPixmap(pix)
         img_label.setAlignment(Qt.AlignmentFlag.AlignCenter)

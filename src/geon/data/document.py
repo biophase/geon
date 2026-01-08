@@ -114,6 +114,8 @@ class Document:
             
             loaded_items: dict[str, BaseData] = {}
             for child_name in group.keys():
+                if child_name == "telemetry":
+                    continue
                 child_node = group[child_name]
                 if not isinstance(child_node, h5py.Group):
                     raise ValueError(f"Expected HDF5 group for item '{child_name}', got {type(child_node).__name__}")

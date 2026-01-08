@@ -113,8 +113,8 @@ class Dataset:
         
     def pop_old_loaded(self) -> None:
         if len(self._loaded_docs) > self._max_loaded_docs:
-                oldest_doc_name = list(self._loaded_docs.keys())[-1]
-                self._loaded_docs.pop(oldest_doc_name) 
+                oldest_doc_name = next(iter(self._loaded_docs))
+                self._loaded_docs.pop(oldest_doc_name)
                 for r in self.doc_refs:
                     if r.name == oldest_doc_name:
                         r._loadedState = RefLoadedState.REFERENCE

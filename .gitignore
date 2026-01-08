@@ -11,3 +11,4 @@ data/test_dataset/*
 *.h5
 *.hdf5
 *.DS_Store
+dist/*

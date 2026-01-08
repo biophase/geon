@@ -18,6 +18,7 @@ from ..data.pointcloud import (
     SemanticClass, SemanticSegmentation, InstanceSegmentation, FieldType
     )
 from .command_manager import Command
+from geon.util.resources import resource_path
 
 from dataclasses import dataclass, field
 from typing import ClassVar, Optional, cast
@@ -98,7 +99,7 @@ class AnnotateTool(ModeTool):
     # metadata
     label: ClassVar = 'annotate'
     tooltip: ClassVar = "Annotate"
-    icon_path: ClassVar = 'resources/annotate.png'
+    icon_path: ClassVar = resource_path('annotate.png')
     shortcut: ClassVar = 'a'
     ui_zones: ClassVar = set()
     use_local_cm: ClassVar[bool] = False

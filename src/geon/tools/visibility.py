@@ -10,6 +10,7 @@ from typing import ClassVar, Optional
 import weakref
 
 import numpy as np
+from geon.util.resources import resource_path
 
 @dataclass
 class SetPointsVisibilityCmd(Command):
@@ -82,7 +83,7 @@ class HideTool(CommandTool):
     """
     label:      ClassVar = "hide"
     tooltip:    ClassVar = "Hide"
-    icon_path:  ClassVar = "resources/hide.png"
+    icon_path:  ClassVar = resource_path("hide.png")
     shortcut:   ClassVar = "Ctrl+H"
     ui_zones:   ClassVar = set()
     use_local_cm:    ClassVar = False
@@ -126,7 +127,7 @@ class IsolateTool(CommandTool):
     """
     label:      ClassVar = "isolate"
     tooltip:    ClassVar = "Isolate"
-    icon_path:  ClassVar = "resources/isolate.png"
+    icon_path:  ClassVar = resource_path("isolate.png")
     shortcut:   ClassVar = "Ctrl+I"
     ui_zones:   ClassVar = set()
     use_local_cm:    ClassVar = False
@@ -166,7 +167,7 @@ class ShowTool(CommandTool):
     """
     label:      ClassVar = "show_all"
     tooltip:    ClassVar = "Show all"
-    icon_path:  ClassVar = "resources/show_all.png"
+    icon_path:  ClassVar = resource_path("show_all.png")
     shortcut:   ClassVar = "Ctrl+O"
     ui_zones:   ClassVar = {ToolZone.SIDEBAR_RIGHT_ESSENTIALS}
     use_local_cm:    ClassVar = False

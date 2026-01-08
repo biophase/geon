@@ -1,4 +1,5 @@
 from enum import Enum, auto
+from geon.util.resources import resource_path
 class Boolean(Enum):
     UNION = auto()
     DIFFERENCE = auto()
@@ -9,11 +10,11 @@ class Boolean(Enum):
     @staticmethod
     def icon_path(bool_type: "Boolean") -> str:
         return {
-            Boolean.UNION : 'resources/bool_union.png',
-            Boolean.DIFFERENCE : 'resources/bool_difference.png',
-            Boolean.INTERSECTION : 'resources/bool_intersection.png',
-            Boolean.EXCLUSION : 'resources/bool_exclusion.png',
-            Boolean.OVERWRITE : 'resources/bool_overwrite.png'
+            Boolean.UNION : resource_path('bool_union.png'),
+            Boolean.DIFFERENCE : resource_path('bool_difference.png'),
+            Boolean.INTERSECTION : resource_path('bool_intersection.png'),
+            Boolean.EXCLUSION : resource_path('bool_exclusion.png'),
+            Boolean.OVERWRITE : resource_path('bool_overwrite.png')
             
         }[bool_type]
         

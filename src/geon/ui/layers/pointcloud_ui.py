@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (QWidget, QMenu, QHBoxLayout, QVBoxLayout, QLabel,
 from PyQt6.QtGui import QIcon
 from PyQt6.QtCore import Qt
 from config.theme import UIStyle
+from geon.util.resources import resource_path
 
 from typing import Type, Optional
 
@@ -120,13 +121,13 @@ def _ribbon(
     btn_layout = QHBoxLayout()
     
     btn_decrease_pt_size = QPushButton(parent)
-    btn_decrease_pt_size.setIcon(QIcon("resources/minus.png"))
+    btn_decrease_pt_size.setIcon(QIcon(resource_path("minus.png")))
     btn_decrease_pt_size.pressed.connect(
         lambda : _decrease_point_size(layer, controller, pt_size_value))
     btn_layout.addWidget(btn_decrease_pt_size)
     
     btn_increase_pt_size = QPushButton(parent)
-    btn_increase_pt_size.setIcon(QIcon("resources/plus.png"))
+    btn_increase_pt_size.setIcon(QIcon(resource_path("plus.png")))
     btn_increase_pt_size.pressed.connect(
         lambda : _increase_point_size(layer, controller, pt_size_value))
     btn_layout.addWidget(btn_increase_pt_size)

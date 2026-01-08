@@ -2,6 +2,7 @@ from geon.tools.base import Event
 from .base import ModeTool, ToolZone
 from ..rendering.pointcloud import PointCloudLayer
 from ..data.pointcloud import FieldType, FieldBase, SemanticSegmentation
+from geon.util.resources import resource_path
 
 from dataclasses import dataclass, field
 from typing import ClassVar, Optional
@@ -37,12 +38,12 @@ class InspectTool(ModeTool):
     # general settings
     label: ClassVar = 'inspect'
     tooltip: ClassVar = "Inspect tool"
-    icon_path: ClassVar = 'resources/inspect_tool.png'
+    icon_path: ClassVar = resource_path('inspect_tool.png')
     shortcut: ClassVar = None
     ui_zones: ClassVar = {ToolZone.SIDEBAR_RIGHT_ESSENTIALS}
     use_local_cm: ClassVar[bool] = False
     show_in_toolbar: ClassVar[bool] = True
-    cursor_icon_path : ClassVar = 'resources/inspect_tool.png'
+    cursor_icon_path : ClassVar = resource_path('inspect_tool.png')
     cursor_hot: ClassVar = (3, 3) 
     
     # mode tool settings

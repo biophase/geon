@@ -22,6 +22,7 @@ from enum import Enum
 import numpy as np
 import vtk
 
+from geon.util.resources import resource_path
 
 
 @dataclass
@@ -79,12 +80,12 @@ class LassoTool(ModeTool):
     # metadata
     label: ClassVar = 'lasso'
     tooltip: ClassVar = "Lasso segmentation"
-    icon_path: ClassVar = 'resources/lasso.png'
+    icon_path: ClassVar = resource_path('lasso.png')
     shortcut: ClassVar = 't'
     ui_zones: ClassVar = {ToolZone.SIDEBAR_RIGHT_ESSENTIALS}
     use_local_cm: ClassVar[bool] = True
     show_in_toolbar: ClassVar[bool] = True
-    cursor_icon_path : ClassVar = 'resources/lasso.png'
+    cursor_icon_path : ClassVar = resource_path('lasso.png')
     # cursor_hot: ClassVar = (64, 181) 
     cursor_hot: ClassVar = (8, 20) 
     
