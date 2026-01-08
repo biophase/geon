@@ -1,6 +1,6 @@
 
-<p align="left">
-  <img src="resources/logo/geometric-red.png" alt="geon logo" width="400">
+<p align="center">
+  <img src="resources/logo/geometric-red.png" alt="geon logo" width="350">
 </p>
 
 
