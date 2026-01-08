@@ -5,6 +5,7 @@ from .toolbar import CommonToolsDock
 from .menu_bar import MenuBar
 from .context_ribbon import ContextRibbon
 from .imports import FieldEditorDialog
+from .preferences_dialog import PreferencesDialog
 
 
 from ..io.ply import ply_to_pcd
@@ -12,17 +13,20 @@ from ..tools.controller import ToolController
 from ..ui.layers import LAYER_UI
 from ..rendering.pointcloud import PointCloudLayer
 from ..data.pointcloud import FieldType, SemanticSegmentation, SemanticSchema
+from geon.settings import Preferences
+from geon.version import get_version
 
 
-from PyQt6.QtWidgets import (QMainWindow, QApplication, QMenu)
+from PyQt6.QtWidgets import (QMainWindow, QApplication, QMenu, QDialog, QLabel, QVBoxLayout)
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QShortcut, QKeySequence, QAction, QIcon
+from PyQt6.QtGui import QShortcut, QKeySequence, QAction, QIcon, QPixmap
 
 from typing import cast
 
 class MainWindow(QMainWindow):
-    def __init__(self):
+    def __init__(self, preferences: Preferences | None = None):
         super().__init__()
+        self.preferences = preferences or Preferences.load()
         self.setWindowTitle("geon")
         
         QApplication.setApplicationName("geon")
@@ -46,6 +50,7 @@ class MainWindow(QMainWindow):
         self.tool_controller = ToolController(context_ribbon=self.ribbon)
         self.tool_controller.install_tool_schortcuts(self)
         self.scene_manager = SceneManager(self.viewer, self.tool_controller, self) 
+        self.scene_manager.preferences = self.preferences
         self.dataset_manager = DatasetManager(self)
         self.menu_bar = MenuBar(self)
         
@@ -89,6 +94,10 @@ class MainWindow(QMainWindow):
             .connect(lambda: self.tool_controller.command_manager.undo())
         self.menu_bar.redoRequested\
             .connect(lambda: self.tool_controller.command_manager.redo())
+        self.menu_bar.editPreferencesRequested\
+            .connect(self._on_edit_preferences)
+        self.menu_bar.aboutRequested\
+            .connect(self._on_about)
         
         self.tool_controller.tool_activated\
             .connect(lambda w: self.ribbon.set_group(self.tool_controller.active_tool_tooltip, w,'tool'))
@@ -96,6 +105,10 @@ class MainWindow(QMainWindow):
             .connect(lambda _ :self.viewer.on_tool_activation(self.tool_controller.active_tool))
         self.tool_controller.tool_deactivated\
             .connect(lambda :self.viewer.on_tool_deactivation())
+        self.tool_controller.tool_activated\
+            .connect(lambda _w: self.scene_manager.log_tool_event(self.tool_controller.active_tool, "activated"))
+        self.tool_controller.tool_deactivated\
+            .connect(lambda : self.scene_manager.log_tool_event(self.tool_controller.last_tool, "deactivated"))
             
         self.scene_manager.broadcastActivatedLayer\
             .connect(self._on_layer_activated)
@@ -191,6 +204,28 @@ class MainWindow(QMainWindow):
         layer.update()
         self.scene_manager.populate_tree()
         self.viewer.rerender()
+
+    def _on_edit_preferences(self) -> None:
+        dlg = PreferencesDialog(self.preferences, parent=self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            dlg.apply()
+            self.preferences.save()
+            self.scene_manager.preferences = self.preferences
+
+    def _on_about(self) -> None:
+        dlg = QDialog(self)
+        dlg.setWindowTitle("About geon")
+        layout = QVBoxLayout(dlg)
+        pix = QPixmap("resources/logo/geometric-red.png")
+        img_label = QLabel(dlg)
+        img_label.setPixmap(pix)
+        img_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(img_label)
+        version_label = QLabel(f"Version: {get_version()}", dlg)
+        version_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(version_label)
+        dlg.setModal(True)
+        dlg.exec()
 
     def _on_edit_fields(self) -> None:
         layer = self._get_active_pointcloud_layer()

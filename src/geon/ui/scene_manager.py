@@ -6,6 +6,9 @@ from ..rendering.pointcloud import PointCloudLayer
 from ..rendering.base import BaseLayer
 from ..data.pointcloud import PointCloudData
 from ..tools.tool_context import ToolContext
+from geon.settings import Preferences
+import json
+from datetime import datetime, timezone
 from ..tools.controller import ToolController
 
 from PyQt6.QtWidgets import (QStackedWidget, QLabel, QWidget, QVBoxLayout, QHBoxLayout, QTreeWidget,
@@ -80,6 +83,7 @@ class SceneManager(Dock):
         self.tree.setColumnWidth(1, 40)
         self.tree.setColumnWidth(2, 40)
         self.tree.setTextElideMode(Qt.TextElideMode.ElideMiddle)
+        self.preferences: Optional[Preferences] = None
 
     def on_document_loaded(self, doc: Document):
         if self._scene is not None:
@@ -220,3 +224,23 @@ class SceneManager(Dock):
             #     lambda checked, ref=doc_ref: checked and self.set_active_doc(ref)
             #     ) 
             # self.tree.setItemWidget(field_item,2,CheckBoxVisible()) # TODO: hook up to a visibility / activate method
+
+    def log_tool_event(self, tool, action: str) -> None:
+        """
+        Append telemetry entry to the active document if enabled in preferences.
+        """
+        if self.preferences is None or not self.preferences.enable_telemetry:
+            return
+        if self._scene is None or self._scene.doc is None:
+            return
+        tool_name = tool.__class__.__name__ if tool is not None else None
+        entry = {
+            "tool": tool_name,
+            "action": action,
+            "user": self.preferences.user_name,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        try:
+            self._scene.doc.telemetry.append(json.dumps(entry))
+        except Exception:
+            pass

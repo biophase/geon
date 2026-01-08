@@ -1,6 +1,7 @@
 import sys
 
 from geon.ui.main_window import MainWindow
+from geon.settings import Preferences
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import QCoreApplication
 from PyQt6.QtCore import Qt
@@ -17,11 +18,17 @@ if sys.platform == 'darwin':
 
     _prev_msg_handler = QtCore.qInstallMessageHandler(_qt_msg_filter)
 
-if __name__ == "__main__":
-
+def main() -> int:
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
-    app.styleHints().setColorScheme(Qt.ColorScheme.Dark)
-    win = MainWindow()
+    shints = app.styleHints()
+    if shints is not None:
+        shints.setColorScheme(Qt.ColorScheme.Dark)
+    prefs = Preferences.load()
+    win = MainWindow(preferences=prefs)
     win.show()
-    sys.exit(app.exec())
+    return app.exec()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

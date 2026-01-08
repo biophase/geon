@@ -13,6 +13,8 @@ class MenuBar(QMenuBar):
     saveDocRequested            = pyqtSignal()
     undoRequested               = pyqtSignal()
     redoRequested               = pyqtSignal()
+    editPreferencesRequested    = pyqtSignal()
+    aboutRequested              = pyqtSignal()
     
     def __init__(self, parent):
         super().__init__(parent)
@@ -39,8 +41,19 @@ class MenuBar(QMenuBar):
         act_redo.triggered.connect(self.redoRequested)        
         self.addMenu(self.edit_menu)
         
+        # settings menu
+        self.settings_menu = QMenu("&Settings", self)
+        act_prefs = cast(QAction, self.settings_menu.addAction("Edit preferences"))
+        act_prefs.triggered.connect(self.editPreferencesRequested)
+        self.addMenu(self.settings_menu)
 
+        # about menu
+        self.about_menu = QMenu("&About", self)
+        act_about = cast(QAction, self.about_menu.addAction("About geon"))
+        act_about.triggered.connect(self.aboutRequested)
+        self.addMenu(self.about_menu)
         
+
 
         # document menu
         self.doc_menu = QMenu("&Document",self)

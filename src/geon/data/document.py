@@ -8,6 +8,7 @@ from pathlib import Path
 import json
 import os.path as osp
 import os
+import numpy as np
 
 
 from typing import Optional
@@ -19,6 +20,7 @@ class Document:
     def __init__(self, name:str = 'Untitled'):
         self.name = name
         self.scene_items: dict[str, BaseData] = {}
+        self.telemetry: list[str] = []
         self.meta: dict[str, Any] = {
             'name':name
             }
@@ -39,6 +41,15 @@ class Document:
         group.attrs['type'] = "Document"
         for k, v in self.meta.items():
             group.attrs[k] = v
+
+        # telemetry
+        dtype = h5py.string_dtype(encoding="utf-8")
+        group.create_dataset(
+            "telemetry",
+            data=np.asarray(self.telemetry, dtype=dtype),
+            dtype=dtype,
+            shape=(len(self.telemetry),),
+        )
         
         # doc children
         
@@ -89,6 +100,17 @@ class Document:
                 if key in {"geon_format_version", "type"}:
                     continue
                 loaded_meta[key] = _decode(value)
+
+            telemetry_ds = group.get("telemetry")
+            telemetry_entries: list[str] = []
+            if isinstance(telemetry_ds, h5py.Dataset):
+                raw = telemetry_ds[()]
+                flat = raw.ravel() if hasattr(raw, "ravel") else raw
+                for entry in flat:
+                    if isinstance(entry, bytes):
+                        telemetry_entries.append(entry.decode("utf-8"))
+                    else:
+                        telemetry_entries.append(str(entry))
             
             loaded_items: dict[str, BaseData] = {}
             for child_name in group.keys():
@@ -110,6 +132,7 @@ class Document:
         
         doc = cls()
         doc.meta = loaded_meta
+        doc.telemetry = telemetry_entries
         if "name" in loaded_meta:
             doc.name = str(loaded_meta["name"])
         doc.scene_items = loaded_items

@@ -25,11 +25,14 @@ class ToolController(QObject):
     # e.g. for UI updates
     layer_internal_sel_changed  = pyqtSignal(BaseLayer)
     
+    # toolCaptureTelemetry        = pyqtSignal(BaseTool)
+    
     def __init__(self, context_ribbon: ContextRibbon):
         super().__init__()
         self._ctx : Optional[ToolContext] = None 
         self._active_tool : Optional[BaseTool] = None
         self._global_command_manager: CommandManager = CommandManager()
+        self._last_tool: Optional[BaseTool] = None
         
         self.ribbon : ContextRibbon = context_ribbon
         
@@ -77,6 +80,7 @@ class ToolController(QObject):
                 self.ctx)
             
             self._active_tool = tool
+            self._last_tool = tool
             
             if isinstance(tool, CommandTool):
                 tool.trigger()
@@ -97,9 +101,11 @@ class ToolController(QObject):
     def deactivate_tool(self) -> None:
         if self._active_tool is None:
             return
+        tool = self._active_tool
         self._active_tool.deactivate()
         self.ribbon.clear_group('tool')
         self._active_tool = None
+        self._last_tool = tool
         self.tool_deactivated.emit()
     
     def do_global(self, cmd: Command) -> None:
@@ -109,6 +115,10 @@ class ToolController(QObject):
     def active_tool(self) -> Optional[BaseTool]:
         if self._active_tool is not None:
             return self._active_tool
+
+    @property
+    def last_tool(self) -> Optional[BaseTool]:
+        return self._last_tool
         
     def install_tool_schortcuts(self, parent: QWidget) -> None:
         for tool_id,  tool_cls in TOOL_REGISTRY._tools.items():
