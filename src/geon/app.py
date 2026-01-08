@@ -3,6 +3,7 @@ import sys
 from geon.ui.main_window import MainWindow
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import QCoreApplication
+from PyQt6.QtCore import Qt
 from config.theme import *
 
 if sys.platform == 'darwin':
@@ -20,7 +21,7 @@ if __name__ == "__main__":
 
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
-    # set_dark_palette(app)
+    app.styleHints().setColorScheme(Qt.ColorScheme.Dark)
     win = MainWindow()
     win.show()
     sys.exit(app.exec())

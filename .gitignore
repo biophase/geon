@@ -1,6 +1,7 @@
 main/*
 *pyc
 _archive/*
+__pycache__
 data/flatLabels/*
 data/FWF_flat/*
 data/_old/*
@@ -9,4 +10,4 @@ data/cc/*
 data/test_dataset/*
 *.h5
 *.hdf5
-
+*.DS_Store
