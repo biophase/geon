@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "geon"
-version = "0.1.0"
+version = "0.1.1"
 description = "Interactive point cloud inspection and annotation tooling."
 readme = "README.md"
 requires-python = ">=3.10"

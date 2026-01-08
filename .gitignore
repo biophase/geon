@@ -12,3 +12,5 @@ data/test_dataset/*
 *.hdf5
 *.DS_Store
 dist/*
+build/*
+build
