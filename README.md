@@ -9,7 +9,7 @@
 
 
 ## Install guide
-The tool is tested with Python 3.10 to 3.12 and runs under *Windows*, *Linux(Untunbu)* and *MacOS*.
+The tool is tested with Python 3.10 to 3.12 and under *Windows*, *Linux (Ubuntu)* and *MacOS*.
 
 It requires `vtk` and `PyQt6`.
 
