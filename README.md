@@ -19,6 +19,28 @@ To install run:
 pip install geon
 ```
 
+## Development build
+Native extensions are built with CMake via scikit-build-core. You will need a C++17 compiler and CMake.
+
+```
+pip install -e .
+```
+
+Notes:
+- To build the native modules:
+  ```
+  cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_LIBRARY_OUTPUT_DIRECTORY="$PWD/src/geon/_native"
+  cmake --build build -j
+  ```
+- On Windows (MSVC), use:
+  ```
+  cmake -S . -B build -G "Visual Studio 17 2022" -A x64 ^
+    -DCMAKE_LIBRARY_OUTPUT_DIRECTORY_RELEASE="%CD%\\src\\geon\\_native"
+  cmake --build build --config Release
+  ```
+- OpenMP is used for some kernels when available.
+
 ## Running Geon
 ```
 python -m geon.app

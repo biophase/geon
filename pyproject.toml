@@ -1,6 +1,6 @@
 [build-system]
-requires = ["setuptools>=69", "wheel"]
-build-backend = "setuptools.build_meta"
+requires = ["scikit-build-core>=0.7"]
+build-backend = "scikit_build_core.build"
 
 [project]
 name = "geon"
@@ -38,14 +38,11 @@ dev = [
 [project.scripts]
 geon = "geon.app:main"
 
-[tool.setuptools.packages.find]
-where = ["src"]
-
-[tool.setuptools]
-include-package-data = true
-
-[tool.setuptools.package-data]
-geon = ["resources/**/*"]
-
-[tool.setuptools.data-files]
-"geon/resources" = ["resources/*.*", "resources/**/*.*"]
+[tool.scikit-build]
+sdist.include = [
+  "CMakeLists.txt",
+  "native/**",
+  "resources/**",
+  "external/**",
+  "src/**",
+]
