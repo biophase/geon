@@ -25,6 +25,8 @@ class ToolController(QObject):
     # e.g. for UI updates
     layer_internal_sel_changed  = pyqtSignal(BaseLayer)
     
+    scene_tree_request_change = pyqtSignal()
+    
     # toolCaptureTelemetry        = pyqtSignal(BaseTool)
     
     def __init__(self, context_ribbon: ContextRibbon):

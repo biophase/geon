@@ -13,6 +13,7 @@ except ModuleNotFoundError:  # pragma: no cover - fallback for older runtimes
 DEFAULT_PREFS: Dict[str, Any] = {
     "user_name": "Unnamed User",
     "enable_telemetry": False,
+    "camera_sensitivity": 10.0,
 }
 
 
@@ -24,6 +25,7 @@ def _default_path() -> Path:
 class Preferences:
     user_name: str = DEFAULT_PREFS["user_name"]
     enable_telemetry: bool = DEFAULT_PREFS["enable_telemetry"]
+    camera_sensitivity: float = DEFAULT_PREFS["camera_sensitivity"]
     path: Path = None  # type: ignore
 
     def __post_init__(self) -> None:
@@ -58,12 +60,22 @@ class Preferences:
                         data[key] = val
             prefs.user_name = str(data.get("user_name", prefs.user_name))
             prefs.enable_telemetry = bool(data.get("enable_telemetry", prefs.enable_telemetry))
+            cam_val = data.get("camera_sensitivity", prefs.camera_sensitivity)
+            try:
+                prefs.camera_sensitivity = float(cam_val)
+            except (TypeError, ValueError):
+                prefs.camera_sensitivity = DEFAULT_PREFS["camera_sensitivity"]
         return prefs
 
     def to_toml(self) -> str:
         user = self.user_name.replace('"', '\\"')
         tele = "true" if self.enable_telemetry else "false"
-        return f'user_name = "{user}"\nenable_telemetry = {tele}\n'
+        cam = f"{float(self.camera_sensitivity)}"
+        return (
+            f'user_name = "{user}"\n'
+            f'enable_telemetry = {tele}\n'
+            f'camera_sensitivity = {cam}\n'
+        )
 
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)

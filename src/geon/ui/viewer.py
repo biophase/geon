@@ -54,15 +54,25 @@ class InteractorStyle(vtk.vtkInteractorStyleTrackballCamera):
         self.last_click_time = 0
         self.mode_tool: Optional[ModeTool] = None
         
+        # default state override
+        self.SetMotionFactor(10.0)
+        
         # observers
         self.AddObserver(vtk.vtkCommand.LeftButtonPressEvent, self.left_button_press_event)
         self.AddObserver(vtk.vtkCommand.RightButtonPressEvent, self.right_button_press_event)
         self.AddObserver(vtk.vtkCommand.MiddleButtonPressEvent, self.middle_button_press_event)
+        self.AddObserver(vtk.vtkCommand.RightButtonReleaseEvent, self.right_button_release_event)
+        self.AddObserver(vtk.vtkCommand.MiddleButtonReleaseEvent, self.middle_button_release_event)
         self.AddObserver(vtk.vtkCommand.MouseMoveEvent, self.mouse_move_event)
         self.AddObserver(vtk.vtkCommand.MouseWheelForwardEvent, self.mouse_wheel_forward_event)
         self.AddObserver(vtk.vtkCommand.MouseWheelBackwardEvent, self.mouse_wheel_backward_event)
         self.AddObserver(vtk.vtkCommand.KeyPressEvent, self.key_press_event)
         self.AddObserver(vtk.vtkCommand.KeyReleaseEvent, self.key_release_event)
+        
+        # silence default charecter presses
+        self.AddObserver(vtk.vtkCommand.CharEvent, self.silence_vtk_defaults, 1.0) 
+        
+        
 
 
     @property
@@ -109,6 +119,14 @@ class InteractorStyle(vtk.vtkInteractorStyleTrackballCamera):
         if self.camera_enabled:
             self.OnMiddleButtonDown()
 
+    def right_button_release_event(self, _vtk_obj, _vtk_event):
+        if self.camera_enabled:
+            self.OnRightButtonUp()
+
+    def middle_button_release_event(self, _vtk_obj, _vtk_event):
+        if self.camera_enabled:
+            self.OnMiddleButtonUp()
+
     def mouse_move_event(self, _vtk_obj, _vtk_event):
         if self.mode_tool is not None:
             self.mode_tool.mouse_move_event_hook(self.event_info)
@@ -128,6 +146,7 @@ class InteractorStyle(vtk.vtkInteractorStyleTrackballCamera):
             self.OnMouseWheelBackward()
         
     def key_press_event(self, _vtk_obj, _vtk_event):
+        # return
         print(f"[Interactor] key press event")
         if self.mode_tool is not None:
             self.mode_tool.key_press_hook(self.event_info)
@@ -136,8 +155,12 @@ class InteractorStyle(vtk.vtkInteractorStyleTrackballCamera):
         print(f"[Interactor] key release event")
         if self.mode_tool is not None:
             self.mode_tool.key_release_hook(self.event_info)
+
+
+
             
-        
+
+    
     def _focus_camera(self):
         result = self._viewer.pick()
         if result.world_xyz is None:
@@ -157,7 +180,37 @@ class InteractorStyle(vtk.vtkInteractorStyleTrackballCamera):
         #             return
         #         world_xyz = layer.world_xyz_from_picked_id(point_id)
         #         self._viewer.set_pivot_point(world_xyz)
+        
+    #############
+    # overrides # 
+    #############
     
+    
+    def OnMiddleButtonDown(self):
+        print(f"[OnMiddleButtonDown] called")
+        # treat middle press as right press
+        super().OnRightButtonDown()
+
+    def OnMiddleButtonUp(self):
+        print(f"[OnMiddleButtonUp] called")
+        super().OnRightButtonUp()
+
+    def OnRightButtonDown(self):
+        print(f"[OnRightButtonDown] called")
+        # treat right press as middle press
+        super().OnMiddleButtonDown()
+
+    def OnRightButtonUp(self):
+        print(f"[OnRightButtonUp] called")
+        super().OnMiddleButtonUp()
+        
+    def silence_vtk_defaults(self, obj, event):
+        # override the char handler
+        try:
+            obj.AbortFlagOn()
+        except:
+            pass
+        return
     
 class VTKViewer(QWidget):
     """
@@ -282,6 +335,9 @@ class VTKViewer(QWidget):
         
     def set_camera_enabled(self, enabled: bool) -> None:
         self._interactor_style.camera_enabled = enabled
+
+    def set_camera_sensitivity(self, value: float) -> None:
+        self._interactor_style.SetMotionFactor(float(value))
     
     def focus_camera_on_actor(self, actor: vtk.vtkProp):
         b = actor.GetBounds()

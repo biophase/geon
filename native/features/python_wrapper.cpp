@@ -43,6 +43,14 @@ PYBIND11_MODULE(features, m){
         .def(py::init<>())
         .def("__len__", [](const VoxelHashIndex& self){ return self.map.size(); });
 
+    py::class_<ProgressState>(m, "Progress")
+        .def(py::init<>())
+        .def("reset", &ProgressState::reset, py::arg("total"))
+        .def("request_cancel", &ProgressState::requestCancel)
+        .def("cancelled", &ProgressState::isCancelled)
+        .def("done", &ProgressState::completed)
+        .def("total", &ProgressState::totalCount);
+
     m.def(
         "voxel_key",
         &voxelKey,
@@ -122,7 +130,8 @@ PYBIND11_MODULE(features, m){
         [](float radius,
            float voxel_size,
            py::array_t<float, py::array::c_style | py::array::forcecast> positive_coords,
-           const VoxelHashIndex& voxel_hash){
+           const VoxelHashIndex& voxel_hash,
+           ProgressState* progress){
             auto coords_buf = positive_coords.request();
             validate_coords(coords_buf, "positive_coords");
 
@@ -151,7 +160,8 @@ PYBIND11_MODULE(features, m){
                     coords_map,
                     voxel_hash.map,
                     ev_map,
-                    n_map
+                    n_map,
+                    progress
                 );
             }
 
@@ -160,6 +170,7 @@ PYBIND11_MODULE(features, m){
         py::arg("radius"),
         py::arg("voxel_size"),
         py::arg("positive_coords"),
-        py::arg("voxel_hash")
+        py::arg("voxel_hash"),
+        py::arg("progress") = py::none()
     );
 }

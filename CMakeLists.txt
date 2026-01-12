@@ -7,7 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(GEON_EIGEN_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/eigen")
 set(GEON_NANOFLANN_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/nanoflann/include")
 
-# Prefer a local pybind11 submodule, fall back to a system install if needed.
+# Prefer a local pybind11 submodule, fall back to a system install
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/pybind11/CMakeLists.txt")
   add_subdirectory(external/pybind11)
 else()

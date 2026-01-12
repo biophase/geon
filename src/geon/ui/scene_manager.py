@@ -4,24 +4,40 @@ from ..data.document import Document
 from ..rendering.scene import Scene
 from ..rendering.pointcloud import PointCloudLayer
 from ..rendering.base import BaseLayer
-from ..data.pointcloud import PointCloudData
+from ..data.pointcloud import PointCloudData, FieldType, SemanticSegmentation, SemanticClass
 from ..tools.tool_context import ToolContext
+from ..tools.selection import SelectPointsCmd
+from ..util.resources import resource_path
+from ..util.common import bool_op_index_mask
+from ..ui.boolean_dialog import BooleanChoiceDialog
+
 from geon.settings import Preferences
 import json
 from datetime import datetime, timezone
 from ..tools.controller import ToolController
 
 from PyQt6.QtWidgets import (QStackedWidget, QLabel, QWidget, QVBoxLayout, QHBoxLayout, QTreeWidget,
-                             QTreeWidgetItem, QCheckBox, QButtonGroup, QRadioButton, QHeaderView)
-from PyQt6.QtCore import Qt, pyqtSignal
+                             QTreeWidgetItem, QCheckBox, QButtonGroup, QRadioButton, QHeaderView, QMenu,
+                             QDialog)
+from PyQt6.QtCore import Qt, pyqtSignal, QSize
+from PyQt6.QtGui import QIcon, QAction
 
 from typing import Optional, cast
+from dataclasses import dataclass, field
+import weakref
+
+import numpy as np
 
 
 
 import vtk
 import traceback
 
+@dataclass
+class SemClsHandle:
+    layer: PointCloudLayer
+    sem_cls: SemanticClass
+    field: SemanticSegmentation
 
 class CheckBoxActive(QRadioButton):
     def __init__(self):
@@ -60,8 +76,13 @@ class SceneManager(Dock):
         page = QWidget()
         self.tree_layout = QVBoxLayout(page)
         self.scene_label = ElidedLabel("")
-        
+
         self.tree = QTreeWidget(self)
+        self.tree.setSelectionMode(QTreeWidget.SelectionMode.ExtendedSelection)
+        self.tree.setIconSize(QSize(12, 12))
+        self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.tree.customContextMenuRequested.connect(self._on_tree_context_menu)
+
         self.tree_layout.addWidget(self.scene_label)
         self.tree_layout.addWidget(self.tree)
         
@@ -133,6 +154,7 @@ class SceneManager(Dock):
     
     def populate_tree(self):
         self.tree.clear()
+
         print(f"called populate_tree")
         
         if self._scene is None:
@@ -174,6 +196,7 @@ class SceneManager(Dock):
             
             # populate
             if isinstance (layer, PointCloudLayer):   
+                layer_root.setIcon(0, QIcon(resource_path("tree_icon_pointcloud.png")))
                 self._populate_point_cloud_layer(layer, layer_root)
             else:
                 raise NotImplementedError(f"Please implement a `populate` method for type {type(layer)}")
@@ -191,7 +214,7 @@ class SceneManager(Dock):
 
         print("called populate point cloud")
 
-
+        
         # button groups
         fields_group_active = QButtonGroup(self)
         fields_group_active.setExclusive(True)
@@ -201,10 +224,23 @@ class SceneManager(Dock):
 
         for field in  layer.data.get_fields():
             field_item = QTreeWidgetItem([field.name])
+            field_item.setIcon(0, QIcon(resource_path("tree_icon_field.png")))
+            field_item.setData(0, Qt.ItemDataRole.UserRole, field)
             layer_root.addChild(field_item)
             active_box = CheckBoxActive()
             fields_group_active.addButton(active_box)
             
+            # handle field items
+            if field.field_type == FieldType.SEMANTIC:
+                field = cast(SemanticSegmentation, field)
+                unique_ids = np.unique(field.data)
+                for sem_cls in field.schema.semantic_classes:
+                    if sem_cls.id not in unique_ids:
+                        continue
+                    sem_cls_item = self._make_tree_colored_item(field_item, sem_cls.name, sem_cls.color)
+                    sem_cls_item.setData(0, Qt.ItemDataRole.UserRole, SemClsHandle(layer, sem_cls, field))
+                    
+                    
             
             # set first field to active
             if layer.active_field_name is None:
@@ -244,3 +280,133 @@ class SceneManager(Dock):
             self._scene.doc.telemetry.append(json.dumps(entry))
         except Exception:
             pass
+    
+    def _make_tree_colored_item(
+        self,
+        parent: QTreeWidgetItem,
+        text: str,
+        rgb: tuple[int, int, int],
+    ) -> QTreeWidgetItem:
+        item = QTreeWidgetItem([""])
+        swatch = QLabel()
+        swatch.setFixedSize(12,12)
+        swatch.setStyleSheet(
+            f"background-color: rgb({rgb[0]}, {rgb[1]}, {rgb[2]});"
+            "border: 1px solid black;"
+        )
+        label = QLabel(text)
+        w = QWidget()
+        layout = QHBoxLayout(w)
+        layout.setContentsMargins(2,0,2,0)
+        layout.setSpacing(6)
+        layout.addWidget(swatch)
+        layout.addWidget(label)
+        layout.addStretch(1)
+
+        parent.addChild(item)
+        self.tree.setItemWidget(item, 0, w)
+        return item
+    
+    def _on_tree_context_menu(self, pos):
+        items = self.tree.selectedItems()
+        if not items or self._scene is None:
+            return
+        
+        objs = [item.data(0, Qt.ItemDataRole.UserRole) for item in items]
+        ctx = self.tool_controller.ctx
+        if ctx is None:
+            return
+        
+        
+
+        sem_cls_handles = [o for o in objs if isinstance(o, SemClsHandle)]
+        
+        menu = QMenu(self.tree)
+            
+        if sem_cls_handles:
+            act = None
+            if len(sem_cls_handles) == 1:
+                act = menu.addAction(f"Select points of '{sem_cls_handles[0].sem_cls.name}'")
+            elif len(sem_cls_handles) > 1:
+                act = menu.addAction(f"Select points of {len(sem_cls_handles)} classes.")
+            act = cast(QAction, act)
+            act.triggered.connect(lambda: self._selection_from_sem_cls_handles(sem_cls_handles))
+            
+        
+        viewport = self.tree.viewport()
+        if viewport is None:
+            return
+        menu.exec(viewport.mapToGlobal(pos))
+
+    def _selection_from_sem_cls_handles(self, handles:list[SemClsHandle]) -> None:
+        if self._scene is None:
+            return
+        ctx = self.tool_controller.ctx
+        if ctx is None:
+            return
+        
+        handles_by_layer: dict[str, list[SemClsHandle]] = {}
+        for handle in handles:
+            handles_by_layer.setdefault(handle.layer.id, []).append(handle)
+        if not handles_by_layer:
+            return
+
+        layer_selections: dict[str, np.ndarray] = {}
+        needs_merge = False
+
+        for layer in self._scene.layers.values():
+            layer = cast(PointCloudLayer, layer)
+            layer_sem_handles = handles_by_layer.get(layer.id)
+            if not layer_sem_handles:
+                continue
+
+            selection = [
+                np.flatnonzero(handle.field.data == handle.sem_cls.id)
+                for handle in layer_sem_handles
+            ]
+            indices = (
+                np.concatenate(selection) if selection else np.array([], dtype=np.int32)
+            )
+            layer_selections[layer.id] = indices
+            if (
+                indices.size > 0
+                and layer.active_selection is not None
+                and layer.active_selection.size > 0
+            ):
+                needs_merge = True
+
+        merge_mode = None
+        if needs_merge:
+            dlg = BooleanChoiceDialog(
+                self, message="Choose how to combine with previous selection:"
+            )
+            if dlg.exec() != QDialog.DialogCode.Accepted or dlg.choice is None:
+                return
+            merge_mode = dlg.choice
+
+        for layer in self._scene.layers.values():
+            layer = cast(PointCloudLayer, layer)
+            indices = layer_selections.get(layer.id)
+            if indices is None:
+                continue
+            if (
+                merge_mode is not None
+                and layer.active_selection is not None
+                and layer.active_selection.size > 0
+            ):
+                indices = bool_op_index_mask(
+                    layer.active_selection, indices, merge_mode
+                )
+
+            cmd = SelectPointsCmd(
+                title="Select class points",
+                selection_new=indices,
+                layer_ref=weakref.ref(layer),
+                ctx_ref=weakref.ref(ctx),
+            )
+            self.tool_controller.command_manager.do(cmd)
+            
+        
+        
+
+

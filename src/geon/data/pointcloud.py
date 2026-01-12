@@ -2,7 +2,7 @@ import json
 import pickle
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Dict, List, Literal, Optional, Tuple, TypedDict, Type, Union, cast
+from typing import Dict, List, Literal, Optional, Tuple, TypedDict, Type, Union, cast, Callable
 from pathlib import Path
 
 import h5py
@@ -65,6 +65,7 @@ class PointCloudData(BaseData):
         super().__init__()
         self.points = points
         self._fields : list[FieldBase] = []
+        self._field_added_callbacks: list[Callable[[FieldBase], None]] = []
 
     def save_hdf5(self, group: h5py.Group) -> h5py.Group:
         group.attrs["type_id"] = self.get_type_id()

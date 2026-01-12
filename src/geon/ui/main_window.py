@@ -6,9 +6,11 @@ from .menu_bar import MenuBar
 from .context_ribbon import ContextRibbon
 from .imports import FieldEditorDialog
 from .preferences_dialog import PreferencesDialog
+from .features_dialog import FeaturesDialog
 
 
 from ..io.ply import ply_to_pcd
+from ..algorithms.features import compute_pcd_features
 from ..tools.controller import ToolController
 from ..ui.layers import LAYER_UI
 from ..rendering.pointcloud import PointCloudLayer
@@ -18,11 +20,21 @@ from geon.version import get_version
 from geon.util.resources import resource_path
 
 
-from PyQt6.QtWidgets import (QMainWindow, QApplication, QMenu, QDialog, QLabel, QVBoxLayout)
-from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import (
+    QMainWindow,
+    QApplication,
+    QMenu,
+    QDialog,
+    QLabel,
+    QVBoxLayout,
+    QProgressDialog,
+    QMessageBox,
+)
+from PyQt6.QtCore import Qt, QEventLoop, QThread, QTimer, pyqtSignal
 from PyQt6.QtGui import QShortcut, QKeySequence, QAction, QIcon, QPixmap
 
 from typing import cast
+from geon._native import features as _native_features
 
 class MainWindow(QMainWindow):
     def __init__(self, preferences: Preferences | None = None):
@@ -46,6 +58,7 @@ class MainWindow(QMainWindow):
         self.addToolBar(Qt.ToolBarArea.TopToolBarArea, self.ribbon)
 
         self.viewer = VTKViewer(self)
+        self.viewer.set_camera_sensitivity(self.preferences.camera_sensitivity)
         self.setCentralWidget(self.viewer)
         
         self.tool_controller = ToolController(context_ribbon=self.ribbon)
@@ -71,6 +84,8 @@ class MainWindow(QMainWindow):
         act_import_npy.triggered.connect(self._on_import_field_from_npy)
         act_edit_fields = cast(QAction, doc_menu.addAction("Edit fields"))
         act_edit_fields.triggered.connect(self._on_edit_fields)
+        act_compute_features = cast(QAction, doc_menu.addAction("Compute geometric features"))
+        act_compute_features.triggered.connect(self._on_compute_geometric_features)
         self.setMenuBar(self.menu_bar)
 
         ###########
@@ -110,6 +125,9 @@ class MainWindow(QMainWindow):
             .connect(lambda _w: self.scene_manager.log_tool_event(self.tool_controller.active_tool, "activated"))
         self.tool_controller.tool_deactivated\
             .connect(lambda : self.scene_manager.log_tool_event(self.tool_controller.last_tool, "deactivated"))
+        self.tool_controller.scene_tree_request_change\
+            .connect(self.scene_manager.populate_tree)    
+        
             
         self.scene_manager.broadcastActivatedLayer\
             .connect(self._on_layer_activated)
@@ -212,6 +230,7 @@ class MainWindow(QMainWindow):
             dlg.apply()
             self.preferences.save()
             self.scene_manager.preferences = self.preferences
+            self.viewer.set_camera_sensitivity(self.preferences.camera_sensitivity)
 
     def _on_about(self) -> None:
         dlg = QDialog(self)
@@ -243,6 +262,97 @@ class MainWindow(QMainWindow):
         dlg.exec()
         if dlg.point_cloud is None:
             return
+        layer.update()
+        self.scene_manager.populate_tree()
+        self.viewer.rerender()
+
+    def _on_compute_geometric_features(self) -> None:
+        scene = self.scene_manager._scene
+        if scene is None:
+            return
+        active_layer = self._get_active_pointcloud_layer()
+        dlg = FeaturesDialog(scene, active_layer, parent=self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        layer = dlg.selected_layer()
+        if layer is None:
+            return
+
+        progress = _native_features.Progress()
+
+        class _FeatureWorker(QThread):
+            errored = pyqtSignal(str)
+
+            def run(self) -> None:
+                try:
+                    compute_pcd_features(
+                        radius=dlg.radius(),
+                        data=layer.data,
+                        field_name_normals=dlg.normals_field_name(),
+                        field_name_eigenvals=dlg.eigenvals_field_name(),
+                        compute_normals=dlg.compute_normals(),
+                        compute_eigenvals=dlg.compute_eigenvals(),
+                        progress=progress,
+                    )
+                except Exception as exc:  # pragma: no cover - GUI path
+                    self.errored.emit(str(exc))
+
+        progress_dialog = QProgressDialog(
+            "Computing geometric features...", "Cancel", 0, 0, self
+        )
+        progress_dialog.setWindowTitle("Compute geometric features")
+        progress_dialog.setWindowModality(Qt.WindowModality.ApplicationModal)
+        progress_dialog.setMinimumDuration(0)
+
+        def _on_cancel() -> None:
+            progress.request_cancel()
+            progress_dialog.setLabelText("Cancelling...")
+
+        progress_dialog.canceled.connect(_on_cancel)
+
+        timer = QTimer(self)
+        timer.setInterval(100)
+
+        def _on_tick() -> None:
+            total = progress.total()
+            done = progress.done()
+            if total > 0:
+                progress_dialog.setMaximum(int(total))
+                progress_dialog.setValue(min(int(done), int(total)))
+                progress_dialog.setLabelText(
+                    f"Computing geometric features... {done}/{total}"
+                )
+
+        timer.timeout.connect(_on_tick)
+
+        loop = QEventLoop(self)
+        error_msg: dict[str, str | None] = {"value": None}
+
+        def _on_finished() -> None:
+            timer.stop()
+            progress_dialog.close()
+            loop.quit()
+
+        def _on_error(msg: str) -> None:
+            error_msg["value"] = msg
+            _on_finished()
+
+        worker = _FeatureWorker()
+        worker.finished.connect(_on_finished)
+        worker.errored.connect(_on_error)
+        worker.start()
+        timer.start()
+        progress_dialog.show()
+        loop.exec()
+        worker.wait()
+
+        if error_msg["value"] is not None:
+            QMessageBox.critical(self, "Feature computation failed", error_msg["value"])
+            return
+
+        if progress.cancelled():
+            return
+
         layer.update()
         self.scene_manager.populate_tree()
         self.viewer.rerender()

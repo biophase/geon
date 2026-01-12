@@ -100,12 +100,23 @@ void computePcdFeatures(
     const MapMatNx3fRM& positive_coords,
     const VoxelHash& voxel_hash,
     MapMatNx3fRM& out_eigenvalues,
-    MapMatNx3fRM& out_normals
+    MapMatNx3fRM& out_normals,
+    ProgressState* progress
 ){
     const auto N = positive_coords.rows();
+    if (progress != nullptr){
+        progress->reset(static_cast<int64_t>(N));
+    }
 
-#pragma omp parallel for schedule(static)
-    for (int i = 0; i < N; ++i){
+#pragma omp parallel
+    {
+        int64_t local_done = 0;
+
+#pragma omp for schedule(static)
+        for (int i = 0; i < N; ++i){
+            if (progress != nullptr && progress->isCancelled()){
+                continue;
+            }
         Point query{
             positive_coords(i, 0),
             positive_coords(i, 1),
@@ -131,5 +142,18 @@ void computePcdFeatures(
         Eigen::SelfAdjointEigenSolver<Eigen::Matrix3f> solver(covariance);
         out_eigenvalues.row(i) = solver.eigenvalues().transpose();
         out_normals.row(i) = solver.eigenvectors().col(0).transpose();
+
+            if (progress != nullptr){
+                local_done += 1;
+                if ((local_done & 0x3f) == 0){
+                    progress->done.fetch_add(local_done, std::memory_order_relaxed);
+                    local_done = 0;
+                }
+            }
+        }
+
+        if (progress != nullptr && local_done > 0){
+            progress->done.fetch_add(local_done, std::memory_order_relaxed);
+        }
     }
 }

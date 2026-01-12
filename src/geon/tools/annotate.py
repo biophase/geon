@@ -163,6 +163,10 @@ class AnnotateTool(ModeTool):
 
     def activate(self) -> None:
         return super().activate()
+    
+    def deactivate(self) -> None:
+        self.ctx.controller.scene_tree_request_change.emit()
+        return super().deactivate()
 
     def create_context_widget(self, parent: QWidget) -> QWidget | None:
         w = QWidget(parent)

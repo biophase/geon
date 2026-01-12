@@ -7,6 +7,7 @@ from PyQt6.QtWidgets import (
     QFormLayout,
     QLineEdit,
     QCheckBox,
+    QDoubleSpinBox,
 )
 
 from geon.settings import Preferences
@@ -30,6 +31,13 @@ class PreferencesDialog(QDialog):
         self.telemetry_checkbox.setChecked(self._prefs.enable_telemetry)
         form.addRow("Enable telemetry", self.telemetry_checkbox)
 
+        self.camera_sensitivity_input = QDoubleSpinBox(self)
+        self.camera_sensitivity_input.setDecimals(3)
+        self.camera_sensitivity_input.setRange(0.01, 1000.0)
+        self.camera_sensitivity_input.setSingleStep(0.5)
+        self.camera_sensitivity_input.setValue(float(self._prefs.camera_sensitivity))
+        form.addRow("Camera sensitivity", self.camera_sensitivity_input)
+
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
             parent=self,
@@ -41,3 +49,4 @@ class PreferencesDialog(QDialog):
     def apply(self) -> None:
         self._prefs.user_name = self.user_input.text().strip() or "Unnamed User"
         self._prefs.enable_telemetry = self.telemetry_checkbox.isChecked()
+        self._prefs.camera_sensitivity = float(self.camera_sensitivity_input.value())
