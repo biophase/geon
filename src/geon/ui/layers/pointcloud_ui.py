@@ -20,7 +20,7 @@ from PyQt6.QtWidgets import (QWidget, QMenu, QHBoxLayout, QVBoxLayout, QLabel,
                              QMessageBox, QSpacerItem, QSizePolicy)
 from PyQt6.QtGui import QIcon
 from PyQt6.QtCore import Qt
-from config.theme import UIStyle
+from geon.config.theme import UIStyle
 from geon.util.resources import resource_path
 
 from typing import Type, Optional

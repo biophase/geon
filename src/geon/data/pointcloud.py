@@ -14,7 +14,7 @@ from .definitions import ColorMap
 from .registry import register_data
 
 from geon.util.common import decode_utf8, generate_vibrant_color
-from config import theme
+from geon.config import theme
 
 class FieldType(Enum):
     SCALAR = auto()

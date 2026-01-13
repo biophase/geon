@@ -1,23 +1,15 @@
 # -*- mode: python ; coding: utf-8 -*-
-from pathlib import Path
 from PyInstaller.utils.hooks import collect_all
-import geon
 
-datas = []
+datas = [('resources', 'geon/resources')]
 binaries = []
 hiddenimports = []
-tmp_ret = collect_all("geon")
-datas += tmp_ret[0]
-binaries += tmp_ret[1]
-hiddenimports += tmp_ret[2]
-
-package_root = Path(geon.__file__).resolve().parent
-app_script = package_root / "app.py"
-icon_path = package_root / "resources" / "geon_icon.png"
+tmp_ret = collect_all('geon')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 
 a = Analysis(
-    [str(app_script)],
+    ['src\\geon\\app.py'],
     pathex=[],
     binaries=binaries,
     datas=datas,
@@ -50,5 +42,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=[str(icon_path)] if icon_path.exists() else None,
+    icon=['resources\\geon_icon.png'],
 )

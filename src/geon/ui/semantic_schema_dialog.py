@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional, List, Dict, Tuple
 
-from config.theme import *
+from geon.config.theme import *
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor

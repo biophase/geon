@@ -1,5 +1,5 @@
 from geon.tools.base import Event
-from config.theme import UIStyle
+from geon.config.theme import UIStyle
 from .base import ModeTool, ToolZone
 from .selection import SelectPointsCmd
 from ..rendering.pointcloud import PointCloudLayer

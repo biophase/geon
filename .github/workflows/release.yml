@@ -203,19 +203,23 @@ jobs:
           os_name = os.environ.get("RUNNER_OS", "unknown").lower()
           arch = os.environ.get("RUNNER_ARCH", "unknown").lower()
 
-          candidates = [p for p in dist.iterdir() if p.name.startswith("geon")]
-          if not candidates:
-            raise SystemExit("No PyInstaller output found in dist/")
+          candidates = [
+              dist / "geon.exe",
+              dist / "geon.app",
+              dist / "geon",
+          ]
+          target_path = next((p for p in candidates if p.exists()), None)
+          if not target_path:
+              raise SystemExit("No PyInstaller output found in dist/")
 
           target = dist / f"geon-{version}-{os_name}-{arch}.zip"
           with zipfile.ZipFile(target, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-            for item in candidates:
-              if item.is_dir():
-                for path in item.rglob("*"):
-                  if path.is_file():
-                    zf.write(path, path.relative_to(item.parent))
-              else:
-                zf.write(item, item.name)
+            if target_path.is_dir():
+              for path in target_path.rglob("*"):
+                if path.is_file():
+                  zf.write(path, path.relative_to(target_path.parent))
+            else:
+              zf.write(target_path, target_path.name)
           print(target)
           PY
 

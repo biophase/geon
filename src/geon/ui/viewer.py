@@ -4,7 +4,7 @@ from PyQt6.QtWidgets import (QWidget, QDockWidget, QLabel, QToolButton,QHBoxLayo
                              QFrame
                              )
 
-from config.theme import *
+from geon.config.theme import *
 from .picker import PointPicker
 
 from geon.tools.base import ModeTool, Event, BaseTool

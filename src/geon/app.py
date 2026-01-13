@@ -5,7 +5,7 @@ from geon.settings import Preferences
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import QCoreApplication
 from PyQt6.QtCore import Qt
-from config.theme import *
+from geon.config.theme import *
 
 if sys.platform == 'darwin':
     from PyQt6 import QtCore

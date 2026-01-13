@@ -11,7 +11,7 @@ from geon.data.pointcloud import (PointCloudData, FieldType,
                                   FieldBase
                                   )
 
-from config import theme
+from geon.config import theme
 
 from ..data.definitions import ColorMap
 from ..util.common import blend_colors

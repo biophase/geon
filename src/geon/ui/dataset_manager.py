@@ -2,7 +2,7 @@ from geon.io.dataset import (Dataset, RefModState, DocumentReference,
                              RefLoadedState)
 from geon.data.document import Document
 from geon.rendering.scene import Scene
-from config.common import KNOWN_FILE_EXTENSIONS
+from geon.config.common import KNOWN_FILE_EXTENSIONS
 
 from .imports import FieldEditorDialog
 from .common import ElidedLabel, Dock

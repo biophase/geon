@@ -7,7 +7,7 @@ from PyQt6.QtCore import QSize, Qt
 from PyQt6.QtGui import QAction
 
 from typing import Optional, Literal
-from config.theme import UIStyle
+from geon.config.theme import UIStyle
 
 
 class ContextRibbon(QToolBar):
