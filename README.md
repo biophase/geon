@@ -3,6 +3,21 @@
   <img src="resources/logo/geometric-red.png" alt="geon logo" width="350">
 </p>
 
+<p align="center">
+  <a href="https://github.com/biophase/geon/actions/workflows/ci.yml">
+    <img src="https://github.com/biophase/geon/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI">
+  </a>
+  <a href="https://pypi.org/project/geon/">
+    <img src="https://img.shields.io/pypi/v/geon" alt="PyPI version">
+  </a>
+  <a href="https://pypi.org/project/geon/">
+    <img src="https://img.shields.io/pypi/pyversions/geon" alt="Python versions">
+  </a>
+  <a href="https://pypi.org/project/geon/">
+    <img src="https://img.shields.io/pypi/l/geon" alt="License">
+  </a>
+</p>
+
 
 ## Introduction
 *geon* is a research tool for managing and annotating large point cloud datasets stored in HDF5 file containers. 
