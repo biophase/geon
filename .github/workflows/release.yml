@@ -68,6 +68,7 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
     env:
       QT_QPA_PLATFORM: offscreen
+      GEON_USE_INSTALLED: "1"
     steps:
       - name: Checkout
         uses: actions/checkout@v4

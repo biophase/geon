@@ -15,6 +15,7 @@ jobs:
         python: ["3.10", "3.11", "3.12"]
     env:
       QT_QPA_PLATFORM: offscreen
+      GEON_USE_INSTALLED: "1"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
