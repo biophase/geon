@@ -20,7 +20,6 @@ class MenuBar(QMenuBar):
         super().__init__(parent)
         
         # dataset menu
-        
         self.dataset_menu = QMenu("D&ataset", self)
         act_set = cast(QAction, self.dataset_menu.addAction("Set working directory"))
         act_set.triggered.connect(self.setWorkdirRequested)
@@ -41,25 +40,17 @@ class MenuBar(QMenuBar):
         act_redo.triggered.connect(self.redoRequested)        
         self.addMenu(self.edit_menu)
         
-        # settings menu
-        self.settings_menu = QMenu("&Settings", self)
-        act_prefs = cast(QAction, self.settings_menu.addAction("Edit preferences"))
-        act_prefs.triggered.connect(self.editPreferencesRequested)
-        self.addMenu(self.settings_menu)
-
-        # about menu
-        self.about_menu = QMenu("&About", self)
-        act_about = cast(QAction, self.about_menu.addAction("About geon"))
-        act_about.triggered.connect(self.aboutRequested)
-        self.addMenu(self.about_menu)
-        
-
-
         # document menu
         self.doc_menu = QMenu("&Document",self)
         act_save_doc = cast(QAction, self.doc_menu.addAction("&Save"))
         act_save_doc.setShortcut(QKeySequence.StandardKey.Save)
         act_save_doc.triggered.connect(self.saveDocRequested)
+        
+        # settings menu
+        self.settings_menu = QMenu("&Settings", self)
+        act_prefs = cast(QAction, self.settings_menu.addAction("Edit preferences"))
+        act_prefs.triggered.connect(self.editPreferencesRequested)
+        self.addMenu(self.settings_menu)
         
         # self.doc_menu.addAction("&Load")
         self.doc_menu.addSeparator()  
@@ -70,6 +61,11 @@ class MenuBar(QMenuBar):
         self.doc_menu.addAction("Export document to ...")
         self.addMenu(self.doc_menu)
 
+        # about menu
+        self.about_menu = QMenu("&About", self)
+        act_about = cast(QAction, self.about_menu.addAction("About geon"))
+        act_about.triggered.connect(self.aboutRequested)
+        self.addMenu(self.about_menu)
 
 
 

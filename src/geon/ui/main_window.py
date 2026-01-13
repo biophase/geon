@@ -158,10 +158,10 @@ class MainWindow(QMainWindow):
         # self.tabifyDockWidget(self.scene_widget, self.dataset_widget)
 
 
-        ... # TODO: implement state, scene, undo manager, ui, tools, etc.   
+
         
 
-        # temp test ply field dialog
+
               
         
         
