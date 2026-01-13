@@ -49,11 +49,7 @@ cd geon
 pip install -e .
 ```
 
-Native extensions are built with CMake via scikit-build-core. You will need a C++17 compiler and CMake. Make sure to clone with `--recursive` to pull submodules.
-
-```
-git clone --recursive https://github.com/biophase/geon.git
-```
+Native extensions are built with CMake via scikit-build-core. You will need a C++17 compiler and CMake. 
 
 Building native modules:
 - Linux/MacOS:
