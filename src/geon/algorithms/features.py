@@ -79,5 +79,11 @@ def compute_pcd_features(
         field_name_eigenvals = f'eigenvalues(r={radius:.3f})'
     if compute_eigenvals:
         data.add_field(field_name_eigenvals, eigenvalues, FieldType.VECTOR, vector_dim_hint=3)
+        # temp extra features
+        l = eigenvalues
+        planarity = (l[:,1] - l[:,0])/l[:,2]
+        sphericity = l[:,0] / l[:,2]
+        data.add_field(f"planarity(r={radius:.3f})", planarity[:,None], FieldType.SCALAR)
+        data.add_field(f"sphericity(r={radius:.3f})", sphericity[:,None], FieldType.SCALAR)
 
 
