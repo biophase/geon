@@ -46,3 +46,18 @@ Building native modules:
 ```
 python -m geon.app
 ```
+
+## Tests
+Run the unit tests after building the native extension:
+```
+pip install -e ".[test]"
+pytest
+```
+
+## Release automation
+Releases are built via GitHub Actions on tag pushes (wheels, tests, PyInstaller, PyPI publish, GitHub release).
+To trigger a release:
+```
+git tag vX.Y.Z
+git push --tags
+```

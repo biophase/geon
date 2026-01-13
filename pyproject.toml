@@ -34,6 +34,9 @@ dependencies = [
 dev = [
   "pytest>=7.4",
 ]
+test = [
+  "pytest>=7.4",
+]
 
 [project.scripts]
 geon = "geon.app:main"
@@ -46,3 +49,10 @@ sdist.include = [
   "external/**",
   "src/**",
 ]
+
+[tool.cibuildwheel]
+build = "cp310-* cp311-* cp312-*"
+skip = "pp* *musllinux*"
+test-skip = "*"
+build-verbosity = 1
+before-all = "python -m pip install cmake ninja"
