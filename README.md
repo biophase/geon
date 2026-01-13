@@ -29,17 +29,30 @@ The tool is tested with Python 3.10 to 3.12 and under *Windows*, *Linux (Ubuntu)
 It requires `vtk` and `PyQt6`.
 
 
-To install run:
+To isntall from PyPI run:
+
 ```
 pip install geon
 ```
 
+Then run the GUI with
+
+```
+python -m geon.app
+```
+
 ## Development build
+For development clone and install with
+```
+git clone --recursive https://github.com/biophase/geon.git
+cd geon
+pip install -e .
+```
+
 Native extensions are built with CMake via scikit-build-core. You will need a C++17 compiler and CMake. Make sure to clone with `--recursive` to pull submodules.
 
 ```
 git clone --recursive https://github.com/biophase/geon.git
-pip install -e .
 ```
 
 Building native modules:
@@ -57,8 +70,5 @@ Building native modules:
   ```
 - OpenMP is used for some kernels when available.
 
-## Running Geon
-```
-python -m geon.app
-```
+
 
