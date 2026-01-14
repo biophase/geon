@@ -3,9 +3,11 @@ from PyQt6.QtGui import QPalette, QColor
 
 from enum import Enum
 
-DEFAULT_OBJ_COLOR: tuple[float,float,float] = (0.6,0.6,0.6)
-DEFAULT_SEGMENTATION_COLOR: tuple[int,int,int] = (204, 204, 204)
-DEFAULT_RENDERER_BACKGROUND: tuple[float,float,float] = (.1,.1,.1)
+from typing import Tuple
+
+DEFAULT_OBJ_COLOR: Tuple[float,float,float] = (0.6,0.6,0.6)
+DEFAULT_SEGMENTATION_COLOR: Tuple[int,int,int] = (204, 204, 204)
+DEFAULT_RENDERER_BACKGROUND: Tuple[float,float,float] = (.1,.1,.1)
 
 
 class UIStyle(Enum):
