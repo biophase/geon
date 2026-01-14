@@ -11,7 +11,7 @@ import os
 import numpy as np
 
 
-from typing import Optional
+from typing import Optional, List, Dict
 
 
 
@@ -19,9 +19,9 @@ from typing import Optional
 class Document:
     def __init__(self, name:str = 'Untitled'):
         self.name = name
-        self.scene_items: dict[str, BaseData] = {}
-        self.telemetry: list[str] = []
-        self.meta: dict[str, Any] = {
+        self.scene_items: Dict[str, BaseData] = {}
+        self.telemetry: List[str] = []
+        self.meta: Dict[str, Any] = {
             'name':name
             }
         
@@ -95,14 +95,14 @@ class Document:
                     f"Unsupported GEON format version {version}, expected {GEON_FORMAT_VERSION}"
                 )
             
-            loaded_meta: dict[str, Any] = {}
+            loaded_meta: Dict[str, Any] = {}
             for key, value in group.attrs.items():
                 if key in {"geon_format_version", "type"}:
                     continue
                 loaded_meta[key] = _decode(value)
 
             telemetry_ds = group.get("telemetry")
-            telemetry_entries: list[str] = []
+            telemetry_entries: List[str] = []
             if isinstance(telemetry_ds, h5py.Dataset):
                 raw = telemetry_ds[()]
                 flat = raw.ravel() if hasattr(raw, "ravel") else raw
@@ -112,7 +112,7 @@ class Document:
                     else:
                         telemetry_entries.append(str(entry))
             
-            loaded_items: dict[str, BaseData] = {}
+            loaded_items: Dict[str, BaseData] = {}
             for child_name in group.keys():
                 if child_name == "telemetry":
                     continue

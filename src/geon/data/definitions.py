@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Literal, Optional
+from typing import Dict, Literal, Optional, Tuple
 
 import numpy as np
 from numpy.typing import NDArray
@@ -47,7 +47,7 @@ class ColorMap:
             )
     
     @classmethod
-    def get_cmap(cls, cmap_type: Optional[str], min_max: tuple[float, float]) -> "ColorMap":
+    def get_cmap(cls, cmap_type: Optional[str], min_max: Tuple[float, float]) -> "ColorMap":
 
         
         cmap_type = cmap_type or 'rainbow'
@@ -71,7 +71,7 @@ class ColorMap:
 
 
         
-PARAM_MAP: dict[str, ColorMap] = {
+PARAM_MAP: Dict[str, ColorMap] = {
 
             # =========================
             # Basic maps

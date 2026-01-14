@@ -64,8 +64,8 @@ class PointCloudData(BaseData):
     def __init__(self, points: np.ndarray):
         super().__init__()
         self.points = points
-        self._fields : list[FieldBase] = []
-        self._field_added_callbacks: list[Callable[[FieldBase], None]] = []
+        self._fields: List["FieldBase"] = []
+        self._field_added_callbacks: List[Callable[["FieldBase"], None]] = []
 
     def save_hdf5(self, group: h5py.Group) -> h5py.Group:
         group.attrs["type_id"] = self.get_type_id()
@@ -113,19 +113,19 @@ class PointCloudData(BaseData):
         return obj
     
     @property
-    def field_names(self)->list[str]:
+    def field_names(self) -> List[str]:
         return [f.name for f in self._fields]
     
     @property
     def field_num(self) -> int:
         return len(self.field_names)
     def add_field(self, 
-                  name:Optional[str]=None, 
-                  data:Optional[np.ndarray]=None, 
-                  field_type:Optional[FieldType]=None,
+                  name: Optional[str] = None, 
+                  data: Optional[np.ndarray] = None, 
+                  field_type: Optional[FieldType] = None,
                   vector_dim_hint: int = 1,
-                  default_fill_value:float = 0.,
-                  dtype_hint = np.float32,
+                  default_fill_value: float = 0.,
+                  dtype_hint=np.float32,
                   schema: Optional["SemanticSchema"] = None
                   ) -> None:
         
@@ -142,7 +142,7 @@ class PointCloudData(BaseData):
 
         if name is None:
             field_prefix = 'Field_'
-            taken_ids: list[int] = []
+            taken_ids: List[int] = []
             for n in self.field_names:
                 if n.startswith(field_prefix):
                     suffix = n[len(field_prefix):]
@@ -185,15 +185,16 @@ class PointCloudData(BaseData):
 
         self._fields.append(field)
 
-    def remove_fields(self,
-                     names: Optional[str | list[str]] = None,
-                     field_type: Optional[FieldType] = None,
-                     ):
+    def remove_fields(
+        self,
+        names: Optional[Union[str, List[str]]] = None,
+        field_type: Optional[FieldType] = None,
+    ) -> None:
 
         if names is None and field_type is None:
             raise ValueError("Either a name or field type should be supplied to the query")
 
-        name_set: Optional[set[str]] = None
+        name_set: Optional[set] = None
         if names is not None:
             if isinstance(names, (list, tuple, set)):
                 name_set = set(names)
@@ -210,10 +211,10 @@ class PointCloudData(BaseData):
         self._fields = [field for field in self._fields if not should_remove(field)]
         
     def get_fields(self,
-            names: Optional[str | list[str]] = None,
+            names: Optional[Union[str, List[str]]] = None,
             field_type: Optional[FieldType] = None,
             field_index: Optional[int] = None
-            )->list["FieldBase"]:
+            ) -> List["FieldBase"]:
         if names is not None:
             names = names if isinstance(names, (list, tuple)) else [names]
             if field_type is not None:
@@ -254,8 +255,8 @@ class PointCloudData(BaseData):
     def to_structured_array(self) -> np.ndarray:
         num_points = self.points.shape[0]
         coord_names = ('x', 'y', 'z')
-        dtype_fields: list[tuple] = []
-        assignments: list[tuple[str, np.ndarray]] = []
+        dtype_fields: List[Tuple] = []
+        assignments: List[Tuple[str, np.ndarray]] = []
 
         for idx in range(self.points.shape[1]):
             field_name = coord_names[idx] if idx < len(coord_names) else f"coord_{idx}"
@@ -309,7 +310,9 @@ class FieldBase:
         return field_group
     
     @staticmethod
-    def _read_hdf5_fieldgroup(field_group: h5py.Group) -> tuple[str, np.ndarray, FieldType, Optional[ColorMap]]:
+    def _read_hdf5_fieldgroup(
+        field_group: h5py.Group,
+    ) -> Tuple[str, np.ndarray, FieldType, Optional[ColorMap]]:
         """
         returns (name, data, field_type, color_map)
         """
@@ -365,15 +368,20 @@ class SemanticClass:
 
 class SemanticSchema:
     
-    def __init__(self, 
-                 name:str = 'untitled_schema',
-                 semantic_classes : List[SemanticClass] = [
-                     SemanticClass(
-                         -1, 
-                         '_unlabeled', 
-                         theme.DEFAULT_SEGMENTATION_COLOR)
-                     ]):
+    def __init__(
+        self,
+        name: str = "untitled_schema",
+        semantic_classes: Optional[List[SemanticClass]] = None,
+    ):
         self.name = name
+        if semantic_classes is None:
+            semantic_classes = [
+                SemanticClass(
+                    -1,
+                    "_unlabeled",
+                    theme.DEFAULT_SEGMENTATION_COLOR,
+                )
+            ]
         self.semantic_classes = semantic_classes
 
     def to_dict(self) -> Dict[str, dict]:
@@ -428,7 +436,7 @@ class SemanticSchema:
         return schema
         
 
-    def signature(self) -> tuple:
+    def signature(self) -> Tuple:
         classes = sorted(self.semantic_classes, key =lambda c: c.id)
         return tuple((c.id, c.name, tuple(c.color)) for c in classes)
         
@@ -701,8 +709,8 @@ class SemanticSegmentation(FieldBase):
     
     def remap(
         self,
-        old_2_new_ids: list[tuple[int,int]],
-        ):
+        old_2_new_ids: List[Tuple[int, int]],
+    ) -> None:
         """
         Remap the field data.
         :param old_to_new: pairs of indices [(old id, new id), ...]

@@ -1,9 +1,9 @@
-from typing import Type, TypeVar
+from typing import Type, TypeVar, Dict
 from .base import BaseData
 
 class DataRegistry:
     def __init__(self):
-        self._by_type_id: dict[str, Type[BaseData]] = {}
+        self._by_type_id: Dict[str, Type[BaseData]] = {}
         
     def register(self, cls:Type[BaseData]):
         if cls.get_type_id() in self._by_type_id:

@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod 
-from typing import Optional, ClassVar, Type, TypeVar
+from typing import Optional, ClassVar, Type, Dict
 import h5py
 
 
@@ -10,7 +10,7 @@ class BaseData(ABC):
     type_id: Optional[str] = None
     
     # global counter
-    _id_counters: ClassVar[dict[Type["BaseData"], int]] = {}
+    _id_counters: ClassVar[Dict[Type["BaseData"], int]] = {}
     
     @abstractmethod
     def save_hdf5(self, group: h5py.Group) -> h5py.Group:
