@@ -68,12 +68,15 @@ def compute_pcd_features(
         voxel_hash,
         progress,
     )
+    # Avoid NaNs/inf from native computation or downstream ratios.
+    eigenvalues = np.nan_to_num(eigenvalues, nan=0.0, posinf=0.0, neginf=0.0)
+    normals = np.nan_to_num(normals, nan=0.0, posinf=0.0, neginf=0.0)
     if progress is not None and progress.cancelled():
         return
     if field_name_normals is None:
         field_name_normals = f'normals(r={radius:.3f})'
     if compute_normals:
-        data.add_field(field_name_normals, normals, FieldType.NORMAL)
+        data.add_field(field_name_normals, np.abs(normals), FieldType.NORMAL)
     
     if field_name_eigenvals is None:
         field_name_eigenvals = f'eigenvalues(r={radius:.3f})'
@@ -81,8 +84,11 @@ def compute_pcd_features(
         data.add_field(field_name_eigenvals, eigenvalues, FieldType.VECTOR, vector_dim_hint=3)
         # temp extra features
         l = eigenvalues
-        planarity = (l[:,1] - l[:,0])/l[:,2]
-        sphericity = l[:,0] / l[:,2]
+        with np.errstate(divide="ignore", invalid="ignore"):
+            planarity = (l[:,1] - l[:,0]) / l[:,2]
+            sphericity = l[:,0] / l[:,2]
+        planarity = np.nan_to_num(planarity, nan=0.0, posinf=0.0, neginf=0.0)
+        sphericity = np.nan_to_num(sphericity, nan=0.0, posinf=0.0, neginf=0.0)
         data.add_field(f"planarity(r={radius:.3f})", planarity[:,None], FieldType.SCALAR)
         data.add_field(f"sphericity(r={radius:.3f})", sphericity[:,None], FieldType.SCALAR)
 
