@@ -18,9 +18,10 @@ def resource_path(relative: str) -> str:
             return str(candidate.resolve())
     try:
         base = resources.files("geon") / "resources"
-        candidate = (base / relative)
-        if candidate.exists():
-            return str(candidate.resolve())
+        traversable = base / relative
+        with resources.as_file(traversable) as candidate:
+            if candidate.exists():
+                return str(candidate.resolve())
     except Exception:
         pass
     package_root = Path(__file__).resolve().parents[1]

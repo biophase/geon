@@ -275,6 +275,14 @@ class PointCloudLayer(BaseLayer[PointCloudData]):
         if self._poly is None or self._mapper_fine is None:
             return
 
+        # Active field can become invalid after edits (e.g., deleted fields).
+        # Keep it in sync so downstream access is safe.
+        if self._active_field_name is not None:
+            if self._active_field_name not in self.data.field_names:
+                self._active_field_name = None
+        if self._active_field_name is None and self.data.field_num:
+            self._active_field_name = self.data.field_names[0]
+
         # get displayed field
         if self._active_field_name is not None:
             field = self.data.get_fields(self._active_field_name)[0]
