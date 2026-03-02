@@ -292,6 +292,7 @@ class MainWindow(QMainWindow):
                         field_name_eigenvals=dlg.eigenvals_field_name(),
                         compute_normals=dlg.compute_normals(),
                         compute_eigenvals=dlg.compute_eigenvals(),
+                        optional_feature_field_names=dlg.optional_feature_field_names(),
                         progress=progress,
                     )
                 except Exception as exc:  # pragma: no cover - GUI path
