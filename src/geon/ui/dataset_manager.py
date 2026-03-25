@@ -10,6 +10,7 @@ from ..data.pointcloud import SemanticSchema
 
 from typing import Optional, cast, Union, Callable
 import os.path as osp
+import errno
 
 from PyQt6.QtWidgets import (QLabel, QPushButton, QHBoxLayout, QTreeWidget, QDockWidget, QWidget, 
                              QStackedWidget, QTreeWidgetItem, QFileDialog, QVBoxLayout, QSizePolicy,
@@ -149,7 +150,21 @@ class DatasetManager(Dock):
                     scene.doc.save_hdf5(ref.path)
                 except Exception as e:
                     print(f"[save_scene_doc] save failed for {ref.path}: {e}")
-                    raise
+                    if self._is_disk_full_error(e):
+                        QMessageBox.critical(
+                            self,
+                            "Save aborted",
+                            "Disk full. Save aborted.",
+                        )
+                        self.populate_tree()
+                        return
+                    QMessageBox.critical(
+                        self,
+                        "Save failed",
+                        f"Failed to save '{ref.name}'.\n{e}",
+                    )
+                    self.populate_tree()
+                    return
                 ref.modState = RefModState.SAVED
                 print(f"[save_scene_doc] save completed for {ref.name}")
             elif ref.name == scene.doc.name:
@@ -159,6 +174,18 @@ class DatasetManager(Dock):
                     f" ignore_state={ignore_state}"
                 )
         self.populate_tree()
+
+    @staticmethod
+    def _is_disk_full_error(exc: BaseException) -> bool:
+        current: Optional[BaseException] = exc
+        while current is not None:
+            if isinstance(current, OSError) and current.errno == errno.ENOSPC:
+                return True
+            message = str(current).lower()
+            if "no space left on device" in message or "disk full" in message:
+                return True
+            current = current.__cause__ or current.__context__
+        return False
                 
 
     def check_dataset_name_duplicates(self):
