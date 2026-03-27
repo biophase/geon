@@ -44,6 +44,54 @@ void computeNormals(
     }
 }
 
+void computeNormalsSparse(
+    const std::vector<Point>& coords,
+    std::unordered_map<size_t, Point>& normals,
+    const std::unordered_set<size_t>& task_inds,
+    KDTreeType& kdtree,
+    float search_radius
+){
+    normals.clear();
+    normals.reserve(task_inds.size());
+    for (const size_t& i : task_inds){
+        IndicesDistType indices_dist;
+        RadiusSetType result_set(search_radius, indices_dist);
+        kdtree.findNeighbors(
+            result_set,
+            coords.at(i).data(),
+            nanoflann::SearchParameters(.0f, false)
+        );
+
+        if (indices_dist.size() < 3){
+            normals[i] = Point{0.0f, 0.0f, 1.0f};
+            continue;
+        }
+
+        Eigen::Matrix<float, Eigen::Dynamic, 3> neighbors(indices_dist.size(), 3);
+        for (size_t k = 0; k < indices_dist.size(); ++k){
+            neighbors.row(k) = coords[indices_dist[k].first] - coords[i];
+        }
+
+        Eigen::Matrix3f covariance = neighbors.transpose() * neighbors;
+        Eigen::SelfAdjointEigenSolver<Eigen::Matrix3f> solver(covariance);
+        normals[i] = solver.eigenvectors().col(0);
+    }
+}
+
+static inline const Point& normalAt(
+    const PointCloud& pcd,
+    const std::unordered_map<size_t, Point>* normal_override,
+    size_t idx
+){
+    if (normal_override != nullptr){
+        const auto it = normal_override->find(idx);
+        if (it != normal_override->end()){
+            return it->second;
+        }
+    }
+    return pcd.normals[idx];
+}
+
 template <typename T>
 T randomPop(std::unordered_set<T>& input){
     if (input.empty()){
@@ -424,7 +472,8 @@ regionGrowing_returnType regionGrowing(
     KDTreeType& kdtree,
     const std::unordered_set<size_t>* task_indices,
     RegionGrowingParams params,
-    const std::function<void(const RegionGrowingRuntime&)>& progress_cb
+    const std::function<void(const RegionGrowingRuntime&)>& progress_cb,
+    const std::unordered_map<size_t, Point>* normal_override
 ){
     auto& p = params;
     const float cos_alpha = std::cos(p.alpha);
@@ -506,7 +555,7 @@ regionGrowing_returnType regionGrowing(
 
         reg.indices.insert(seed_idx);
         reg.centroid = pcd.coords[seed_idx];
-        reg.normal = pcd.normals[seed_idx];
+        reg.normal = normalAt(pcd, normal_override, seed_idx);
         front_inds.insert(seed_idx);
 
         while (!front_inds.empty()){
@@ -530,7 +579,7 @@ regionGrowing_returnType regionGrowing(
                 if (unassigned_inds.find(i) == unassigned_inds.end()){
                     continue;
                 }
-                const float reg_normal_dot_fnormal = pcd.normals[i].dot(reg.normal);
+                const float reg_normal_dot_fnormal = normalAt(pcd, normal_override, i).dot(reg.normal);
                 const Point coord_local = pcd.coords[i] - reg.centroid;
                 const float dist_to_plane = std::abs(coord_local.dot(reg.normal));
                 const float coord_norm = coord_local.norm();
@@ -558,7 +607,7 @@ regionGrowing_returnType regionGrowing(
                 refitPlane(reg, pcd);
 
                 for (auto it = reg.indices.begin(); it != reg.indices.end();){
-                    const float reg_normal_dot_pnormal = pcd.normals[*it].dot(reg.normal);
+                    const float reg_normal_dot_pnormal = normalAt(pcd, normal_override, *it).dot(reg.normal);
                     const Point coord_local = pcd.coords[*it] - reg.centroid;
                     const float dist_to_plane = std::abs(coord_local.dot(reg.normal));
                     const float coord_norm = coord_local.norm();

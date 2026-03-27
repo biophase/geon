@@ -388,7 +388,7 @@ ChunkingConfig parse_chunking_config(const py::dict& d){
     cfg.chunk_x = std::max<size_t>(1, cfg.chunk_x);
     cfg.chunk_y = std::max<size_t>(1, cfg.chunk_y);
     cfg.chunk_z = std::max<size_t>(1, cfg.chunk_z);
-    cfg.overlap_factor = std::max(0.0f, cfg.overlap_factor);
+    cfg.overlap_factor = std::max(2.5f, cfg.overlap_factor);
     return cfg;
 }
 
@@ -552,33 +552,26 @@ void refit_region(Region& reg, const PointCloud& pcd){
     reg.centroid = centroid;
 }
 
-void assign_small_components_then_points(
+void cleanup_unassigned_components_and_points(
     PointCloud& pcd,
     KDTreeType& kdtree,
-    std::vector<int32_t>& labels,
+    std::unordered_map<size_t, size_t>& point_to_region,
+    std::unordered_set<size_t>& unassigned,
     std::vector<Region>& regions,
-    const RegionGrowingParams& params
+    const RegionGrowingParams& params,
+    std::vector<int32_t>* labels,
+    bool assign_fallback_components
 ){
-    std::unordered_map<size_t, size_t> point_to_region;
-    std::unordered_set<size_t> unassigned;
-    for (size_t i = 0; i < labels.size(); ++i){
-        if (labels[i] >= 0){
-            point_to_region[i] = static_cast<size_t>(labels[i]);
-        } else {
-            unassigned.insert(i);
-        }
-    }
-
     if (unassigned.empty() || regions.empty()){
-        if (unassigned.empty()){
+        if (unassigned.empty() || !assign_fallback_components || labels == nullptr){
             return;
         }
-        // No planar regions available: assign fallback instance ids by CCs.
+
         auto comps_only = unionFindCCA(pcd, unassigned, params.epsilon);
         int32_t next_instance = 0;
         for (const auto& comp : comps_only){
             for (const auto idx : comp){
-                labels[idx] = next_instance;
+                (*labels)[idx] = next_instance;
             }
             ++next_instance;
         }
@@ -629,7 +622,9 @@ void assign_small_components_then_points(
                 }
             }
             if (found && best_dist <= params.epsilon_multiplier * params.epsilon){
-                labels[idx] = static_cast<int32_t>(best_region);
+                if (labels != nullptr){
+                    (*labels)[idx] = static_cast<int32_t>(best_region);
+                }
                 point_to_region[idx] = best_region;
                 regions[best_region].indices.insert(idx);
                 unassigned.erase(idx);
@@ -677,7 +672,9 @@ void assign_small_components_then_points(
         }
 
         if (found && min_dist_to_plane <= params.epsilon_multiplier * params.epsilon){
-            labels[*it] = static_cast<int32_t>(best_region);
+            if (labels != nullptr){
+                (*labels)[*it] = static_cast<int32_t>(best_region);
+            }
             point_to_region[*it] = best_region;
             regions[best_region].indices.insert(*it);
             it = unassigned.erase(it);
@@ -688,10 +685,10 @@ void assign_small_components_then_points(
 
     // Fallback: convert still-unassigned connected components into their own
     // instance labels so no point remains at -1.
-    if (!unassigned.empty()){
+    if (assign_fallback_components && labels != nullptr && !unassigned.empty()){
         auto leftover_components = unionFindCCA(pcd, unassigned, params.epsilon);
         int32_t next_instance = 0;
-        for (const auto v : labels){
+        for (const auto v : *labels){
             if (v >= next_instance){
                 next_instance = v + 1;
             }
@@ -701,11 +698,57 @@ void assign_small_components_then_points(
                 continue;
             }
             for (const auto idx : comp){
-                labels[idx] = next_instance;
+                (*labels)[idx] = next_instance;
             }
             ++next_instance;
         }
     }
+}
+
+void assign_small_components_then_points(
+    PointCloud& pcd,
+    KDTreeType& kdtree,
+    std::vector<int32_t>& labels,
+    std::vector<Region>& regions,
+    const RegionGrowingParams& params
+){
+    std::unordered_map<size_t, size_t> point_to_region;
+    std::unordered_set<size_t> unassigned;
+    for (size_t i = 0; i < labels.size(); ++i){
+        if (labels[i] >= 0){
+            point_to_region[i] = static_cast<size_t>(labels[i]);
+        } else {
+            unassigned.insert(i);
+        }
+    }
+    cleanup_unassigned_components_and_points(
+        pcd,
+        kdtree,
+        point_to_region,
+        unassigned,
+        regions,
+        params,
+        &labels,
+        true
+    );
+}
+
+void assign_local_leftovers(
+    PointCloud& pcd,
+    KDTreeType& kdtree,
+    regionGrowing_returnType& result,
+    const RegionGrowingParams& params
+){
+    cleanup_unassigned_components_and_points(
+        pcd,
+        kdtree,
+        result.pcd_to_reg_idxmap,
+        result.unassigned,
+        result.regions,
+        params,
+        nullptr,
+        false
+    );
 }
 
 py::tuple estimate_parameters_impl(
@@ -855,7 +898,11 @@ py::tuple segment_planar_regions_impl(
     RegionGrowingParams rg_params = parse_region_params(params_dict);
     ChunkingConfig chunking_cfg = parse_chunking_config(chunking_dict);
     MergeConfig merge_cfg = parse_merge_config(merge_dict);
-    const bool refine_unassigned = dict_get<bool>(params_dict, "refine_unassigned", true);
+    const bool local_reassign_enabled =
+        dict_get<bool>(params_dict, "local_reassign_enabled", true);
+    const bool global_reassign_enabled = params_dict.contains("global_reassign_enabled")
+        ? dict_get<bool>(params_dict, "global_reassign_enabled", true)
+        : dict_get<bool>(params_dict, "refine_unassigned", true);
 
     KDTreeType kdtree(3, pcd, nanoflann::KDTreeSingleIndexAdaptorParams(10));
     kdtree.buildIndex();
@@ -889,14 +936,7 @@ py::tuple segment_planar_regions_impl(
     py::gil_scoped_release release;
 
     if (mode_compute){
-        std::cout << "[region_growing] Stage 1/6: computing normals..." << std::endl;
-        pcd.normals.assign(n_points, Point{0.0f, 0.0f, 1.0f});
-        std::unordered_set<size_t> all_indices;
-        all_indices.reserve(n_points);
-        for (size_t i = 0; i < n_points; ++i){
-            all_indices.insert(i);
-        }
-        computeNormals(pcd.coords, pcd.normals, all_indices, kdtree, rg_params.epsilon);
+        std::cout << "[region_growing] Stage 1/6: normals will be computed inside chunk workers..." << std::endl;
     }
 
     chunks = build_chunks(pcd, chunking_cfg, rg_params.epsilon);
@@ -930,6 +970,18 @@ py::tuple segment_planar_regions_impl(
     for (size_t chunk_i = 0; chunk_i < chunks.size(); ++chunk_i){
         threads.emplace_back([&, chunk_i]{
             try {
+                std::unordered_map<size_t, Point> local_normals;
+                const std::unordered_map<size_t, Point>* normal_override = nullptr;
+                if (mode_compute){
+                    computeNormalsSparse(
+                        pcd.coords,
+                        local_normals,
+                        chunks[chunk_i].task_indices,
+                        kdtree,
+                        rg_params.epsilon
+                    );
+                    normal_override = &local_normals;
+                }
                 chunk_results[chunk_i] = regionGrowing(
                     pcd,
                     kdtree,
@@ -952,8 +1004,17 @@ py::tuple segment_planar_regions_impl(
                             static_cast<double>(rt.rolling_fail_threshold),
                             rt.done
                         );
-                    }
+                    },
+                    normal_override
                 );
+                if (local_reassign_enabled){
+                    assign_local_leftovers(
+                        pcd,
+                        kdtree,
+                        chunk_results[chunk_i],
+                        rg_params
+                    );
+                }
                 const size_t finished = chunks_done.fetch_add(1, std::memory_order_relaxed) + 1;
                 const size_t every = std::max<size_t>(1, chunks.size() / 10);
                 if (finished == 1 || finished == chunks.size() || (finished % every) == 0){
@@ -1118,10 +1179,10 @@ py::tuple segment_planar_regions_impl(
     }
 
     std::cout
-        << "[region_growing] Stage 5/6: leftover reassignment "
-        << (refine_unassigned ? "enabled" : "disabled")
+        << "[region_growing] Stage 5/6: global leftover reassignment "
+        << (global_reassign_enabled ? "enabled" : "disabled")
         << std::endl;
-    if (refine_unassigned){
+    if (global_reassign_enabled){
         assign_small_components_then_points(pcd, kdtree, labels, merged_regions, rg_params);
     }
 

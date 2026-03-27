@@ -49,16 +49,51 @@ target_include_directories(
     "${GEON_NANOFLANN_DIR}"
 )
 
+pybind11_add_module(
+  superpoints
+  MODULE
+  native/region_growing/superpoints_python_wrapper.cpp
+  native/region_growing/superpoints.cpp
+  native/region_growing/cp_d0_dist.cpp
+  native/region_growing/cut_pursuit.cpp
+  native/region_growing/cut_pursuit_d0.cpp
+  native/region_growing/maxflow.cpp
+)
+target_include_directories(
+  superpoints
+  PRIVATE
+    "${GEON_EIGEN_DIR}"
+    "${GEON_NANOFLANN_DIR}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/native/region_growing"
+)
+target_compile_definitions(superpoints PRIVATE COMP_T_ON_32_BITS)
+
+pybind11_add_module(
+  region_merge
+  MODULE
+  native/region_growing/region_merge_python_wrapper.cpp
+  native/region_growing/region_merge.cpp
+)
+target_include_directories(
+  region_merge
+  PRIVATE
+    "${GEON_EIGEN_DIR}"
+    "${GEON_NANOFLANN_DIR}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/native/region_growing"
+)
+
 find_package(OpenMP)
 if(OpenMP_CXX_FOUND)
   target_link_libraries(features PRIVATE OpenMP::OpenMP_CXX)
   target_link_libraries(plane_ransac PRIVATE OpenMP::OpenMP_CXX)
+  target_link_libraries(superpoints PRIVATE OpenMP::OpenMP_CXX)
+  target_link_libraries(region_merge PRIVATE OpenMP::OpenMP_CXX)
 endif()
 
 set(GEON_NATIVE_INSTALL_DIR "geon/_native")
 
 install(
-  TARGETS features region_growing plane_ransac
+  TARGETS features region_growing plane_ransac superpoints region_merge
   LIBRARY DESTINATION ${GEON_NATIVE_INSTALL_DIR}
   RUNTIME DESTINATION ${GEON_NATIVE_INSTALL_DIR}
   ARCHIVE DESTINATION ${GEON_NATIVE_INSTALL_DIR}

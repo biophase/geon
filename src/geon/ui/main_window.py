@@ -9,6 +9,8 @@ from .preferences_dialog import PreferencesDialog
 from .features_dialog import FeaturesDialog
 from .region_growing_dialog import RegionGrowingDialog
 from .plane_ransac_dialog import PlaneRansacDialog
+from .superpoint_segmentation_dialog import SuperpointSegmentationDialog
+from .region_merge_dialog import RegionMergeDialog
 
 
 from ..io.ply import ply_to_pcd
@@ -18,6 +20,8 @@ from ..algorithms.region_growing import (
     segment_planar_regions,
 )
 from ..algorithms.plane_ransac import segment_planes as segment_ransac_planes
+from ..algorithms.superpoints import segment_superpoints
+from ..algorithms.region_merge import merge_planar_regions
 from ..tools.controller import ToolController
 from ..ui.layers import LAYER_UI
 from ..rendering.pointcloud import PointCloudLayer
@@ -51,6 +55,8 @@ from typing import cast
 from geon._native import features as _native_features
 from geon._native import region_growing as _native_region_growing
 from geon._native import plane_ransac as _native_plane_ransac
+from geon._native import superpoints as _native_superpoints
+from geon._native import region_merge as _native_region_merge
 import numpy as np
 import time
 
@@ -109,6 +115,10 @@ class MainWindow(QMainWindow):
         act_planar_region_growing.triggered.connect(self._on_planar_region_growing)
         act_plane_ransac = cast(QAction, seg_menu.addAction("Plane RANSAC"))
         act_plane_ransac.triggered.connect(self._on_plane_ransac)
+        act_superpoints = cast(QAction, seg_menu.addAction("Superpoint segmentation"))
+        act_superpoints.triggered.connect(self._on_superpoint_segmentation)
+        act_region_merge = cast(QAction, seg_menu.addAction("Merge planar regions"))
+        act_region_merge.triggered.connect(self._on_region_merge)
         self.setMenuBar(self.menu_bar)
 
         ###########
@@ -305,7 +315,12 @@ class MainWindow(QMainWindow):
         if scene is None:
             return
         active_layer = self._get_active_pointcloud_layer()
-        dlg = RegionGrowingDialog(scene, active_layer, parent=self)
+        dlg = RegionGrowingDialog(
+            scene,
+            active_layer,
+            settings=self.preferences.get_region_growing_settings(),
+            parent=self,
+        )
 
         def _run_estimate() -> None:
             layer = dlg.selected_layer()
@@ -373,6 +388,8 @@ class MainWindow(QMainWindow):
         normal_mode = dlg.normal_mode()
         if normal_mode is None:
             return
+        self.preferences.set_region_growing_settings(dlg.settings())
+        self.preferences.save()
 
         normals: np.ndarray | None = None
         if normal_mode == "use_provided":
@@ -615,13 +632,20 @@ class MainWindow(QMainWindow):
         if scene is None:
             return
         active_layer = self._get_active_pointcloud_layer()
-        dlg = PlaneRansacDialog(scene, active_layer, parent=self)
+        dlg = PlaneRansacDialog(
+            scene,
+            active_layer,
+            settings=self.preferences.get_plane_ransac_settings(),
+            parent=self,
+        )
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
 
         layer = dlg.selected_layer()
         if layer is None:
             return
+        self.preferences.set_plane_ransac_settings(dlg.settings())
+        self.preferences.save()
         layer_id = layer.id
         normal_mode = dlg.normal_mode()
         if normal_mode is None:
@@ -756,6 +780,315 @@ class MainWindow(QMainWindow):
         self.scene_manager.broadcastActivatedPcdField.emit(target_layer)
         print(
             f"[plane_ransac] Added field '{output_field_name}' "
+            f"(type=INSTANCE, points={target_layer.data.points.shape[0]}) on layer '{target_layer.browser_name}'"
+        )
+        dataset = self.dataset_manager._dataset
+        if dataset is not None and scene_after is not None:
+            for ref in dataset.doc_refs:
+                if ref.name == scene_after.doc.name:
+                    ref.modState = RefModState.MODIFIED
+                    break
+        self.scene_manager.populate_tree()
+        self.viewer.rerender()
+
+    def _on_superpoint_segmentation(self) -> None:
+        scene = self.scene_manager._scene
+        if scene is None:
+            return
+        active_layer = self._get_active_pointcloud_layer()
+        dlg = SuperpointSegmentationDialog(
+            scene,
+            active_layer,
+            settings=self.preferences.get_superpoints_settings(),
+            parent=self,
+        )
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        layer = dlg.selected_layer()
+        if layer is None:
+            return
+        self.preferences.set_superpoints_settings(dlg.settings())
+        self.preferences.save()
+        layer_id = layer.id
+        output_field_name = self._unique_field_name(
+            layer.data.field_names,
+            dlg.output_field_base() or "superpoints",
+        )
+        feature_field_names = dlg.selected_feature_field_names()
+        progress = _native_superpoints.Progress()
+
+        class _SuperpointsWorker(QThread):
+            errored = pyqtSignal(str)
+            completed = pyqtSignal()
+
+            def run(self) -> None:
+                try:
+                    labels, _stats = segment_superpoints(
+                        layer.data,
+                        feature_field_names=feature_field_names,
+                        progress=progress,
+                        **dlg.params(),
+                    )
+                    labels = np.asarray(labels, dtype=np.int32).reshape(-1)
+                    if labels.shape[0] != layer.data.points.shape[0]:
+                        raise RuntimeError("Native output label length does not match point count.")
+                    layer.data.add_field(
+                        name=output_field_name,
+                        data=labels[:, None],
+                        field_type=FieldType.INSTANCE,
+                    )
+                    self.completed.emit()
+                except Exception as exc:  # pragma: no cover - GUI path
+                    self.errored.emit(str(exc))
+
+        progress_dialog = QProgressDialog("Preparing superpoint segmentation...", "Cancel", 0, 0, self)
+        progress_dialog.setWindowTitle("Superpoint segmentation")
+        progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        progress_dialog.setMinimumDuration(0)
+
+        def _on_cancel() -> None:
+            progress.request_cancel()
+            progress_dialog.setLabelText("Cancelling...")
+
+        progress_dialog.canceled.connect(_on_cancel)
+
+        timer = QTimer(self)
+        timer.setInterval(100)
+        t_start = time.perf_counter()
+
+        def _on_tick() -> None:
+            try:
+                total = progress.total()
+                done = progress.done()
+                elapsed = time.perf_counter() - t_start
+                if total > 0:
+                    progress_dialog.setMaximum(int(total))
+                    progress_dialog.setValue(min(int(done), int(total)))
+                else:
+                    progress_dialog.setMaximum(0)
+                progress_dialog.setLabelText(
+                    f"{progress.stage()} | {elapsed:.1f}s"
+                )
+            except Exception as exc:  # pragma: no cover - GUI path
+                print(f"[superpoints/ui] progress polling failed: {exc}")
+
+        timer.timeout.connect(_on_tick)
+
+        loop = QEventLoop(self)
+        error_msg: dict[str, str | None] = {"value": None}
+
+        def _on_finished() -> None:
+            timer.stop()
+            progress_dialog.close()
+            loop.quit()
+
+        def _on_error(msg: str) -> None:
+            error_msg["value"] = msg
+            _on_finished()
+
+        worker = _SuperpointsWorker()
+        worker.errored.connect(_on_error)
+        worker.completed.connect(_on_finished)
+        worker.finished.connect(lambda: None)
+        progress_dialog.show()
+        QApplication.processEvents()
+        worker.start()
+        timer.start()
+        loop.exec()
+        worker.wait()
+
+        if error_msg["value"] is not None:
+            QMessageBox.critical(self, "Superpoint segmentation failed", error_msg["value"])
+            return
+        if progress.cancelled():
+            return
+
+        scene_after = self.scene_manager._scene
+        target_layer = layer
+        if scene_after is not None:
+            target_layer_obj = scene_after.layers.get(layer_id)
+            if isinstance(target_layer_obj, PointCloudLayer):
+                target_layer = target_layer_obj
+                scene_after.active_layer_id = target_layer.id
+
+        target_layer.set_active_field_name(output_field_name)
+        target_layer.update()
+        self.scene_manager.broadcastActivatedLayer.emit(target_layer)
+        self.scene_manager.broadcastActivatedPcdField.emit(target_layer)
+        print(
+            f"[superpoints] Added field '{output_field_name}' "
+            f"(type=INSTANCE, points={target_layer.data.points.shape[0]}) on layer '{target_layer.browser_name}'"
+        )
+        dataset = self.dataset_manager._dataset
+        if dataset is not None and scene_after is not None:
+            for ref in dataset.doc_refs:
+                if ref.name == scene_after.doc.name:
+                    ref.modState = RefModState.MODIFIED
+                    break
+        self.scene_manager.populate_tree()
+        self.viewer.rerender()
+
+    def _on_region_merge(self) -> None:
+        scene = self.scene_manager._scene
+        if scene is None:
+            return
+        active_layer = self._get_active_pointcloud_layer()
+        dlg = RegionMergeDialog(
+            scene,
+            active_layer,
+            settings=self.preferences.get_region_merge_settings(),
+            parent=self,
+        )
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        layer = dlg.selected_layer()
+        if layer is None:
+            return
+        self.preferences.set_region_merge_settings(dlg.settings())
+        self.preferences.save()
+        source_field_name = dlg.source_field_name()
+        if not source_field_name:
+            QMessageBox.warning(self, "Merge planar regions", "No source instance field selected.")
+            return
+        source_fields = layer.data.get_fields(names=source_field_name, field_type=FieldType.INSTANCE)
+        if not source_fields:
+            QMessageBox.warning(self, "Merge planar regions", "Selected instance field was not found.")
+            return
+
+        source_labels = np.asarray(source_fields[0].data, dtype=np.int32)
+        if source_labels.ndim == 2:
+            if source_labels.shape[1] != 1:
+                QMessageBox.warning(
+                    self,
+                    "Merge planar regions",
+                    f"Source field '{source_field_name}' must have shape (N,) or (N,1).",
+                )
+                return
+            source_labels = source_labels[:, 0]
+        elif source_labels.ndim != 1:
+            QMessageBox.warning(
+                self,
+                "Merge planar regions",
+                f"Source field '{source_field_name}' must have shape (N,) or (N,1).",
+            )
+            return
+        if source_labels.shape[0] != layer.data.points.shape[0]:
+            QMessageBox.warning(
+                self,
+                "Merge planar regions",
+                "Source field length does not match the point count.",
+            )
+            return
+
+        layer_id = layer.id
+        output_field_name = self._unique_field_name(
+            layer.data.field_names,
+            dlg.output_field_base() or "merged_planar_regions",
+        )
+        progress = _native_region_merge.Progress()
+
+        class _RegionMergeWorker(QThread):
+            errored = pyqtSignal(str)
+            completed = pyqtSignal()
+
+            def run(self) -> None:
+                try:
+                    labels, _stats = merge_planar_regions(
+                        layer.data,
+                        source_labels,
+                        params=dlg.params(),
+                        progress=progress,
+                    )
+                    labels = np.asarray(labels, dtype=np.int32).reshape(-1)
+                    if labels.shape[0] != layer.data.points.shape[0]:
+                        raise RuntimeError("Native output label length does not match point count.")
+                    layer.data.add_field(
+                        name=output_field_name,
+                        data=labels[:, None],
+                        field_type=FieldType.INSTANCE,
+                    )
+                    self.completed.emit()
+                except Exception as exc:  # pragma: no cover - GUI path
+                    self.errored.emit(str(exc))
+
+        progress_dialog = QProgressDialog("Preparing planar region merge...", "Cancel", 0, 0, self)
+        progress_dialog.setWindowTitle("Merge planar regions")
+        progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        progress_dialog.setMinimumDuration(0)
+
+        def _on_cancel() -> None:
+            progress.request_cancel()
+            progress_dialog.setLabelText("Cancelling...")
+
+        progress_dialog.canceled.connect(_on_cancel)
+
+        timer = QTimer(self)
+        timer.setInterval(100)
+        t_start = time.perf_counter()
+
+        def _on_tick() -> None:
+            try:
+                total = progress.total()
+                done = progress.done()
+                elapsed = time.perf_counter() - t_start
+                if total > 0:
+                    progress_dialog.setMaximum(int(total))
+                    progress_dialog.setValue(min(int(done), int(total)))
+                else:
+                    progress_dialog.setMaximum(0)
+                progress_dialog.setLabelText(
+                    f"{progress.stage()} | {elapsed:.1f}s"
+                )
+            except Exception as exc:  # pragma: no cover - GUI path
+                print(f"[region_merge/ui] progress polling failed: {exc}")
+
+        timer.timeout.connect(_on_tick)
+
+        loop = QEventLoop(self)
+        error_msg: dict[str, str | None] = {"value": None}
+
+        def _on_finished() -> None:
+            timer.stop()
+            progress_dialog.close()
+            loop.quit()
+
+        def _on_error(msg: str) -> None:
+            error_msg["value"] = msg
+            _on_finished()
+
+        worker = _RegionMergeWorker()
+        worker.errored.connect(_on_error)
+        worker.completed.connect(_on_finished)
+        worker.finished.connect(lambda: None)
+        progress_dialog.show()
+        QApplication.processEvents()
+        worker.start()
+        timer.start()
+        loop.exec()
+        worker.wait()
+
+        if error_msg["value"] is not None:
+            QMessageBox.critical(self, "Merge planar regions failed", error_msg["value"])
+            return
+        if progress.cancelled():
+            return
+
+        scene_after = self.scene_manager._scene
+        target_layer = layer
+        if scene_after is not None:
+            target_layer_obj = scene_after.layers.get(layer_id)
+            if isinstance(target_layer_obj, PointCloudLayer):
+                target_layer = target_layer_obj
+                scene_after.active_layer_id = target_layer.id
+
+        target_layer.set_active_field_name(output_field_name)
+        target_layer.update()
+        self.scene_manager.broadcastActivatedLayer.emit(target_layer)
+        self.scene_manager.broadcastActivatedPcdField.emit(target_layer)
+        print(
+            f"[region_merge] Added field '{output_field_name}' from source '{source_field_name}' "
             f"(type=INSTANCE, points={target_layer.data.points.shape[0]}) on layer '{target_layer.browser_name}'"
         )
         dataset = self.dataset_manager._dataset

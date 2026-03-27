@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 
 from PyQt6.QtWidgets import (
     QCheckBox,
@@ -24,11 +24,49 @@ from ..rendering.pointcloud import PointCloudLayer
 from ..rendering.scene import Scene
 
 
+REGION_GROWING_DEFAULTS: dict[str, object] = {
+    "epsilon": 0.03,
+    "tau": 80,
+    "alpha_deg": 29.0,
+    "estimate_sample_size": 50_000,
+    "estimate_seed": 0,
+    "normal_mode": "compute",
+    "normal_field_name": None,
+    "output_field_base": "planar_regions",
+    "confidence": 0.99,
+    "enable_seed_gating": True,
+    "seed_min_neighbors": 10,
+    "seed_planarity_min": 0.20,
+    "seed_scattering_max": 0.35,
+    "failrate_window": 64,
+    "failrate_threshold": 0.90,
+    "chunk_mode": "auto",
+    "enable_chunking": True,
+    "target_points_per_chunk": 250_000,
+    "chunk_x": 2,
+    "chunk_y": 2,
+    "chunk_z": 1,
+    "overlap_factor": 3.0,
+    "merge_angle_deg": 5.0,
+    "merge_distance_factor": 3.0,
+    "enable_reconciliation": True,
+    "epsilon_multiplier": 3.0,
+    "refit_multiplier": 2.0,
+    "first_refit": 4,
+    "max_dist_from_cent": 50.0,
+    "oriented_normals": False,
+    "perform_cca": True,
+    "local_reassign_enabled": True,
+    "global_reassign_enabled": True,
+}
+
+
 class RegionGrowingDialog(QDialog):
     def __init__(
         self,
         scene: Scene,
         active_layer: Optional[PointCloudLayer],
+        settings: Optional[dict[str, object]] = None,
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -50,19 +88,16 @@ class RegionGrowingDialog(QDialog):
         self.epsilon_spin.setRange(1e-6, 1e6)
         self.epsilon_spin.setDecimals(6)
         self.epsilon_spin.setSingleStep(0.01)
-        self.epsilon_spin.setValue(0.03)
         form.addRow("epsilon", self.epsilon_spin)
 
         self.tau_spin = QSpinBox(self)
         self.tau_spin.setRange(3, 10_000_000)
-        self.tau_spin.setValue(80)
         form.addRow("tau (min points)", self.tau_spin)
 
         self.alpha_spin = QDoubleSpinBox(self)
         self.alpha_spin.setRange(0.0, 89.9)
         self.alpha_spin.setDecimals(2)
         self.alpha_spin.setSingleStep(1.0)
-        self.alpha_spin.setValue(29.0)
         form.addRow("alpha (deg)", self.alpha_spin)
 
         estimate_row = QWidget(self)
@@ -70,13 +105,11 @@ class RegionGrowingDialog(QDialog):
         estimate_layout.setContentsMargins(0, 0, 0, 0)
         self.estimate_sample_spin = QSpinBox(self)
         self.estimate_sample_spin.setRange(100, 5_000_000)
-        self.estimate_sample_spin.setValue(50_000)
         self.estimate_sample_spin.setToolTip("Sample size for fast parameter estimation")
         estimate_layout.addWidget(QLabel("Sample", estimate_row))
         estimate_layout.addWidget(self.estimate_sample_spin)
         self.estimate_seed_spin = QSpinBox(self)
         self.estimate_seed_spin.setRange(0, 2**31 - 1)
-        self.estimate_seed_spin.setValue(0)
         estimate_layout.addWidget(QLabel("Seed", estimate_row))
         estimate_layout.addWidget(self.estimate_seed_spin)
         self.estimate_button = QPushButton("Estimate", estimate_row)
@@ -95,7 +128,6 @@ class RegionGrowingDialog(QDialog):
         form.addRow("Normals field", self.normal_field_combo)
 
         self.field_name_edit = QLineEdit(self)
-        self.field_name_edit.setText("planar_regions")
         form.addRow("Output field base", self.field_name_edit)
 
         advanced_group = QGroupBox("Advanced", self)
@@ -106,11 +138,9 @@ class RegionGrowingDialog(QDialog):
         self.confidence_spin.setRange(0.5, 0.999999)
         self.confidence_spin.setDecimals(6)
         self.confidence_spin.setSingleStep(0.001)
-        self.confidence_spin.setValue(0.99)
         advanced_form.addRow("Stop confidence", self.confidence_spin)
 
         self.enable_seed_gating_box = QCheckBox("Enable seed gating", self)
-        self.enable_seed_gating_box.setChecked(True)
         self.enable_seed_gating_box.setToolTip(
             "Filter candidate seeds by local planarity/scattering before growth starts."
         )
@@ -118,7 +148,6 @@ class RegionGrowingDialog(QDialog):
 
         self.seed_min_neighbors_spin = QSpinBox(self)
         self.seed_min_neighbors_spin.setRange(3, 10_000)
-        self.seed_min_neighbors_spin.setValue(10)
         self.seed_min_neighbors_spin.setToolTip(
             "Minimum epsilon-neighborhood size required for a seed to be considered planar."
         )
@@ -128,7 +157,6 @@ class RegionGrowingDialog(QDialog):
         self.seed_planarity_min_spin.setRange(0.0, 1.0)
         self.seed_planarity_min_spin.setDecimals(3)
         self.seed_planarity_min_spin.setSingleStep(0.01)
-        self.seed_planarity_min_spin.setValue(0.20)
         self.seed_planarity_min_spin.setToolTip(
             "Seed gate: minimum local planarity (l2-l1)/l3."
         )
@@ -138,7 +166,6 @@ class RegionGrowingDialog(QDialog):
         self.seed_scattering_max_spin.setRange(0.0, 1.0)
         self.seed_scattering_max_spin.setDecimals(3)
         self.seed_scattering_max_spin.setSingleStep(0.01)
-        self.seed_scattering_max_spin.setValue(0.35)
         self.seed_scattering_max_spin.setToolTip(
             "Seed gate: maximum local scattering l1/l3."
         )
@@ -146,7 +173,6 @@ class RegionGrowingDialog(QDialog):
 
         self.failrate_window_spin = QSpinBox(self)
         self.failrate_window_spin.setRange(8, 10_000)
-        self.failrate_window_spin.setValue(64)
         self.failrate_window_spin.setToolTip(
             "Rolling window size (attempts) for fail-rate stopping."
         )
@@ -156,7 +182,6 @@ class RegionGrowingDialog(QDialog):
         self.failrate_threshold_spin.setRange(0.5, 0.999)
         self.failrate_threshold_spin.setDecimals(3)
         self.failrate_threshold_spin.setSingleStep(0.01)
-        self.failrate_threshold_spin.setValue(0.90)
         self.failrate_threshold_spin.setToolTip(
             "Stop chunk when rolling fail-rate exceeds this threshold."
         )
@@ -168,12 +193,10 @@ class RegionGrowingDialog(QDialog):
         advanced_form.addRow("Chunk mode", self.chunk_mode_combo)
 
         self.enable_chunking_box = QCheckBox("Enable chunking", self)
-        self.enable_chunking_box.setChecked(True)
         advanced_form.addRow(self.enable_chunking_box)
 
         self.target_points_spin = QSpinBox(self)
         self.target_points_spin.setRange(1000, 50_000_000)
-        self.target_points_spin.setValue(250_000)
         advanced_form.addRow("Target points/chunk", self.target_points_spin)
 
         explicit_chunk_row = QWidget(self)
@@ -181,13 +204,10 @@ class RegionGrowingDialog(QDialog):
         explicit_chunk_layout.setContentsMargins(0, 0, 0, 0)
         self.chunk_x_spin = QSpinBox(self)
         self.chunk_x_spin.setRange(1, 256)
-        self.chunk_x_spin.setValue(2)
         self.chunk_y_spin = QSpinBox(self)
         self.chunk_y_spin.setRange(1, 256)
-        self.chunk_y_spin.setValue(2)
         self.chunk_z_spin = QSpinBox(self)
         self.chunk_z_spin.setRange(1, 256)
-        self.chunk_z_spin.setValue(1)
         explicit_chunk_layout.addWidget(QLabel("X", explicit_chunk_row))
         explicit_chunk_layout.addWidget(self.chunk_x_spin)
         explicit_chunk_layout.addWidget(QLabel("Y", explicit_chunk_row))
@@ -197,71 +217,70 @@ class RegionGrowingDialog(QDialog):
         advanced_form.addRow("Chunk xyz", explicit_chunk_row)
 
         self.overlap_factor_spin = QDoubleSpinBox(self)
-        self.overlap_factor_spin.setRange(0.0, 20.0)
+        self.overlap_factor_spin.setRange(2.5, 20.0)
         self.overlap_factor_spin.setDecimals(3)
-        self.overlap_factor_spin.setValue(3.0)
         advanced_form.addRow("Overlap factor", self.overlap_factor_spin)
 
         self.merge_angle_spin = QDoubleSpinBox(self)
         self.merge_angle_spin.setRange(0.0, 90.0)
         self.merge_angle_spin.setDecimals(2)
-        self.merge_angle_spin.setValue(5.0)
         advanced_form.addRow("Merge angle (deg)", self.merge_angle_spin)
 
         self.merge_dist_factor_spin = QDoubleSpinBox(self)
         self.merge_dist_factor_spin.setRange(0.0, 20.0)
         self.merge_dist_factor_spin.setDecimals(3)
-        self.merge_dist_factor_spin.setValue(3.0)
         advanced_form.addRow("Merge distance factor", self.merge_dist_factor_spin)
 
         self.enable_reconciliation_box = QCheckBox("Enable reconciliation", self)
-        self.enable_reconciliation_box.setChecked(True)
         advanced_form.addRow(self.enable_reconciliation_box)
 
         self.epsilon_multiplier_spin = QDoubleSpinBox(self)
         self.epsilon_multiplier_spin.setRange(0.1, 100.0)
         self.epsilon_multiplier_spin.setDecimals(3)
-        self.epsilon_multiplier_spin.setValue(3.0)
         advanced_form.addRow("epsilon multiplier", self.epsilon_multiplier_spin)
 
         self.refit_multiplier_spin = QDoubleSpinBox(self)
         self.refit_multiplier_spin.setRange(1.1, 100.0)
         self.refit_multiplier_spin.setDecimals(3)
-        self.refit_multiplier_spin.setValue(2.0)
         advanced_form.addRow("Refit multiplier", self.refit_multiplier_spin)
 
         self.first_refit_spin = QSpinBox(self)
         self.first_refit_spin.setRange(3, 1_000_000)
-        self.first_refit_spin.setValue(4)
         advanced_form.addRow("First refit size", self.first_refit_spin)
 
         self.max_dist_spin = QDoubleSpinBox(self)
         self.max_dist_spin.setRange(0.1, 1_000_000.0)
         self.max_dist_spin.setDecimals(3)
-        self.max_dist_spin.setValue(50.0)
         advanced_form.addRow("Max dist from center", self.max_dist_spin)
 
         self.oriented_normals_box = QCheckBox("Normals are oriented", self)
         advanced_form.addRow(self.oriented_normals_box)
         self.perform_cca_box = QCheckBox("Connected components cleanup", self)
-        self.perform_cca_box.setChecked(True)
         advanced_form.addRow(self.perform_cca_box)
 
-        self.refine_unassigned_box = QCheckBox("Reassign unassigned leftovers", self)
-        self.refine_unassigned_box.setChecked(True)
-        advanced_form.addRow(self.refine_unassigned_box)
+        self.local_reassign_box = QCheckBox("Local leftover reassignment", self)
+        advanced_form.addRow(self.local_reassign_box)
+
+        self.global_reassign_box = QCheckBox("Global leftover reassignment", self)
+        advanced_form.addRow(self.global_reassign_box)
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
             parent=self,
         )
+        self._reset_button = buttons.addButton(
+            "Reset to defaults",
+            QDialogButtonBox.ButtonRole.ResetRole,
+        )
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
+        self._reset_button.clicked.connect(self.reset_to_defaults)
         layout.addWidget(buttons)
         self._ok_button = buttons.button(QDialogButtonBox.StandardButton.Ok)
 
         self._populate_layers(scene, active_layer)
         self._refresh_normals_fields()
+        self._apply_settings(settings or {})
         self._update_chunk_mode_visibility()
         self._validate()
 
@@ -275,6 +294,61 @@ class RegionGrowingDialog(QDialog):
         self.enable_seed_gating_box.toggled.connect(self._update_seed_gating_visibility)
         self.fast_preset_button.clicked.connect(self.apply_fast_preset)
         self._update_seed_gating_visibility()
+
+    def _apply_settings(self, settings: dict[str, object]) -> None:
+        merged: dict[str, object] = dict(REGION_GROWING_DEFAULTS)
+        merged.update(settings)
+
+        self.epsilon_spin.setValue(float(merged["epsilon"]))
+        self.tau_spin.setValue(int(merged["tau"]))
+        self.alpha_spin.setValue(float(merged["alpha_deg"]))
+        self.estimate_sample_spin.setValue(int(merged["estimate_sample_size"]))
+        self.estimate_seed_spin.setValue(int(merged["estimate_seed"]))
+        self.field_name_edit.setText(str(merged["output_field_base"]))
+        self.confidence_spin.setValue(float(merged["confidence"]))
+        self.enable_seed_gating_box.setChecked(bool(merged["enable_seed_gating"]))
+        self.seed_min_neighbors_spin.setValue(int(merged["seed_min_neighbors"]))
+        self.seed_planarity_min_spin.setValue(float(merged["seed_planarity_min"]))
+        self.seed_scattering_max_spin.setValue(float(merged["seed_scattering_max"]))
+        self.failrate_window_spin.setValue(int(merged["failrate_window"]))
+        self.failrate_threshold_spin.setValue(float(merged["failrate_threshold"]))
+        self.enable_chunking_box.setChecked(bool(merged["enable_chunking"]))
+        chunk_mode = merged["chunk_mode"]
+        chunk_mode_idx = self.chunk_mode_combo.findData(chunk_mode)
+        if chunk_mode_idx >= 0:
+            self.chunk_mode_combo.setCurrentIndex(chunk_mode_idx)
+        self.target_points_spin.setValue(int(merged["target_points_per_chunk"]))
+        self.chunk_x_spin.setValue(int(merged["chunk_x"]))
+        self.chunk_y_spin.setValue(int(merged["chunk_y"]))
+        self.chunk_z_spin.setValue(int(merged["chunk_z"]))
+        self.overlap_factor_spin.setValue(max(2.5, float(merged["overlap_factor"])))
+        self.merge_angle_spin.setValue(float(merged["merge_angle_deg"]))
+        self.merge_dist_factor_spin.setValue(float(merged["merge_distance_factor"]))
+        self.enable_reconciliation_box.setChecked(bool(merged["enable_reconciliation"]))
+        self.epsilon_multiplier_spin.setValue(float(merged["epsilon_multiplier"]))
+        self.refit_multiplier_spin.setValue(float(merged["refit_multiplier"]))
+        self.first_refit_spin.setValue(int(merged["first_refit"]))
+        self.max_dist_spin.setValue(float(merged["max_dist_from_cent"]))
+        self.oriented_normals_box.setChecked(bool(merged["oriented_normals"]))
+        self.perform_cca_box.setChecked(bool(merged["perform_cca"]))
+        self.local_reassign_box.setChecked(bool(merged["local_reassign_enabled"]))
+        self.global_reassign_box.setChecked(bool(merged["global_reassign_enabled"]))
+
+        normal_mode = merged.get("normal_mode")
+        normal_mode_idx = self.normal_mode_combo.findData(normal_mode)
+        self.normal_mode_combo.setCurrentIndex(normal_mode_idx if normal_mode_idx >= 0 else 0)
+
+        normal_field_name = merged.get("normal_field_name")
+        if isinstance(normal_field_name, str):
+            normal_field_idx = self.normal_field_combo.findText(normal_field_name)
+            if normal_field_idx >= 0:
+                self.normal_field_combo.setCurrentIndex(normal_field_idx)
+
+    def reset_to_defaults(self) -> None:
+        self._apply_settings({})
+        self._update_seed_gating_visibility()
+        self._update_chunk_mode_visibility()
+        self._validate()
 
     def _populate_layers(self, scene: Scene, active_layer: Optional[PointCloudLayer]) -> None:
         self._layers = [
@@ -343,10 +417,11 @@ class RegionGrowingDialog(QDialog):
         self.enable_chunking_box.setChecked(True)
         self.chunk_mode_combo.setCurrentIndex(self.chunk_mode_combo.findData("auto"))
         self.target_points_spin.setValue(1_500_000)
-        self.overlap_factor_spin.setValue(1.5)
+        self.overlap_factor_spin.setValue(2.5)
         self.enable_reconciliation_box.setChecked(False)
         self.perform_cca_box.setChecked(False)
-        self.refine_unassigned_box.setChecked(False)
+        self.local_reassign_box.setChecked(True)
+        self.global_reassign_box.setChecked(False)
         self._update_chunk_mode_visibility()
 
     def _validate(self) -> None:
@@ -413,7 +488,9 @@ class RegionGrowingDialog(QDialog):
             "max_dist_from_cent": float(self.max_dist_spin.value()),
             "oriented_normals": bool(self.oriented_normals_box.isChecked()),
             "perform_cca": bool(self.perform_cca_box.isChecked()),
-            "refine_unassigned": bool(self.refine_unassigned_box.isChecked()),
+            "refine_unassigned": bool(self.global_reassign_box.isChecked()),
+            "local_reassign_enabled": bool(self.local_reassign_box.isChecked()),
+            "global_reassign_enabled": bool(self.global_reassign_box.isChecked()),
             "enable_seed_gating": bool(self.enable_seed_gating_box.isChecked()),
             "seed_min_neighbors": int(self.seed_min_neighbors_spin.value()),
             "seed_planarity_min": float(self.seed_planarity_min_spin.value()),
@@ -442,4 +519,41 @@ class RegionGrowingDialog(QDialog):
             "enabled": bool(self.enable_reconciliation_box.isChecked()),
             "angle_deg": float(self.merge_angle_spin.value()),
             "distance_factor": float(self.merge_dist_factor_spin.value()),
+        }
+
+    def settings(self) -> dict[str, object]:
+        return {
+            "epsilon": self.epsilon(),
+            "tau": self.tau(),
+            "alpha_deg": self.alpha_deg(),
+            "estimate_sample_size": int(self.estimate_sample_spin.value()),
+            "estimate_seed": int(self.estimate_seed_spin.value()),
+            "normal_mode": self.normal_mode(),
+            "normal_field_name": self.normal_field_name(),
+            "output_field_base": self.output_field_base(),
+            "confidence": float(self.confidence_spin.value()),
+            "enable_seed_gating": bool(self.enable_seed_gating_box.isChecked()),
+            "seed_min_neighbors": int(self.seed_min_neighbors_spin.value()),
+            "seed_planarity_min": float(self.seed_planarity_min_spin.value()),
+            "seed_scattering_max": float(self.seed_scattering_max_spin.value()),
+            "failrate_window": int(self.failrate_window_spin.value()),
+            "failrate_threshold": float(self.failrate_threshold_spin.value()),
+            "chunk_mode": self.chunk_mode(),
+            "enable_chunking": bool(self.enable_chunking_box.isChecked()),
+            "target_points_per_chunk": int(self.target_points_spin.value()),
+            "chunk_x": int(self.chunk_x_spin.value()),
+            "chunk_y": int(self.chunk_y_spin.value()),
+            "chunk_z": int(self.chunk_z_spin.value()),
+            "overlap_factor": float(self.overlap_factor_spin.value()),
+            "merge_angle_deg": float(self.merge_angle_spin.value()),
+            "merge_distance_factor": float(self.merge_dist_factor_spin.value()),
+            "enable_reconciliation": bool(self.enable_reconciliation_box.isChecked()),
+            "epsilon_multiplier": float(self.epsilon_multiplier_spin.value()),
+            "refit_multiplier": float(self.refit_multiplier_spin.value()),
+            "first_refit": int(self.first_refit_spin.value()),
+            "max_dist_from_cent": float(self.max_dist_spin.value()),
+            "oriented_normals": bool(self.oriented_normals_box.isChecked()),
+            "perform_cca": bool(self.perform_cca_box.isChecked()),
+            "local_reassign_enabled": bool(self.local_reassign_box.isChecked()),
+            "global_reassign_enabled": bool(self.global_reassign_box.isChecked()),
         }

@@ -3,6 +3,8 @@
 #include "nanoflann.hpp"
 #include "types.h"
 #include <functional>
+#include <unordered_map>
+#include <unordered_set>
 
 
 
@@ -32,6 +34,14 @@ void computeNormals(
     float search_radius
     );
 
+void computeNormalsSparse(
+    const std::vector<Point>& coords,
+    std::unordered_map<size_t, Point>& normals,
+    const std::unordered_set<size_t>& task_inds,
+    KDTreeType& kdtree,
+    float search_radius
+);
+
 
 struct regionGrowing_returnType{
     std::vector<Region> regions;
@@ -55,7 +65,8 @@ regionGrowing_returnType regionGrowing(
     KDTreeType& kdtree,
     const std::unordered_set<size_t>* task_indices, // indices to segment; if nullptr -> segment all
     RegionGrowingParams params,
-    const std::function<void(const RegionGrowingRuntime&)>& progress_cb = {}
+    const std::function<void(const RegionGrowingRuntime&)>& progress_cb = {},
+    const std::unordered_map<size_t, Point>* normal_override = nullptr
 );
 
 Region growRegionFromSeed(

@@ -87,3 +87,24 @@ def test_segment_planar_regions_accepts_provided_normals():
         merge={"angle_deg": 5.0, "distance_factor": 3.0},
     )
     assert labels.shape[0] == coords.shape[0]
+
+
+def test_segment_planar_regions_accepts_local_and_global_reassign_toggles():
+    coords = _make_two_plane_cloud(80)
+    labels, stats = region_growing.segment_planar_regions(
+        coords,
+        normal_mode="compute",
+        params={
+            "epsilon": 0.25,
+            "tau": 8,
+            "alpha_deg": 35.0,
+            "local_reassign_enabled": True,
+            "global_reassign_enabled": False,
+            "perform_cca": True,
+            "verbose": False,
+        },
+        chunking={"enabled": True, "mode": "explicit", "chunk_x": 2, "chunk_y": 1, "chunk_z": 1},
+        merge={"enabled": True, "angle_deg": 5.0, "distance_factor": 3.0},
+    )
+    assert labels.shape == (coords.shape[0],)
+    assert isinstance(stats, dict)

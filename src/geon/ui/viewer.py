@@ -93,6 +93,11 @@ class InteractorStyle(vtk.vtkInteractorStyleTrackballCamera):
         
         current_time = time.time()
         if current_time - self.last_click_time < 0.3:
+            self.last_click_time = 0
+            if self.mode_tool is not None:
+                self.mode_tool.left_button_press_hook(self.event_info)
+            if self.camera_enabled:
+                self.OnLeftButtonDown()
             self.double_click_event()
         else:
             self.last_click_time = current_time

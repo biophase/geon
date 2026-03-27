@@ -3,6 +3,9 @@ from geon.config.theme import UIStyle
 from .base import ModeTool, ToolZone
 from .selection import SelectPointsCmd
 from ..rendering.pointcloud import PointCloudLayer
+from ..core.constants import Boolean
+from ..ui.boolean_dialog import BooleanChoiceDialog
+from ..util.common import bool_op_index_mask
 
 
 from dataclasses import dataclass, field
@@ -35,7 +38,33 @@ class WandTool(ModeTool):
     # state
     tolerance: float = 0.5
     
-    def _on_click(self):
+    def _combine_selection(
+        self,
+        layer: PointCloudLayer,
+        selection_new: np.ndarray,
+        event: Event,
+    ) -> np.ndarray | None:
+        selection_old = layer.active_selection
+        if selection_old is None or selection_old.size == 0:
+            return np.asarray(selection_new, dtype=np.int32)
+
+        if event.ctrl:
+            bool_op = Boolean.DIFFERENCE
+        elif event.shift:
+            bool_op = Boolean.UNION
+        else:
+            dlg = BooleanChoiceDialog(
+                parent=self.ctx.viewer.window(),
+                message="Choose how to combine with previous selection:",
+            )
+            dlg.exec()
+            if dlg.choice is None:
+                return None
+            bool_op = dlg.choice
+
+        return bool_op_index_mask(selection_old, selection_new, bool_op)
+
+    def _on_click(self, event: Event):
         result = self.ctx.viewer.pick()
         if result.layer is None:
             return
@@ -47,28 +76,31 @@ class WandTool(ModeTool):
                 if idx is None or af is None:
                     return
                 data = af.data
+                visible_inds = result.layer.visible_inds
+                visible_data = data[visible_inds]
                 picked_data = np.asarray(data[idx])
-                
-                print(f"[wand] {picked_data.shape=}")
-                print(f"[wand] {picked_data.ndim=}")
-                
-                
-                
+
                 if picked_data.ndim == 0:
-                    similarity = data - picked_data
+                    similarity = visible_data - picked_data
                 elif picked_data.ndim == 1:
-                    similarity = np.linalg.norm(data - picked_data, axis=1)
-                    
+                    similarity = np.linalg.norm(visible_data - picked_data, axis=1)
                 else:
                     raise NotImplementedError(f"Unexpected data shape of picked point: {picked_data.shape}")
-                print(f"[wand] {similarity.shape=}")
                 in_tol = np.nonzero(np.abs(similarity) < self.tolerance)[0]
-                print(f"[wand] selected elements {np.sum(in_tol)}")
+                selection_new = np.asarray(visible_inds[in_tol], dtype=np.int32)
+                selection_combined = self._combine_selection(result.layer, selection_new, event)
+                if selection_combined is None:
+                    return
                 cmd = SelectPointsCmd(
                     title="Wand selection",
-                    selection_new=in_tol,
+                    selection_new=selection_combined,
                     layer_ref=weakref.ref(result.layer),
-                    ctx_ref=weakref.ref(self.ctx)
+                    ctx_ref=weakref.ref(self.ctx),
+                    selection_old=(
+                        result.layer.active_selection.copy()
+                        if result.layer.active_selection is not None
+                        else None
+                    ),
                 )
                 self.command_manager.do(cmd)
                 
@@ -83,7 +115,7 @@ class WandTool(ModeTool):
     # ------------------------------------------------
     
     def left_button_press_hook(self, event: Event) -> None:
-        self._on_click()
+        self._on_click(event)
         super().left_button_press_hook(event)
         
     def activate(self) -> None:
