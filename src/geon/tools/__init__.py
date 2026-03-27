@@ -9,6 +9,7 @@ from .selection import DeselectTool
 from .visibility import HideTool, IsolateTool, ShowTool
 from .annotate import AnnotateTool
 from .wand import WandTool
+from .seeded_region_growing import SeededRegionGrowingTool
 from .inspect import InspectTool
 from .camera import (
     TogglePerspectiveTool,
@@ -24,6 +25,7 @@ from .camera import (
 TOOL_REGISTRY.register(InspectTool)
 TOOL_REGISTRY.register(LassoTool)
 TOOL_REGISTRY.register(WandTool)
+TOOL_REGISTRY.register(SeededRegionGrowingTool)
 TOOL_REGISTRY.register(DeselectTool)
 TOOL_REGISTRY.register(HideTool)
 TOOL_REGISTRY.register(IsolateTool)

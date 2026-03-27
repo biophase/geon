@@ -1,6 +1,10 @@
 #pragma once
 #include "Eigen/Dense"
+#include <cstdint>
+#include <string>
+#include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 
 constexpr double PI = 3.1415926535897932384626433832795;

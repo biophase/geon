@@ -2,6 +2,7 @@
 
 #include "nanoflann.hpp"
 #include "types.h"
+#include <functional>
 
 
 
@@ -32,32 +33,36 @@ void computeNormals(
     );
 
 
-void processChunk(
-    size_t chunk_id,
-    const std::unordered_set<size_t>& chunk_indices,
-    PointCloud& pcd,
-    KDTreeType& kdtree,
-    RegionGrowingParams params
-);
-void processChunkIndexContainer(
-    size_t chunk_id,
-    const std::unordered_set<size_t>& chunk_indices,
-    PointCloud& pcd,
-    KDTreeType& kdtree,
-    RegionGrowingParams params,
-    int32_t* output,
-    std::unordered_map<size_t,size_t>& thread_offsets
-);
 struct regionGrowing_returnType{
     std::vector<Region> regions;
     std::unordered_map<size_t, size_t> pcd_to_reg_idxmap;
     std::unordered_set<size_t> unassigned;
 };
 
+struct RegionGrowingRuntime{
+    size_t attempts = 0;
+    size_t failed_attempts = 0;
+    size_t failed_attempt_limit = 0;
+    float rolling_fail_rate = 0.0f;
+    float rolling_fail_threshold = 0.9f;
+    size_t unassigned_remaining = 0;
+    size_t regions_found = 0;
+    bool done = false;
+};
+
 regionGrowing_returnType regionGrowing( 
     PointCloud& pcd,
     KDTreeType& kdtree,
     const std::unordered_set<size_t>* task_indices, // indices to segment; if nullptr -> segment all
+    RegionGrowingParams params,
+    const std::function<void(const RegionGrowingRuntime&)>& progress_cb = {}
+);
+
+Region growRegionFromSeed(
+    PointCloud& pcd,
+    KDTreeType& kdtree,
+    size_t seed_idx,
+    const std::unordered_set<size_t>* task_indices,
     RegionGrowingParams params
 );
 
@@ -70,12 +75,19 @@ struct RegionGrowingParams{
     size_t min_points_in_region = 80;
     size_t first_refit = 4;
     float alpha = PI * 0.15;
-    float min_success_ratio = 0.10f;
+    float stop_confidence = 0.99f;
     float max_dist_from_cent = 50.f;
-    size_t tracker_size = 50;
     bool oriented_normals = false;
     bool verbose = true;
     bool perform_cca = true; // divides each region in connected components after segmentation
+    // Seed gating to suppress non-planar starts (e.g. vegetation).
+    bool enable_seed_gating = true;
+    size_t seed_min_neighbors = 10;
+    float seed_planarity_min = 0.20f;   // (l2-l1)/l3
+    float seed_scattering_max = 0.35f;  // l1/l3
+    // Rolling fail-rate stop (pragmatic fast-stop mode).
+    size_t failrate_window = 64;
+    float failrate_threshold = 0.90f;
 };
 
 /////////////////////
@@ -104,5 +116,3 @@ struct subdividePointCloudFixedChunkSize_returnType{
 subdividePointCloudFixedChunkSize_returnType subdividePointCloudFixedChunkSize(const PointCloud& pcd,
     std::unordered_set<size_t> task_inds, float chunk_size_x, float chunk_size_y, float chunk_size_z 
     );
-
-class AttemptsTracker;

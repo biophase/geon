@@ -1,19 +1,25 @@
 #include "features.h"
 
-inline uint64_t voxel_index_pos(float x, float inv_s){
-    return static_cast<uint64_t>(x*inv_s);
+namespace {
+
+inline int64_t voxel_index(float x, float inv_s){
+    return static_cast<int64_t>(std::floor(static_cast<double>(x) * static_cast<double>(inv_s)));
 }
 
+inline VoxelIndex voxelIndex(float x, float y, float z, float inv_s){
+    return VoxelIndex{
+        voxel_index(x, inv_s),
+        voxel_index(y, inv_s),
+        voxel_index(z, inv_s),
+    };
+}
+
+} // namespace
+
 uint64_t voxelKey(float x, float y, float z, float inv_s){
-        uint64_t ix = voxel_index_pos(x, inv_s);
-        uint64_t iy = voxel_index_pos(y, inv_s);
-        uint64_t iz = voxel_index_pos(z, inv_s);
-        
-        uint64_t key = 
-        (ix & 0x1FFFFF) << 42 |
-        (iy & 0x1FFFFF) << 21 |
-        (iz & 0x1FFFFF);
-        return key;
+        const VoxelIndex idx = voxelIndex(x, y, z, inv_s);
+        VoxelIndexHash hasher;
+        return static_cast<uint64_t>(hasher(idx));
 }
 
 VoxelHash computeVoxelHash(
@@ -25,7 +31,7 @@ VoxelHash computeVoxelHash(
     VoxelHash map;
     const auto N = positive_coords.rows();
     for (uint32_t i = 0; i < N; ++i){
-        uint64_t key = voxelKey(
+        VoxelIndex key = voxelIndex(
             positive_coords(i,0),
             positive_coords(i,1),
             positive_coords(i,2),
@@ -58,20 +64,17 @@ std::vector<uint32_t> getNeighborIndsRadius(
     const float max_y = query.y + radius;
     const float max_z = query.z + radius;
 
-    const uint64_t ix_min = voxel_index_pos(min_x, inv_s);
-    const uint64_t iy_min = voxel_index_pos(min_y, inv_s);
-    const uint64_t iz_min = voxel_index_pos(min_z, inv_s);
-    const uint64_t ix_max = voxel_index_pos(max_x, inv_s);
-    const uint64_t iy_max = voxel_index_pos(max_y, inv_s);
-    const uint64_t iz_max = voxel_index_pos(max_z, inv_s);
+    const int64_t ix_min = voxel_index(min_x, inv_s);
+    const int64_t iy_min = voxel_index(min_y, inv_s);
+    const int64_t iz_min = voxel_index(min_z, inv_s);
+    const int64_t ix_max = voxel_index(max_x, inv_s);
+    const int64_t iy_max = voxel_index(max_y, inv_s);
+    const int64_t iz_max = voxel_index(max_z, inv_s);
 
-    for (uint64_t ix = ix_min; ix <= ix_max; ++ix){
-        const float vx = static_cast<float>(ix) * voxel_size;
-        for (uint64_t iy = iy_min; iy <= iy_max; ++iy){
-            const float vy = static_cast<float>(iy) * voxel_size;
-            for (uint64_t iz = iz_min; iz <= iz_max; ++iz){
-                const float vz = static_cast<float>(iz) * voxel_size;
-                const uint64_t key = voxelKey(vx, vy, vz, inv_s);
+    for (int64_t ix = ix_min; ix <= ix_max; ++ix){
+        for (int64_t iy = iy_min; iy <= iy_max; ++iy){
+            for (int64_t iz = iz_min; iz <= iz_max; ++iz){
+                const VoxelIndex key{ix, iy, iz};
                 auto it = voxel_hash.find(key);
                 if (it == voxel_hash.end()){
                     continue;

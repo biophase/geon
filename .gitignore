@@ -1,4 +1,9 @@
 main/*
+_temp/*
+src/geon/_temp/*
+src/geon/_temp/cgal/
+.cmake*/
+
 *.pyc
 _archive/*
 **/__pycache__/
@@ -40,3 +45,5 @@ cmake-build-*/
 *.sln
 *.vcxproj
 *.vcxproj.filters
+
+

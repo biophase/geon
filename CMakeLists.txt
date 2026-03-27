@@ -22,15 +22,43 @@ pybind11_add_module(
 )
 target_include_directories(features PRIVATE "${GEON_EIGEN_DIR}")
 
+pybind11_add_module(
+  region_growing
+  MODULE
+  native/region_growing/python_wrapper.cpp
+  native/region_growing/rgrow.cpp
+  native/region_growing/connected_components.cpp
+)
+target_include_directories(
+  region_growing
+  PRIVATE
+    "${GEON_EIGEN_DIR}"
+    "${GEON_NANOFLANN_DIR}"
+)
+
+pybind11_add_module(
+  plane_ransac
+  MODULE
+  native/region_growing/plane_ransac_python_wrapper.cpp
+  native/region_growing/plane_ransac.cpp
+)
+target_include_directories(
+  plane_ransac
+  PRIVATE
+    "${GEON_EIGEN_DIR}"
+    "${GEON_NANOFLANN_DIR}"
+)
+
 find_package(OpenMP)
 if(OpenMP_CXX_FOUND)
   target_link_libraries(features PRIVATE OpenMP::OpenMP_CXX)
+  target_link_libraries(plane_ransac PRIVATE OpenMP::OpenMP_CXX)
 endif()
 
 set(GEON_NATIVE_INSTALL_DIR "geon/_native")
 
 install(
-  TARGETS features
+  TARGETS features region_growing plane_ransac
   LIBRARY DESTINATION ${GEON_NATIVE_INSTALL_DIR}
   RUNTIME DESTINATION ${GEON_NATIVE_INSTALL_DIR}
   ARCHIVE DESTINATION ${GEON_NATIVE_INSTALL_DIR}

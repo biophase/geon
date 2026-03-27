@@ -1,7 +1,9 @@
 #pragma once
 #include "Eigen/Dense"
 #include <atomic>
+#include <cmath>
 #include <cstdint>
+#include <functional>
 #include <unordered_map>
 #include <vector>
 
@@ -29,8 +31,34 @@ using VecNuint64RM = Eigen::Matrix<
 using MapVecNuint64RM = Eigen::Map<VecNuint64RM>;
 
 
+struct VoxelIndex{
+    int64_t x;
+    int64_t y;
+    int64_t z;
+
+    bool operator==(const VoxelIndex& other) const{
+        return x == other.x && y == other.y && z == other.z;
+    }
+};
+
+struct VoxelIndexHash{
+    size_t operator()(const VoxelIndex& idx) const{
+        const auto mix = [](uint64_t v) -> uint64_t {
+            v += 0x9e3779b97f4a7c15ULL;
+            v = (v ^ (v >> 30)) * 0xbf58476d1ce4e5b9ULL;
+            v = (v ^ (v >> 27)) * 0x94d049bb133111ebULL;
+            return v ^ (v >> 31);
+        };
+
+        const uint64_t hx = mix(static_cast<uint64_t>(idx.x));
+        const uint64_t hy = mix(static_cast<uint64_t>(idx.y));
+        const uint64_t hz = mix(static_cast<uint64_t>(idx.z));
+        return static_cast<size_t>(hx ^ (hy << 1) ^ (hz << 2));
+    }
+};
+
 // hash map
-using VoxelHash = std::unordered_map<uint64_t, std::vector<uint32_t>>;
+using VoxelHash = std::unordered_map<VoxelIndex, std::vector<uint32_t>, VoxelIndexHash>;
 
 struct Point{
     float x;

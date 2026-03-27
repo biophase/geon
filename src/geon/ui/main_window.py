@@ -7,14 +7,22 @@ from .context_ribbon import ContextRibbon
 from .imports import FieldEditorDialog
 from .preferences_dialog import PreferencesDialog
 from .features_dialog import FeaturesDialog
+from .region_growing_dialog import RegionGrowingDialog
+from .plane_ransac_dialog import PlaneRansacDialog
 
 
 from ..io.ply import ply_to_pcd
 from ..algorithms.features import compute_pcd_features
+from ..algorithms.region_growing import (
+    estimate_parameters as estimate_region_growing_parameters,
+    segment_planar_regions,
+)
+from ..algorithms.plane_ransac import segment_planes as segment_ransac_planes
 from ..tools.controller import ToolController
 from ..ui.layers import LAYER_UI
 from ..rendering.pointcloud import PointCloudLayer
 from ..data.pointcloud import FieldType, SemanticSegmentation, SemanticSchema
+from ..io.dataset import RefModState
 from geon.settings import Preferences
 from geon.version import get_version
 from geon.util.resources import resource_path
@@ -27,14 +35,24 @@ from PyQt6.QtWidgets import (
     QDialog,
     QLabel,
     QVBoxLayout,
+    QHBoxLayout,
+    QWidget,
+    QScrollArea,
+    QProgressBar,
+    QPushButton,
     QProgressDialog,
     QMessageBox,
+    QSizePolicy,
 )
 from PyQt6.QtCore import Qt, QEventLoop, QThread, QTimer, pyqtSignal
 from PyQt6.QtGui import QShortcut, QKeySequence, QAction, QIcon, QPixmap
 
 from typing import cast
 from geon._native import features as _native_features
+from geon._native import region_growing as _native_region_growing
+from geon._native import plane_ransac as _native_plane_ransac
+import numpy as np
+import time
 
 class MainWindow(QMainWindow):
     def __init__(self, preferences: Preferences | None = None):
@@ -86,6 +104,11 @@ class MainWindow(QMainWindow):
         act_edit_fields.triggered.connect(self._on_edit_fields)
         act_compute_features = cast(QAction, doc_menu.addAction("Compute geometric features"))
         act_compute_features.triggered.connect(self._on_compute_geometric_features)
+        seg_menu = cast(QMenu, doc_menu.addMenu("Segmentation"))
+        act_planar_region_growing = cast(QAction, seg_menu.addAction("Planar region growing"))
+        act_planar_region_growing.triggered.connect(self._on_planar_region_growing)
+        act_plane_ransac = cast(QAction, seg_menu.addAction("Plane RANSAC"))
+        act_plane_ransac.triggered.connect(self._on_plane_ransac)
         self.setMenuBar(self.menu_bar)
 
         ###########
@@ -263,6 +286,484 @@ class MainWindow(QMainWindow):
         if dlg.point_cloud is None:
             return
         layer.update()
+        self.scene_manager.populate_tree()
+        self.viewer.rerender()
+
+    @staticmethod
+    def _unique_field_name(existing: list[str], base: str) -> str:
+        if base not in existing:
+            return base
+        suffix = 1
+        while True:
+            candidate = f"{base}_{suffix:03d}"
+            if candidate not in existing:
+                return candidate
+            suffix += 1
+
+    def _on_planar_region_growing(self) -> None:
+        scene = self.scene_manager._scene
+        if scene is None:
+            return
+        active_layer = self._get_active_pointcloud_layer()
+        dlg = RegionGrowingDialog(scene, active_layer, parent=self)
+
+        def _run_estimate() -> None:
+            layer = dlg.selected_layer()
+            if layer is None:
+                return
+
+            class _EstimateWorker(QThread):
+                estimated = pyqtSignal(float, int, float)
+                errored = pyqtSignal(str)
+
+                def run(self) -> None:
+                    try:
+                        estimated = estimate_region_growing_parameters(
+                            layer.data,
+                            **dlg.estimate_kwargs(),
+                        )
+                        self.estimated.emit(
+                            float(estimated["epsilon"]),
+                            int(estimated["tau"]),
+                            float(estimated["alpha_deg"]),
+                        )
+                    except Exception as exc:  # pragma: no cover - GUI path
+                        self.errored.emit(str(exc))
+
+            progress_dialog = QProgressDialog("Estimating parameters...", "", 0, 0, self)
+            progress_dialog.setWindowTitle("Planar region growing")
+            progress_dialog.setWindowModality(Qt.WindowModality.ApplicationModal)
+            progress_dialog.setCancelButton(None)
+            progress_dialog.setMinimumDuration(0)
+
+            loop = QEventLoop(self)
+            error_msg: dict[str, str | None] = {"value": None}
+
+            def _on_estimated(eps: float, tau: int, alpha_deg: float) -> None:
+                dlg.set_estimated_core(eps, tau, alpha_deg)
+                progress_dialog.close()
+                loop.quit()
+
+            def _on_error(msg: str) -> None:
+                error_msg["value"] = msg
+                progress_dialog.close()
+                loop.quit()
+
+            worker = _EstimateWorker()
+            worker.estimated.connect(_on_estimated)
+            worker.errored.connect(_on_error)
+            worker.finished.connect(lambda: None)
+            worker.start()
+            progress_dialog.show()
+            loop.exec()
+            worker.wait()
+
+            if error_msg["value"] is not None:
+                QMessageBox.critical(self, "Parameter estimation failed", error_msg["value"])
+
+        dlg.estimate_button.clicked.connect(_run_estimate)
+
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        layer = dlg.selected_layer()
+        if layer is None:
+            return
+        layer_id = layer.id
+        normal_mode = dlg.normal_mode()
+        if normal_mode is None:
+            return
+
+        normals: np.ndarray | None = None
+        if normal_mode == "use_provided":
+            normal_field_name = dlg.normal_field_name()
+            if normal_field_name is None:
+                QMessageBox.warning(self, "Planar region growing", "No normals field selected.")
+                return
+            normal_fields = layer.data.get_fields(names=normal_field_name, field_type=FieldType.NORMAL)
+            if not normal_fields:
+                QMessageBox.warning(self, "Planar region growing", "Selected normals field was not found.")
+                return
+            normals = np.asarray(normal_fields[0].data, dtype=np.float32)
+            if normals.ndim != 2 or normals.shape[1] != 3:
+                QMessageBox.warning(
+                    self,
+                    "Planar region growing",
+                    f"Normals field '{normal_field_name}' must have shape (N,3).",
+                )
+                return
+
+        progress = _native_region_growing.Progress()
+        base_name = dlg.output_field_base() or "planar_regions"
+        output_field_name = self._unique_field_name(layer.data.field_names, base_name)
+
+        class _RegionGrowingWorker(QThread):
+            errored = pyqtSignal(str)
+            completed = pyqtSignal()
+
+            def run(self) -> None:
+                try:
+                    labels, stats = segment_planar_regions(
+                        layer.data,
+                        normals=normals,
+                        normal_mode=normal_mode,
+                        params=dlg.params(),
+                        chunking=dlg.chunking(),
+                        merge=dlg.merge(),
+                        progress=progress,
+                    )
+                    labels = np.asarray(labels, dtype=np.int32).reshape(-1)
+                    if labels.shape[0] != layer.data.points.shape[0]:
+                        raise RuntimeError("Native output label length does not match point count.")
+                    layer.data.add_field(
+                        name=output_field_name,
+                        data=labels[:, None],
+                        field_type=FieldType.INSTANCE,
+                    )
+                    self.completed.emit()
+                except Exception as exc:  # pragma: no cover - GUI path
+                    self.errored.emit(str(exc))
+
+        progress_dialog = QDialog(self)
+        progress_dialog.setWindowTitle("Planar region growing")
+        progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        progress_dialog.resize(760, 560)
+        progress_layout = QVBoxLayout(progress_dialog)
+        progress_layout.setContentsMargins(10, 10, 10, 10)
+        progress_layout.setSpacing(8)
+
+        overall_label = QLabel("Running planar region growing...", progress_dialog)
+        overall_label.setWordWrap(False)
+        overall_label.setFixedHeight(overall_label.fontMetrics().height() + 6)
+        overall_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        progress_layout.addWidget(overall_label)
+        overall_bar = QProgressBar(progress_dialog)
+        overall_bar.setRange(0, 0)
+        overall_bar.setValue(0)
+        overall_bar.setFixedHeight(overall_bar.sizeHint().height())
+        overall_bar.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        progress_layout.addWidget(overall_bar)
+
+        def _on_cancel() -> None:
+            progress.request_cancel()
+            overall_label.setText("Cancelling...")
+
+        chunk_scroll = QScrollArea(progress_dialog)
+        chunk_scroll.setWidgetResizable(True)
+        chunk_scroll.setMinimumWidth(560)
+        chunk_scroll.setMinimumHeight(420)
+        chunk_scroll.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        chunk_container = QWidget(chunk_scroll)
+        chunk_rows_layout = QVBoxLayout(chunk_container)
+        chunk_rows_layout.setContentsMargins(4, 4, 4, 4)
+        chunk_rows_layout.setSpacing(6)
+        chunk_rows_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        chunk_scroll.setWidget(chunk_container)
+        progress_layout.addWidget(chunk_scroll, 1)
+
+        cancel_btn = QPushButton("Cancel", progress_dialog)
+        cancel_btn.clicked.connect(_on_cancel)
+        progress_layout.addWidget(cancel_btn, alignment=Qt.AlignmentFlag.AlignRight)
+        chunk_rows: dict[int, tuple[QLabel, QProgressBar, QLabel]] = {}
+
+        def _ensure_chunk_row(chunk_idx: int) -> tuple[QLabel, QProgressBar, QLabel]:
+            existing = chunk_rows.get(chunk_idx)
+            if existing is not None:
+                return existing
+            row = QWidget(chunk_container)
+            row.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setSpacing(8)
+            label = QLabel(f"Chunk {chunk_idx}", row)
+            label.setFixedWidth(80)
+            bar = QProgressBar(row)
+            bar.setRange(0, 100)
+            bar.setValue(0)
+            bar.setFixedWidth(260)
+            bar.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+            info = QLabel("-", row)
+            info.setFixedWidth(240)
+            info.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+            row_layout.addWidget(label)
+            row_layout.addWidget(bar)
+            row_layout.addWidget(info)
+            row_layout.addStretch(1)
+            chunk_rows_layout.addWidget(row)
+            chunk_rows[chunk_idx] = (label, bar, info)
+            return chunk_rows[chunk_idx]
+
+        timer = QTimer(self)
+        timer.setInterval(100)
+        t_start = time.perf_counter()
+        tick_counter = 0
+
+        def _on_tick() -> None:
+            nonlocal tick_counter
+            tick_counter += 1
+            try:
+                total = progress.total()
+                done = progress.done()
+                elapsed = time.perf_counter() - t_start
+                if total > 0:
+                    overall_bar.setRange(0, int(total))
+                    overall_bar.setValue(min(int(done), int(total)))
+                    overall_label.setText(
+                        f"Running planar region growing... {done}/{total} | {elapsed:.1f}s"
+                    )
+                else:
+                    overall_bar.setRange(0, 0)
+                    overall_label.setText(
+                        f"Running planar region growing... {elapsed:.1f}s"
+                    )
+
+                # Poll chunk telemetry at lower frequency to reduce overhead.
+                if (tick_counter % 5) != 0:
+                    return
+                if not hasattr(progress, "chunk_statuses"):
+                    return
+                statuses = progress.chunk_statuses()
+                for s in statuses:
+                    chunk_idx = int(s.get("chunk", -1))
+                    if chunk_idx < 0:
+                        continue
+                    _, bar, info = _ensure_chunk_row(chunk_idx)
+                    fail_rate = float(s.get("fail_rate", 0.0))
+                    fail_threshold = max(1e-6, float(s.get("fail_threshold", 1.0)))
+                    rel = min(1.5, fail_rate / fail_threshold)
+                    bar.setValue(int(min(100.0, rel * 100.0)))
+                    attempts = int(s.get("attempts", 0))
+                    regions = int(s.get("regions", 0))
+                    remaining = int(s.get("remaining", 0))
+                    phase = int(s.get("phase", 0))
+                    if phase <= 0:
+                        state = "segmenting"
+                    elif phase == 1:
+                        state = "finalizing"
+                    else:
+                        state = "done"
+                    info.setText(
+                        f"{state} | a={attempts} r={regions} rem={remaining} "
+                        f"f={fail_rate:.2f}/{fail_threshold:.2f}"
+                    )
+            except Exception as exc:  # pragma: no cover - GUI path
+                # Keep UI alive and expose polling failures for debugging.
+                print(f"[region_growing/ui] progress polling failed: {exc}")
+
+        timer.timeout.connect(_on_tick)
+
+        loop = QEventLoop(self)
+        error_msg: dict[str, str | None] = {"value": None}
+
+        def _on_finished() -> None:
+            timer.stop()
+            progress_dialog.close()
+            loop.quit()
+
+        def _on_error(msg: str) -> None:
+            error_msg["value"] = msg
+            _on_finished()
+
+        def _on_completed() -> None:
+            _on_finished()
+
+        worker = _RegionGrowingWorker()
+        worker.errored.connect(_on_error)
+        worker.completed.connect(_on_completed)
+        worker.finished.connect(lambda: None)
+        progress_dialog.show()
+        QApplication.processEvents()
+        worker.start()
+        timer.start()
+        loop.exec()
+        worker.wait()
+
+        if error_msg["value"] is not None:
+            QMessageBox.critical(self, "Planar region growing failed", error_msg["value"])
+            return
+
+        if progress.cancelled():
+            return
+
+        scene_after = self.scene_manager._scene
+        target_layer = layer
+        if scene_after is not None:
+            target_layer_obj = scene_after.layers.get(layer_id)
+            if isinstance(target_layer_obj, PointCloudLayer):
+                target_layer = target_layer_obj
+                scene_after.active_layer_id = target_layer.id
+
+        target_layer.set_active_field_name(output_field_name)
+        target_layer.update()
+        self.scene_manager.broadcastActivatedLayer.emit(target_layer)
+        self.scene_manager.broadcastActivatedPcdField.emit(target_layer)
+        print(
+            f"[region_growing] Added field '{output_field_name}' "
+            f"(type=INSTANCE, points={target_layer.data.points.shape[0]}) on layer '{target_layer.browser_name}'"
+        )
+        dataset = self.dataset_manager._dataset
+        if dataset is not None and scene_after is not None:
+            for ref in dataset.doc_refs:
+                if ref.name == scene_after.doc.name:
+                    ref.modState = RefModState.MODIFIED
+                    break
+        self.scene_manager.populate_tree()
+        self.viewer.rerender()
+
+    def _on_plane_ransac(self) -> None:
+        scene = self.scene_manager._scene
+        if scene is None:
+            return
+        active_layer = self._get_active_pointcloud_layer()
+        dlg = PlaneRansacDialog(scene, active_layer, parent=self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        layer = dlg.selected_layer()
+        if layer is None:
+            return
+        layer_id = layer.id
+        normal_mode = dlg.normal_mode()
+        if normal_mode is None:
+            return
+
+        normals: np.ndarray | None = None
+        if normal_mode == "use_provided":
+            normal_field_name = dlg.normal_field_name()
+            if normal_field_name is None:
+                QMessageBox.warning(self, "Plane RANSAC", "No normals field selected.")
+                return
+            normal_fields = layer.data.get_fields(names=normal_field_name, field_type=FieldType.NORMAL)
+            if not normal_fields:
+                QMessageBox.warning(self, "Plane RANSAC", "Selected normals field was not found.")
+                return
+            normals = np.asarray(normal_fields[0].data, dtype=np.float32)
+            if normals.ndim != 2 or normals.shape[1] != 3:
+                QMessageBox.warning(
+                    self,
+                    "Plane RANSAC",
+                    f"Normals field '{normal_field_name}' must have shape (N,3).",
+                )
+                return
+
+        progress = _native_plane_ransac.Progress()
+        output_field_name = self._unique_field_name(
+            layer.data.field_names,
+            dlg.output_field_base() or "ransac_planes",
+        )
+
+        class _PlaneRansacWorker(QThread):
+            errored = pyqtSignal(str)
+            completed = pyqtSignal()
+
+            def run(self) -> None:
+                try:
+                    labels, _stats = segment_ransac_planes(
+                        layer.data,
+                        normals=normals,
+                        normal_mode=normal_mode,
+                        params=dlg.params(),
+                        progress=progress,
+                    )
+                    labels = np.asarray(labels, dtype=np.int32).reshape(-1)
+                    if labels.shape[0] != layer.data.points.shape[0]:
+                        raise RuntimeError("Native output label length does not match point count.")
+                    layer.data.add_field(
+                        name=output_field_name,
+                        data=labels[:, None],
+                        field_type=FieldType.INSTANCE,
+                    )
+                    self.completed.emit()
+                except Exception as exc:  # pragma: no cover - GUI path
+                    self.errored.emit(str(exc))
+
+        progress_dialog = QProgressDialog("Running plane RANSAC...", "Cancel", 0, 0, self)
+        progress_dialog.setWindowTitle("Plane RANSAC")
+        progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        progress_dialog.setMinimumDuration(0)
+
+        def _on_cancel() -> None:
+            progress.request_cancel()
+            progress_dialog.setLabelText("Cancelling...")
+
+        progress_dialog.canceled.connect(_on_cancel)
+
+        timer = QTimer(self)
+        timer.setInterval(100)
+        t_start = time.perf_counter()
+
+        def _on_tick() -> None:
+            try:
+                total = progress.total()
+                done = progress.done()
+                elapsed = time.perf_counter() - t_start
+                if total > 0:
+                    progress_dialog.setMaximum(int(total))
+                    progress_dialog.setValue(min(int(done), int(total)))
+                stage = progress.stage()
+                progress_dialog.setLabelText(
+                    f"{stage} | planes={progress.planes_found()} "
+                    f"| remaining={progress.active_points_remaining()} "
+                    f"| best={progress.current_best_support()} "
+                    f"| {elapsed:.1f}s"
+                )
+            except Exception as exc:  # pragma: no cover - GUI path
+                print(f"[plane_ransac/ui] progress polling failed: {exc}")
+
+        timer.timeout.connect(_on_tick)
+
+        loop = QEventLoop(self)
+        error_msg: dict[str, str | None] = {"value": None}
+
+        def _on_finished() -> None:
+            timer.stop()
+            progress_dialog.close()
+            loop.quit()
+
+        def _on_error(msg: str) -> None:
+            error_msg["value"] = msg
+            _on_finished()
+
+        worker = _PlaneRansacWorker()
+        worker.errored.connect(_on_error)
+        worker.completed.connect(_on_finished)
+        worker.finished.connect(lambda: None)
+        progress_dialog.show()
+        QApplication.processEvents()
+        worker.start()
+        timer.start()
+        loop.exec()
+        worker.wait()
+
+        if error_msg["value"] is not None:
+            QMessageBox.critical(self, "Plane RANSAC failed", error_msg["value"])
+            return
+
+        if progress.cancelled():
+            return
+
+        scene_after = self.scene_manager._scene
+        target_layer = layer
+        if scene_after is not None:
+            target_layer_obj = scene_after.layers.get(layer_id)
+            if isinstance(target_layer_obj, PointCloudLayer):
+                target_layer = target_layer_obj
+                scene_after.active_layer_id = target_layer.id
+
+        target_layer.set_active_field_name(output_field_name)
+        target_layer.update()
+        self.scene_manager.broadcastActivatedLayer.emit(target_layer)
+        self.scene_manager.broadcastActivatedPcdField.emit(target_layer)
+        print(
+            f"[plane_ransac] Added field '{output_field_name}' "
+            f"(type=INSTANCE, points={target_layer.data.points.shape[0]}) on layer '{target_layer.browser_name}'"
+        )
+        dataset = self.dataset_manager._dataset
+        if dataset is not None and scene_after is not None:
+            for ref in dataset.doc_refs:
+                if ref.name == scene_after.doc.name:
+                    ref.modState = RefModState.MODIFIED
+                    break
         self.scene_manager.populate_tree()
         self.viewer.rerender()
 

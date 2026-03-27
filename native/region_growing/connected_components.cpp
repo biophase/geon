@@ -3,7 +3,6 @@
 
 #include "types.h"
 #include "rgrow.h"
-#include "io.h"
 #include "connected_components.h"
 
 
@@ -44,18 +43,33 @@ void unionFindUnion (size_t x, size_t y,
 
 
 std::vector<size_t> getChunkNeighborsFull (size_t query_hash, size_t X, size_t Y, size_t Z){
-    
     auto c = unflattenIndex(query_hash, X, Y, Z);
-    std::vector<size_t> neighbor_hashes (26);
-    size_t neighb_idx = 0;
-    std::vector<int> offsets = {-1, 0, 1};
-    for (int dx : offsets){
-        for (int dy : offsets){
-            for (int dz : offsets){
-                if (!((dx==0)&&(dy==0)&&(dz==0))){
-                    neighbor_hashes[neighb_idx] = flattenIndex(c[0]+dx, X, c[1]+dy, Y, c[2]+dz, Z);
-                    neighb_idx ++;
+    const int cx = static_cast<int>(c[0]);
+    const int cy = static_cast<int>(c[1]);
+    const int cz = static_cast<int>(c[2]);
+
+    std::vector<size_t> neighbor_hashes;
+    neighbor_hashes.reserve(26);
+    for (int dx = -1; dx <= 1; ++dx){
+        for (int dy = -1; dy <= 1; ++dy){
+            for (int dz = -1; dz <= 1; ++dz){
+                if (dx == 0 && dy == 0 && dz == 0){
+                    continue;
                 }
+                const int nx = cx + dx;
+                const int ny = cy + dy;
+                const int nz = cz + dz;
+                if (nx < 0 || ny < 0 || nz < 0){
+                    continue;
+                }
+                if (nx >= static_cast<int>(X) || ny >= static_cast<int>(Y) || nz >= static_cast<int>(Z)){
+                    continue;
+                }
+                neighbor_hashes.push_back(flattenIndex(
+                    static_cast<size_t>(nx), X,
+                    static_cast<size_t>(ny), Y,
+                    static_cast<size_t>(nz), Z
+                ));
             }
         }
     }

@@ -634,7 +634,10 @@ class InstanceSegmentation(FieldBase):
         
         # Knuth multiplicative hash
         data = self.data.reshape(-1)
-        hashed = (data * 2654435761) & 0xFFFFFFFF
+        # Use explicit uint32 arithmetic to avoid platform-dependent
+        # Python-int conversion overflow on Windows.
+        data_u32 = data.astype(np.uint32, copy=False)
+        hashed = data_u32 * np.uint32(2654435761)
         h = (hashed.astype(np.float32) / np.float32(2**32)) 
         s = np.full_like(h, .9, dtype=np.float32)
         v = np.full_like(h, .9, dtype=np.float32)
@@ -646,14 +649,12 @@ class InstanceSegmentation(FieldBase):
     
     def get_next_instance_id(self) -> int:
         return mex(self.data)
-    
-    # @classmethod
-    # def from_hdf5_fieldgroup(cls, dataset: h5py.Dataset) -> "InstanceSegmentation":
-    #     data = dataset[()]
-    #     name = dataset.name
-    #     assert isinstance(name, str)            
-    #     name = name.split("/")[-1]
-    #     return cls(name=name, data=data)
+
+    @classmethod
+    def from_hdf5_fieldgroup(cls, field_group: h5py.Group) -> "InstanceSegmentation":
+        name, data, _, _ = cls._read_hdf5_fieldgroup(field_group)
+        data_arr = np.asarray(data, dtype=np.int32)
+        return cls(name=name, data=data_arr)
         
     
 
