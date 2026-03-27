@@ -1,41 +1,39 @@
 from __future__ import annotations
 
-from typing import Any, Iterable, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Iterable, Optional, Tuple
 
 import numpy as np
 from numpy.typing import NDArray
 
 from geon._native import superpoints as _native
 
-from ..data.pointcloud import FieldType, PointCloudData
+if TYPE_CHECKING:
+    from ..data.pointcloud import PointCloudData
 
 Progress = _native.Progress
 
 
 def _as_coords(
-    data_or_coords: PointCloudData | NDArray[np.float32],
+    data_or_coords: "PointCloudData" | NDArray[np.float32],
 ) -> NDArray[np.float32]:
-    if isinstance(data_or_coords, PointCloudData):
-        coords = data_or_coords.points
-    else:
-        coords = data_or_coords
+    coords = data_or_coords.points if hasattr(data_or_coords, "points") else data_or_coords
     arr = np.ascontiguousarray(np.asarray(coords, dtype=np.float32))
     if arr.ndim != 2 or arr.shape[1] != 3:
         raise ValueError(f"coords must be a (N,3) array, got {arr.shape}")
     return arr
 
 
-def _supported_field(field_type: FieldType) -> bool:
-    return field_type in {
-        FieldType.SCALAR,
-        FieldType.VECTOR,
-        FieldType.NORMAL,
-        FieldType.INTENSITY,
+def _supported_field(field_type: object) -> bool:
+    return getattr(field_type, "name", None) in {
+        "SCALAR",
+        "VECTOR",
+        "NORMAL",
+        "INTENSITY",
     }
 
 
 def _build_feature_matrix_from_fields(
-    data: PointCloudData,
+    data: "PointCloudData",
     field_names: Iterable[str],
 ) -> NDArray[np.float32] | None:
     parts: list[NDArray[np.float32]] = []
@@ -60,7 +58,7 @@ def _build_feature_matrix_from_fields(
 
 
 def segment_superpoints(
-    data_or_coords: PointCloudData | NDArray[np.float32],
+    data_or_coords: "PointCloudData" | NDArray[np.float32],
     *,
     feature_field_names: Optional[Iterable[str]] = None,
     features: Optional[NDArray[np.float32]] = None,
@@ -79,7 +77,7 @@ def segment_superpoints(
 
     features_arr: NDArray[np.float32] | None = None
     if feature_field_names is not None:
-        if not isinstance(data_or_coords, PointCloudData):
+        if not hasattr(data_or_coords, "get_fields") or not hasattr(data_or_coords, "points"):
             raise ValueError("feature_field_names requires a PointCloudData input")
         features_arr = _build_feature_matrix_from_fields(data_or_coords, feature_field_names)
     elif features is not None:

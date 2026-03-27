@@ -1,23 +1,21 @@
 from __future__ import annotations
 
-from typing import Any, Literal, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Literal, Optional, Tuple
 
 import numpy as np
 from numpy.typing import NDArray
 
 from geon._native import plane_ransac as _native
-from ..data.pointcloud import PointCloudData
+if TYPE_CHECKING:
+    from ..data.pointcloud import PointCloudData
 
 Progress = _native.Progress
 
 
 def _as_coords(
-    data_or_coords: PointCloudData | NDArray[np.float32],
+    data_or_coords: "PointCloudData" | NDArray[np.float32],
 ) -> NDArray[np.float32]:
-    if isinstance(data_or_coords, PointCloudData):
-        coords = data_or_coords.points
-    else:
-        coords = data_or_coords
+    coords = data_or_coords.points if hasattr(data_or_coords, "points") else data_or_coords
     arr = np.ascontiguousarray(np.asarray(coords, dtype=np.float32))
     if arr.ndim != 2 or arr.shape[1] != 3:
         raise ValueError(f"coords must be a (N,3) array, got {arr.shape}")
@@ -25,7 +23,7 @@ def _as_coords(
 
 
 def segment_planes(
-    data_or_coords: PointCloudData | NDArray[np.float32],
+    data_or_coords: "PointCloudData" | NDArray[np.float32],
     *,
     normals: Optional[NDArray[np.float32]] = None,
     normal_mode: Literal["compute", "use_provided"] = "compute",

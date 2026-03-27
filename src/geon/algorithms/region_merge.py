@@ -1,24 +1,22 @@
 from __future__ import annotations
 
-from typing import Any, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Optional, Tuple
 
 import numpy as np
 from numpy.typing import NDArray
 
 from geon._native import region_merge as _native
 
-from ..data.pointcloud import PointCloudData
+if TYPE_CHECKING:
+    from ..data.pointcloud import PointCloudData
 
 Progress = _native.Progress
 
 
 def _as_coords(
-    data_or_coords: PointCloudData | NDArray[np.float32],
+    data_or_coords: "PointCloudData" | NDArray[np.float32],
 ) -> NDArray[np.float32]:
-    if isinstance(data_or_coords, PointCloudData):
-        coords = data_or_coords.points
-    else:
-        coords = data_or_coords
+    coords = data_or_coords.points if hasattr(data_or_coords, "points") else data_or_coords
     arr = np.ascontiguousarray(np.asarray(coords, dtype=np.float32))
     if arr.ndim != 2 or arr.shape[1] != 3:
         raise ValueError(f"coords must be a (N,3) array, got {arr.shape}")
@@ -37,7 +35,7 @@ def _as_labels(labels: NDArray[np.int32] | NDArray[np.int64]) -> NDArray[np.int3
 
 
 def merge_planar_regions(
-    data_or_coords: PointCloudData | NDArray[np.float32],
+    data_or_coords: "PointCloudData" | NDArray[np.float32],
     labels: NDArray[np.int32] | NDArray[np.int64],
     *,
     params: Optional[dict[str, Any]] = None,
