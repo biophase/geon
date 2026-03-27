@@ -1225,7 +1225,7 @@ py::tuple segment_planar_regions_impl(
 PYBIND11_MODULE(region_growing, m){
     m.doc() = "Planar region growing module";
 
-    py::class_<ProgressState>(m, "Progress")
+    py::class_<ProgressState>(m, "Progress", py::module_local())
         .def(py::init<>())
         .def("reset", &ProgressState::reset, py::arg("total"))
         .def("request_cancel", &ProgressState::requestCancel)

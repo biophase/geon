@@ -3,7 +3,7 @@ _temp/*
 src/geon/_temp/*
 src/geon/_temp/cgal/
 .cmake*/
-
+build_exe.bat
 *.pyc
 _archive/*
 **/__pycache__/

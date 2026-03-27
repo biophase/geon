@@ -272,7 +272,7 @@ py::tuple segment_planes_impl(
 PYBIND11_MODULE(plane_ransac, m){
     m.doc() = "Plane-only RANSAC segmentation";
 
-    py::class_<ProgressState>(m, "Progress")
+    py::class_<ProgressState>(m, "Progress", py::module_local())
         .def(py::init<>())
         .def("reset", &ProgressState::reset, py::arg("total"))
         .def("request_cancel", &ProgressState::requestCancel)

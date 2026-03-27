@@ -85,7 +85,7 @@ RegionMergeParams parse_params(const py::dict& d){
 PYBIND11_MODULE(region_merge, m){
     m.doc() = "Planar region merging for instance fields";
 
-    py::class_<RegionMergeProgressState>(m, "Progress")
+    py::class_<RegionMergeProgressState>(m, "Progress", py::module_local())
         .def(py::init<>())
         .def("reset", &RegionMergeProgressState::reset, py::arg("total"))
         .def("request_cancel", &RegionMergeProgressState::requestCancel)
