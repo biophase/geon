@@ -14,7 +14,8 @@ from .definitions import ColorMap
 from .registry import register_data
 
 from geon.util.common import decode_utf8, generate_vibrant_color
-from geon.config import theme
+
+DEFAULT_SEGMENTATION_COLOR: Tuple[int, int, int] = (204, 204, 204)
 
 class FieldType(Enum):
     SCALAR = auto()
@@ -379,7 +380,7 @@ class SemanticSchema:
                 SemanticClass(
                     -1,
                     "_unlabeled",
-                    theme.DEFAULT_SEGMENTATION_COLOR,
+                    DEFAULT_SEGMENTATION_COLOR,
                 )
             ]
         self.semantic_classes = semantic_classes
@@ -485,7 +486,7 @@ class SemanticSchema:
 
         ids = [s.id for s in self.semantic_classes]
         max_id = max(max(ids), seg_data.max())
-        map_arr = np.full((max_id + 2, 3), theme.DEFAULT_SEGMENTATION_COLOR, np.uint8)
+        map_arr = np.full((max_id + 2, 3), DEFAULT_SEGMENTATION_COLOR, np.uint8)
 
         for cls in self.semantic_classes:
             if cls.id >= 0:

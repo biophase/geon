@@ -1,5 +1,9 @@
 import sys
 
+from geon.util.runtime_logging import configure_runtime_logging
+
+configure_runtime_logging("geon")
+
 from geon.ui.main_window import MainWindow
 from geon.settings import Preferences
 from PyQt6.QtWidgets import QApplication

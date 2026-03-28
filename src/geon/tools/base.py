@@ -150,6 +150,12 @@ class ModeTool(BaseTool):
         override to define tool behaviour on left mouse click
         """
         pass
+
+    def left_button_release_hook(self, event: Event) -> None:
+        """
+        override to define tool behaviour on left mouse release
+        """
+        pass
     
     def double_click_press_hook(self, event: Event) -> None:
         """

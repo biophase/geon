@@ -59,6 +59,7 @@ class InteractorStyle(vtk.vtkInteractorStyleTrackballCamera):
         
         # observers
         self.AddObserver(vtk.vtkCommand.LeftButtonPressEvent, self.left_button_press_event)
+        self.AddObserver(vtk.vtkCommand.LeftButtonReleaseEvent, self.left_button_release_event)
         self.AddObserver(vtk.vtkCommand.RightButtonPressEvent, self.right_button_press_event)
         self.AddObserver(vtk.vtkCommand.MiddleButtonPressEvent, self.middle_button_press_event)
         self.AddObserver(vtk.vtkCommand.RightButtonReleaseEvent, self.right_button_release_event)
@@ -111,7 +112,13 @@ class InteractorStyle(vtk.vtkInteractorStyleTrackballCamera):
             self.mode_tool.double_click_press_hook(self.event_info)
         if self.camera_enabled:
             self._focus_camera()
-        
+
+    def left_button_release_event(self, _vtk_obj, _vtk_event):
+        if self.camera_enabled:
+            self.OnLeftButtonUp()
+        if self.mode_tool is not None:
+            self.mode_tool.left_button_release_hook(self.event_info)
+
     def right_button_press_event(self, _vtk_obj, _vtk_event):
         if self.mode_tool is not None:
             self.mode_tool.right_button_press_hook(self.event_info)        

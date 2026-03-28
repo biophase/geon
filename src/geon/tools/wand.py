@@ -115,8 +115,20 @@ class WandTool(ModeTool):
     # ------------------------------------------------
     
     def left_button_press_hook(self, event: Event) -> None:
-        self._on_click(event)
         super().left_button_press_hook(event)
+
+    def left_button_release_hook(self, event: Event) -> None:
+        self._on_click(
+            Event(
+                pos=event.pos,
+                prev_pos=event.prev_pos,
+                shift=event.shift,
+                ctrl=event.ctrl,
+                alt=event.alt,
+                key=event.key,
+            )
+        )
+        super().left_button_release_hook(event)
         
     def activate(self) -> None:
         return super().activate()

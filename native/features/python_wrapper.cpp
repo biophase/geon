@@ -43,7 +43,7 @@ PYBIND11_MODULE(features, m){
         .def(py::init<>())
         .def("__len__", [](const VoxelHashIndex& self){ return self.map.size(); });
 
-    py::class_<ProgressState>(m, "Progress")
+    py::class_<ProgressState>(m, "Progress", py::module_local())
         .def(py::init<>())
         .def("reset", &ProgressState::reset, py::arg("total"))
         .def("request_cancel", &ProgressState::requestCancel)
