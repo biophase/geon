@@ -1225,7 +1225,12 @@ py::tuple segment_planar_regions_impl(
 PYBIND11_MODULE(region_growing, m){
     m.doc() = "Planar region growing module";
 
-    py::class_<ProgressState>(m, "Progress", py::module_local())
+    // Keep the registered pybind type name unique across extension modules.
+    auto progress_type = py::class_<ProgressState>(
+        m,
+        "_RegionGrowingProgress",
+        py::module_local()
+    )
         .def(py::init<>())
         .def("reset", &ProgressState::reset, py::arg("total"))
         .def("request_cancel", &ProgressState::requestCancel)
@@ -1233,6 +1238,7 @@ PYBIND11_MODULE(region_growing, m){
         .def("done", &ProgressState::completed)
         .def("total", &ProgressState::totalCount)
         .def("chunk_statuses", &ProgressState::chunkStatuses);
+    m.attr("Progress") = progress_type;
 
     py::class_<SeededGrowerSession>(m, "SeededGrower")
         .def(

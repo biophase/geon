@@ -65,7 +65,12 @@ std::vector<float> load_extra_features(
 PYBIND11_MODULE(superpoints, m){
     m.doc() = "Superpoint segmentation via parallel cut pursuit";
 
-    py::class_<SuperpointProgressState>(m, "Progress", py::module_local())
+    // Keep the registered pybind type name unique across extension modules.
+    auto progress_type = py::class_<SuperpointProgressState>(
+        m,
+        "_SuperpointsProgress",
+        py::module_local()
+    )
         .def(py::init<>())
         .def("reset", &SuperpointProgressState::reset, py::arg("total"))
         .def("request_cancel", &SuperpointProgressState::requestCancel)
@@ -73,6 +78,7 @@ PYBIND11_MODULE(superpoints, m){
         .def("done", &SuperpointProgressState::completed)
         .def("total", &SuperpointProgressState::totalCount)
         .def("stage", &SuperpointProgressState::stageText);
+    m.attr("Progress") = progress_type;
 
     m.def(
         "segment_superpoints",

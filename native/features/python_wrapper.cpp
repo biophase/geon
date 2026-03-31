@@ -43,13 +43,15 @@ PYBIND11_MODULE(features, m){
         .def(py::init<>())
         .def("__len__", [](const VoxelHashIndex& self){ return self.map.size(); });
 
-    py::class_<ProgressState>(m, "Progress", py::module_local())
+    // Keep the registered pybind type name unique across extension modules.
+    auto progress_type = py::class_<ProgressState>(m, "_FeaturesProgress", py::module_local())
         .def(py::init<>())
         .def("reset", &ProgressState::reset, py::arg("total"))
         .def("request_cancel", &ProgressState::requestCancel)
         .def("cancelled", &ProgressState::isCancelled)
         .def("done", &ProgressState::completed)
         .def("total", &ProgressState::totalCount);
+    m.attr("Progress") = progress_type;
 
     m.def(
         "voxel_key",

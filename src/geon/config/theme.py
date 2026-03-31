@@ -1,6 +1,3 @@
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QPalette, QColor
-
 from enum import Enum
 
 from typing import Tuple
@@ -15,6 +12,15 @@ class UIStyle(Enum):
 
 
 def set_dark_palette(app):
+    # Import Qt lazily so headless test/wheel environments can still import geon.config.theme.
+    try:
+        from PyQt6.QtCore import Qt
+        from PyQt6.QtGui import QColor, QPalette
+    except ImportError as exc:
+        raise RuntimeError(
+            "set_dark_palette requires PyQt6 with a functional GUI runtime."
+        ) from exc
+
     dark_palette = QPalette()
     dark_palette.setColor(QPalette.ColorRole.Window, QColor(53, 53, 53))
     dark_palette.setColor(QPalette.ColorRole.WindowText, Qt.GlobalColor.white)

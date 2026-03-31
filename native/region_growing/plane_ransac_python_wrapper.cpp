@@ -272,7 +272,12 @@ py::tuple segment_planes_impl(
 PYBIND11_MODULE(plane_ransac, m){
     m.doc() = "Plane-only RANSAC segmentation";
 
-    py::class_<ProgressState>(m, "Progress", py::module_local())
+    // Keep the registered pybind type name unique across extension modules.
+    auto progress_type = py::class_<ProgressState>(
+        m,
+        "_PlaneRansacProgress",
+        py::module_local()
+    )
         .def(py::init<>())
         .def("reset", &ProgressState::reset, py::arg("total"))
         .def("request_cancel", &ProgressState::requestCancel)
@@ -283,6 +288,7 @@ PYBIND11_MODULE(plane_ransac, m){
         .def("planes_found", &ProgressState::planesFound)
         .def("active_points_remaining", &ProgressState::activePointsRemaining)
         .def("current_best_support", &ProgressState::currentBestSupport);
+    m.attr("Progress") = progress_type;
 
     m.def(
         "segment_planes",

@@ -85,7 +85,12 @@ RegionMergeParams parse_params(const py::dict& d){
 PYBIND11_MODULE(region_merge, m){
     m.doc() = "Planar region merging for instance fields";
 
-    py::class_<RegionMergeProgressState>(m, "Progress", py::module_local())
+    // Keep the registered pybind type name unique across extension modules.
+    auto progress_type = py::class_<RegionMergeProgressState>(
+        m,
+        "_RegionMergeProgress",
+        py::module_local()
+    )
         .def(py::init<>())
         .def("reset", &RegionMergeProgressState::reset, py::arg("total"))
         .def("request_cancel", &RegionMergeProgressState::requestCancel)
@@ -93,6 +98,7 @@ PYBIND11_MODULE(region_merge, m){
         .def("done", &RegionMergeProgressState::completed)
         .def("total", &RegionMergeProgressState::totalCount)
         .def("stage", &RegionMergeProgressState::stageText);
+    m.attr("Progress") = progress_type;
 
     m.def(
         "merge_planar_regions",
