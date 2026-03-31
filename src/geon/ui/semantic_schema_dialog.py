@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional, List, Dict, Tuple
 
 from geon.config.theme import *
@@ -12,10 +13,14 @@ from PyQt6.QtWidgets import (
     QPushButton, QTableWidget, QTableWidgetItem,
     QHeaderView, QSpinBox, QColorDialog, QLineEdit,
     QDialogButtonBox, QMessageBox, QLabel, QComboBox,
-    QRadioButton
+    QRadioButton, QFileDialog, QListWidget, QListWidgetItem
 )
 
-from geon.data.pointcloud import SemanticSchema, SemanticClass
+from geon.data.pointcloud import (
+    DEFAULT_SEGMENTATION_COLOR,
+    SemanticSchema,
+    SemanticClass,
+)
 
 @dataclass
 class _RowMeta:
@@ -49,6 +54,7 @@ class _SemanticSchemaDialogBase(QDialog):
         self._row_meta: Dict[int, _RowMeta] = {}
         self._taken_schema_names = set(taken_schema_names or [])
         self._right_layout: Optional[QVBoxLayout] = None
+        self._left_layout: Optional[QVBoxLayout] = None
         self._ok_button: Optional[QPushButton] = None
 
         self._build_ui()
@@ -75,6 +81,7 @@ class _SemanticSchemaDialogBase(QDialog):
         self.btn_reindex.clicked.connect(self._on_reindex)
         self.btn_up.clicked.connect(self._on_move_up)
         self.btn_down.clicked.connect(self._on_move_down)
+        self._left_layout = left
 
         # Right main: table + bottom name + ok/cancel
         right = QVBoxLayout()
@@ -526,12 +533,12 @@ class _SemanticSchemaDialogBase(QDialog):
                 ids.append(int(spin.value()))
         return ids
 
-    def _validate(self) -> Optional[str]:
-        # schema name
-        schema_name = self.schema_name_edit.text().strip()
-        name_err = self._name_error(schema_name)
-        if name_err is not None:
-            return name_err
+    def _validate_rows(self, *, include_schema_name: bool = True) -> Optional[str]:
+        if include_schema_name:
+            schema_name = self.schema_name_edit.text().strip()
+            name_err = self._name_error(schema_name)
+            if name_err is not None:
+                return name_err
 
         # ids unique
         ids = self._current_ids(include_required=True)
@@ -544,17 +551,23 @@ class _SemanticSchemaDialogBase(QDialog):
                 return f"Required class id {rid} is missing."
 
         # names valid
+        names_seen: set[str] = set()
         for r in range(self.table.rowCount()):
             if self._is_add_row(r):
                 continue
             item = self.table.item(r, self.COL_NAME)
-            name = item.text() if item else ""
+            name = item.text().strip() if item else ""
+            if not name:
+                return "Class names cannot be empty."
             if len(name) > 256:
                 return "Class name exceeds 256 characters."
             try:
                 name.encode("ascii")
             except UnicodeEncodeError:
                 return "Class names must be ASCII."
+            if name in names_seen:
+                return "Class names must be unique."
+            names_seen.add(name)
 
         # continuity rule: nonnegative ids must be 0..max with no gaps
         nonneg = sorted([i for i in ids if i >= 0])
@@ -566,6 +579,9 @@ class _SemanticSchemaDialogBase(QDialog):
                 return "Class IDs must be continuous (no gaps). Use Reindex."
 
         return None
+
+    def _validate(self) -> Optional[str]:
+        return self._validate_rows(include_schema_name=True)
 
     def _build_schema(self) -> SemanticSchema:
         schema_name = self.schema_name_edit.text().strip()
@@ -680,6 +696,88 @@ class _DeletedIdMappingDialog(QDialog):
         return out
 
 
+class _AlignSchemaChoiceDialog(QDialog):
+    def __init__(
+        self,
+        schemas: List[SemanticSchema],
+        parent: Optional[QWidget] = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Align Schema")
+        self.resize(460, 320)
+        self._schemas = list(schemas)
+        self._selected_schema: Optional[SemanticSchema] = None
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel("Choose a target schema for alignment.", self), 0)
+
+        self.list_widget = QListWidget(self)
+        duplicate_counts: Dict[str, int] = {}
+        for schema in self._schemas:
+            duplicate_counts[schema.name] = duplicate_counts.get(schema.name, 0) + 1
+
+        for index, schema in enumerate(self._schemas, start=1):
+            label = schema.name
+            if duplicate_counts[schema.name] > 1:
+                label = f"{schema.name} ({len(schema.semantic_classes)} classes, #{index})"
+            item = QListWidgetItem(label)
+            item.setData(Qt.ItemDataRole.UserRole, schema)
+            self.list_widget.addItem(item)
+
+        if self.list_widget.count():
+            self.list_widget.setCurrentRow(0)
+        self.list_widget.itemDoubleClicked.connect(lambda _item: self.accept())
+        layout.addWidget(self.list_widget, 1)
+
+        action_row = QHBoxLayout()
+        self.from_json_btn = QPushButton("From JSON...", self)
+        self.from_json_btn.clicked.connect(self._on_from_json)
+        action_row.addWidget(self.from_json_btn, 0)
+        action_row.addStretch(1)
+        layout.addLayout(action_row)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+            parent=self,
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons, 0)
+
+    def _on_from_json(self) -> None:
+        json_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Load schema from JSON",
+            "",
+            "JSON Files (*.json)",
+        )
+        if not json_path:
+            return
+        try:
+            schema = SemanticSchema.from_json(json_path)
+        except Exception as exc:
+            QMessageBox.critical(self, "Failed to load schema", str(exc))
+            return
+        schema.name = Path(json_path).stem or schema.name
+        self._selected_schema = schema
+        QDialog.accept(self)
+
+    def selected_schema(self) -> Optional[SemanticSchema]:
+        if self._selected_schema is not None:
+            return self._selected_schema
+        item = self.list_widget.currentItem()
+        if item is None:
+            return None
+        schema = item.data(Qt.ItemDataRole.UserRole)
+        return schema if isinstance(schema, SemanticSchema) else None
+
+    def accept(self) -> None:
+        if self._selected_schema is None and self.selected_schema() is None:
+            QMessageBox.warning(self, "No schema selected", "Choose a schema or load one from JSON.")
+            return
+        QDialog.accept(self)
+
+
 class SemanticSchemaEditDialog(_SemanticSchemaDialogBase):
     def __init__(
         self,
@@ -688,6 +786,7 @@ class SemanticSchemaEditDialog(_SemanticSchemaDialogBase):
         parent: Optional[QWidget] = None,
         *,
         taken_schema_names: Optional[List[str]] = None,
+        available_align_schemas: Optional[List[SemanticSchema]] = None,
     ) -> None:
         super().__init__(
             required_ids=required_ids,
@@ -700,8 +799,10 @@ class SemanticSchemaEditDialog(_SemanticSchemaDialogBase):
         self.update_existing = True
         self._original_schema_name = schema.name
         self._original_ids = [cls.id for cls in schema.semantic_classes]
+        self._available_align_schemas = list(available_align_schemas or [])
 
         self._insert_edit_options()
+        self._insert_align_action()
         self._populate_from_schema(schema)
 
     def _insert_edit_options(self) -> None:
@@ -729,6 +830,14 @@ class SemanticSchemaEditDialog(_SemanticSchemaDialogBase):
         self.update_existing = self._update_existing_radio.isChecked()
         self._update_name_state()
 
+    def _insert_align_action(self) -> None:
+        if self._left_layout is None:
+            return
+        self.btn_align = QPushButton("Align...", self)
+        self.btn_align.clicked.connect(self._on_align_clicked)
+        insert_index = max(0, self._left_layout.count() - 1)
+        self._left_layout.insertWidget(insert_index, self.btn_align)
+
     def _name_error(self, name: str) -> Optional[str]:
         if not name:
             return "Schema name cannot be empty."
@@ -747,6 +856,69 @@ class SemanticSchemaEditDialog(_SemanticSchemaDialogBase):
     def _row_id_value(self, row: int) -> int:
         spin = self.table.cellWidget(row, self.COL_ID)
         return int(spin.value()) if isinstance(spin, QSpinBox) else 0
+
+    def _original_ids_by_name(self) -> Dict[str, Optional[int]]:
+        out: Dict[str, Optional[int]] = {}
+        for r in range(self.table.rowCount()):
+            if self._is_add_row(r):
+                continue
+            item = self.table.item(r, self.COL_NAME)
+            name = item.text().strip() if item else ""
+            meta = self._row_meta.get(r, _RowMeta())
+            out[name] = meta.original_id
+        return out
+
+    def _replace_rows_from_schema(
+        self,
+        schema: SemanticSchema,
+        *,
+        original_ids_by_name: Dict[str, Optional[int]],
+    ) -> None:
+        self.table.setRowCount(0)
+        self._row_meta.clear()
+        self._insert_add_row()
+        for sem_cls in sorted(schema.semantic_classes, key=lambda cls: cls.id):
+            self._insert_class_row(
+                sem_cls.id,
+                sem_cls.color,
+                sem_cls.name,
+                required=sem_cls.id in self.required_ids,
+                original_id=original_ids_by_name.get(sem_cls.name),
+            )
+        self._rewire_row_callbacks()
+
+    def _on_align_clicked(self) -> None:
+        err = self._validate_rows(include_schema_name=False)
+        if err is not None:
+            QMessageBox.warning(self, "Invalid schema", err)
+            return
+
+        chooser = _AlignSchemaChoiceDialog(self._available_align_schemas, parent=self)
+        if chooser.exec() != QDialog.DialogCode.Accepted:
+            return
+        target_schema = chooser.selected_schema()
+        if target_schema is None:
+            return
+
+        current_schema = self._build_schema()
+        original_ids_by_name = self._original_ids_by_name()
+        try:
+            result = current_schema.align_to_schema(target_schema)
+        except Exception as exc:
+            QMessageBox.critical(self, "Schema alignment failed", str(exc))
+            return
+
+        self._replace_rows_from_schema(
+            result.aligned_schema,
+            original_ids_by_name=original_ids_by_name,
+        )
+        if result.partial_success:
+            missing = ", ".join(result.missing_in_target_names)
+            QMessageBox.warning(
+                self,
+                "Partial alignment",
+                f"These classes were not present in the target schema and were appended: {missing}",
+            )
 
     def _collect_old_to_new_ids(self) -> Optional[List[Tuple[int, int]]]:
         mapping: List[Tuple[int, int]] = []

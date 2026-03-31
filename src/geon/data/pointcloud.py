@@ -367,6 +367,14 @@ class SemanticClass:
     #     return hash((self.id, self.name))
 
 
+@dataclass
+class SemanticSchemaAlignmentResult:
+    aligned_schema: "SemanticSchema"
+    old_to_new_ids: List[Tuple[int, int]]
+    partial_success: bool
+    missing_in_target_names: List[str]
+
+
 class SemanticSchema:
     
     def __init__(
@@ -393,12 +401,12 @@ class SemanticSchema:
     
     @classmethod
     def from_json(cls, json_path:str) -> "SemanticSchema":
-        with open(json_path, "r") as f:
+        with open(json_path, "r", encoding="utf-8") as f:
             data = json.load(f)
         return cls.from_dict(data)
     
     def to_json(self, json_path: str) -> None:
-        with open(json_path, "w") as f:
+        with open(json_path, "w", encoding="utf-8") as f:
             json.dump(self.to_dict(), f, indent=2)
     
     @classmethod
@@ -496,6 +504,103 @@ class SemanticSchema:
 
         seg_clipped = np.clip(seg_data, -1, map_arr.shape[0] - 1)
         return map_arr[seg_clipped]
+    
+    def align_to_schema(
+        self,
+        target_schema: "SemanticSchema",
+        reindex: bool = False,
+    ) -> SemanticSchemaAlignmentResult:
+        """
+        Align this schema to ``target_schema`` by class name.
+
+        Matching classes fully adopt the target definition, including color.
+        Classes missing in the target are appended at the end and keep their
+        active-schema colors. The result is a union schema plus an old->new id
+        mapping for remapping semantic field values.
+        """
+        if not isinstance(target_schema, SemanticSchema):
+            raise TypeError("target_schema must be a SemanticSchema")
+
+        def _name_map(schema: "SemanticSchema") -> Dict[str, SemanticClass]:
+            out: Dict[str, SemanticClass] = {}
+            for sem_cls in schema.semantic_classes:
+                if sem_cls.name in out:
+                    raise ValueError(
+                        f"Schema '{schema.name}' contains duplicate class name '{sem_cls.name}'."
+                    )
+                out[sem_cls.name] = sem_cls
+            return out
+
+        def _unlabeled(schema: "SemanticSchema") -> Optional[SemanticClass]:
+            for sem_cls in schema.semantic_classes:
+                if sem_cls.id == -1 or sem_cls.name == "_unlabeled":
+                    return sem_cls
+            return None
+
+        active_by_name = _name_map(self)
+        _name_map(target_schema)
+
+        old_to_new: List[Tuple[int, int]] = []
+        aligned_classes: List[SemanticClass] = []
+        handled_active_names: set[str] = set()
+
+        target_unlabeled = _unlabeled(target_schema)
+        active_unlabeled = _unlabeled(self)
+        if target_unlabeled is not None:
+            aligned_classes.append(
+                SemanticClass(-1, target_unlabeled.name, tuple(target_unlabeled.color))
+            )
+            if active_unlabeled is not None:
+                old_to_new.append((int(active_unlabeled.id), -1))
+                handled_active_names.add(active_unlabeled.name)
+        elif active_unlabeled is not None:
+            aligned_classes.append(
+                SemanticClass(-1, active_unlabeled.name, tuple(active_unlabeled.color))
+            )
+            old_to_new.append((int(active_unlabeled.id), -1))
+            handled_active_names.add(active_unlabeled.name)
+
+        for target_cls in target_schema.semantic_classes:
+            if target_cls.id == -1:
+                continue
+            aligned_classes.append(
+                SemanticClass(int(target_cls.id), target_cls.name, tuple(target_cls.color))
+            )
+            active_cls = active_by_name.get(target_cls.name)
+            if active_cls is not None:
+                old_to_new.append((int(active_cls.id), int(target_cls.id)))
+                handled_active_names.add(active_cls.name)
+
+        next_id = max((cls.id for cls in aligned_classes if cls.id >= 0), default=-1) + 1
+        missing_in_target_names: List[str] = []
+        for active_cls in self.semantic_classes:
+            if active_cls.name in handled_active_names or active_cls.id == -1:
+                continue
+            aligned_classes.append(
+                SemanticClass(next_id, active_cls.name, tuple(active_cls.color))
+            )
+            old_to_new.append((int(active_cls.id), int(next_id)))
+            missing_in_target_names.append(active_cls.name)
+            handled_active_names.add(active_cls.name)
+            next_id += 1
+
+        aligned_schema = SemanticSchema(name=self.name, semantic_classes=aligned_classes)
+
+        if reindex:
+            aligned_to_reindexed = aligned_schema.reindex()
+            old_to_new = [
+                (old_id, int(aligned_to_reindexed.get(new_id, new_id)))
+                for old_id, new_id in old_to_new
+            ]
+
+        old_to_new = list(dict.fromkeys(old_to_new))
+        return SemanticSchemaAlignmentResult(
+            aligned_schema=aligned_schema,
+            old_to_new_ids=old_to_new,
+            partial_success=bool(missing_in_target_names),
+            missing_in_target_names=missing_in_target_names,
+        )
+        
 
         
     @classmethod

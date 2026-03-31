@@ -232,17 +232,14 @@ class Dataset:
         self,
         schema: SemanticSchema
     ) -> dict[str, SemanticSchema]:
-        
-        
-        schemas_matching: dict[str, SemanticSchema]= dict()
         r_schemas, l_schemas = self._get_semantic_schemas()
         schemas = r_schemas | l_schemas
         
         schemas_matching: dict[str, SemanticSchema]= dict()
-        for bk, schema in schemas.items():
-            if schema.signature() == schema.signature() and\
-                schema.name == schema.name:
-                    schemas_matching[bk] = schema
+        for bk, candidate in schemas.items():
+            if candidate.signature() == schema.signature() and \
+                candidate.name == schema.name:
+                    schemas_matching[bk] = candidate
         
         return schemas_matching
     

@@ -17,7 +17,7 @@ from ..semantic_schema_dialog import SemanticSchemaEditDialog
 
 from PyQt6.QtWidgets import (QWidget, QMenu, QHBoxLayout, QVBoxLayout, QLabel,
                              QPushButton, QToolButton, QGridLayout, QDialog,
-                             QMessageBox, QSpacerItem, QSizePolicy)
+                             QMessageBox, QSpacerItem, QSizePolicy, QFileDialog)
 from PyQt6.QtGui import QIcon
 from PyQt6.QtCore import Qt
 from geon.config.theme import UIStyle
@@ -61,6 +61,23 @@ def _collect_schema_names(layer: PointCloudLayer, dataset_manager: Optional[Data
             if isinstance(field, SemanticSegmentation):
                 names.add(field.schema.name)
     return sorted(names)
+
+
+def _collect_align_schemas(layer: PointCloudLayer, dataset_manager: Optional[DatasetManager]):
+    dataset = getattr(dataset_manager, "_dataset", None) if dataset_manager is not None else None
+    if dataset is not None:
+        return list(dataset.unique_semantic_schemas)
+    fields = layer.data.get_fields(field_type=FieldType.SEMANTIC)
+    schemas = []
+    seen = set()
+    for field in fields:
+        if isinstance(field, SemanticSegmentation):
+            signature = field.schema.signature()
+            if signature in seen:
+                continue
+            schemas.append(field.schema)
+            seen.add(signature)
+    return schemas
 
 def _increase_point_size(
     layer: PointCloudLayer, controller: ToolController, label:QLabel) -> None:
@@ -191,15 +208,15 @@ def _ribbon(
                 if not isinstance(af, SemanticSegmentation):
                     return
                 dataset_manager = _get_dataset_manager(parent)
-                if dataset_manager is None:
-                    return
                 taken_names = _collect_schema_names(layer, dataset_manager)
+                align_schemas = _collect_align_schemas(layer, dataset_manager)
                 current_schema = af.schema
                 while True:
                     dlg = SemanticSchemaEditDialog(
                         schema=current_schema,
                         required_ids=[],
                         taken_schema_names=taken_names,
+                        available_align_schemas=align_schemas,
                         parent=parent,
                     )
                     if dlg.exec() != QDialog.DialogCode.Accepted or dlg.schema is None:
@@ -237,8 +254,26 @@ def _ribbon(
 
             
             more_btn, more_menu = get_more_btn(w)
-            # more_menu.addAction("Option 1")
-            # more_menu.addAction("Option 2")
+            export_action = more_menu.addAction("Export to JSON")
+
+            def _on_export_schema() -> None:
+                if not isinstance(af, SemanticSegmentation):
+                    return
+                default_name = f"{af.schema.name}.json" if af.schema.name else "schema.json"
+                json_path, _ = QFileDialog.getSaveFileName(
+                    parent,
+                    "Export schema to JSON",
+                    default_name,
+                    "JSON Files (*.json)",
+                )
+                if not json_path:
+                    return
+                try:
+                    af.schema.to_json(json_path)
+                except Exception as exc:
+                    QMessageBox.critical(parent, "Export failed", str(exc))
+
+            export_action.triggered.connect(_on_export_schema)
             
             row_22.addWidget(edit_btn)
             row_22.addWidget(more_btn, alignment= Qt.AlignmentFlag.AlignRight)
