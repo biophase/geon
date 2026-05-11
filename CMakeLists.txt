@@ -82,6 +82,14 @@ target_include_directories(
     "${CMAKE_CURRENT_SOURCE_DIR}/native/region_growing"
 )
 
+pybind11_add_module(
+  subsampling
+  MODULE
+  native/subsampling_python_wrapper.cpp
+  native/subsampling.cpp
+)
+target_include_directories(subsampling PRIVATE "${GEON_EIGEN_DIR}")
+
 find_package(OpenMP)
 if(OpenMP_CXX_FOUND)
   target_link_libraries(features PRIVATE OpenMP::OpenMP_CXX)
@@ -93,7 +101,7 @@ endif()
 set(GEON_NATIVE_INSTALL_DIR "geon/_native")
 
 install(
-  TARGETS features region_growing plane_ransac superpoints region_merge
+  TARGETS features region_growing plane_ransac superpoints region_merge subsampling
   LIBRARY DESTINATION ${GEON_NATIVE_INSTALL_DIR}
   RUNTIME DESTINATION ${GEON_NATIVE_INSTALL_DIR}
   ARCHIVE DESTINATION ${GEON_NATIVE_INSTALL_DIR}

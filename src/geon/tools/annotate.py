@@ -168,6 +168,15 @@ class AnnotateTool(ModeTool):
         self.ctx.controller.scene_tree_request_change.emit()
         return super().deactivate()
 
+    def _compute_accept_possible(self) -> bool:
+        if self.choice_add_semantic:
+            if self.choice_sem_field is None or self.choice_sem_class is None:
+                return False
+        if self.choice_add_instance:
+            if self.choice_inst_field is None:
+                return False
+        return self.choice_add_semantic or self.choice_add_instance
+
     def create_context_widget(self, parent: QWidget) -> QWidget | None:
         w = QWidget(parent)
         outer = QGridLayout(w)
@@ -266,6 +275,7 @@ class AnnotateTool(ModeTool):
                     )
                 return
             self.choice_inst_field = inst_combo.currentData()
+            update_enabled_states()
 
         inst_combo.currentIndexChanged.connect(on_inst_changed)
         outer.addWidget(inst_combo, 1, 2)
@@ -305,14 +315,13 @@ class AnnotateTool(ModeTool):
             name = text.strip()
             if not name:
                 self.choice_sem_class = None
-                self.accept_possible = False
             else:
                 match = next(
                     (c for c in self.avail_sem_classes if c.name == name),
                     None
                 )
                 self.choice_sem_class = match
-                self.accept_possible = match is not None
+            self.accept_possible = self._compute_accept_possible()
             update_enabled_states()
         def update_sem_class_ui() -> None:
             self._refresh_sem_classes()
@@ -376,6 +385,9 @@ class AnnotateTool(ModeTool):
         def update_enabled_states() -> None:
             sem_enabled = sem_checkbox.isChecked()
             inst_enabled = inst_checkbox.isChecked()
+            self.choice_add_semantic = sem_enabled
+            self.choice_add_instance = inst_enabled
+            self.accept_possible = self._compute_accept_possible()
             sem_label.setEnabled(sem_enabled)
             sem_combo.setEnabled(sem_enabled)
             sem_class_label.setEnabled(sem_enabled)

@@ -37,7 +37,9 @@ from PyQt6.QtWidgets import (
     QApplication,
     QMenu,
     QDialog,
+    QDialogButtonBox,
     QLabel,
+    QLineEdit,
     QVBoxLayout,
     QHBoxLayout,
     QWidget,
@@ -47,6 +49,7 @@ from PyQt6.QtWidgets import (
     QProgressDialog,
     QMessageBox,
     QSizePolicy,
+    QFileDialog,
 )
 from PyQt6.QtCore import Qt, QEventLoop, QThread, QTimer, pyqtSignal
 from PyQt6.QtGui import QShortcut, QKeySequence, QAction, QIcon, QPixmap
@@ -59,6 +62,33 @@ from geon._native import superpoints as _native_superpoints
 from geon._native import region_merge as _native_region_merge
 import numpy as np
 import time
+
+
+class _RenameSceneDialog(QDialog):
+    def __init__(self, current_name: str, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Rename Scene")
+
+        layout = QVBoxLayout(self)
+        label = QLabel("Scene name", self)
+        layout.addWidget(label)
+
+        self.name_edit = QLineEdit(self)
+        self.name_edit.setText(current_name)
+        self.name_edit.selectAll()
+        layout.addWidget(self.name_edit)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+            parent=self,
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def scene_name(self) -> str:
+        return self.name_edit.text().strip()
+
 
 class MainWindow(QMainWindow):
     def __init__(self, preferences: Preferences | None = None):
@@ -139,6 +169,10 @@ class MainWindow(QMainWindow):
             .connect(self.dataset_manager.import_doc_from_ply)
         self.menu_bar.saveDocRequested\
             .connect(lambda: self.dataset_manager.save_scene_doc(self.scene_manager._scene, ignore_state=True))
+        self.menu_bar.renderToFileRequested\
+            .connect(self._on_render_to_file)
+        self.menu_bar.renameSceneRequested\
+            .connect(self._on_rename_scene)
         self.menu_bar.undoRequested\
             .connect(lambda: self.tool_controller.command_manager.undo())
         self.menu_bar.redoRequested\
@@ -257,6 +291,45 @@ class MainWindow(QMainWindow):
         self.scene_manager.populate_tree()
         self.viewer.rerender()
 
+    def _on_rename_scene(self) -> None:
+        scene = self.scene_manager._scene
+        if scene is None:
+            QMessageBox.warning(self, "Rename Scene", "No scene is currently loaded.")
+            return
+
+        dlg = _RenameSceneDialog(scene.doc.name, self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        new_name = dlg.scene_name()
+        if not new_name:
+            QMessageBox.warning(self, "Rename Scene", "Scene name cannot be empty.")
+            return
+
+        dataset = self.dataset_manager._dataset
+        if dataset is not None:
+            current_name = scene.doc.name
+            if new_name != current_name and new_name in dataset.doc_ref_names:
+                QMessageBox.warning(
+                    self,
+                    "Rename Scene",
+                    f"A scene named '{new_name}' already exists in the dataset.",
+                )
+                return
+            try:
+                dataset.rename_document(scene.doc, new_name)
+            except Exception as exc:
+                QMessageBox.critical(self, "Rename Scene", str(exc))
+                return
+            self.dataset_manager.populate_tree()
+        else:
+            scene.doc.name = new_name
+            scene.doc.meta["name"] = new_name
+
+        self.scene_manager.update_tree_visibility()
+        self.scene_manager.populate_tree()
+        self.viewer.rerender()
+
     def _on_edit_preferences(self) -> None:
         dlg = PreferencesDialog(self.preferences, parent=self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
@@ -264,6 +337,22 @@ class MainWindow(QMainWindow):
             self.preferences.save()
             self.scene_manager.preferences = self.preferences
             self.viewer.set_camera_sensitivity(self.preferences.camera_sensitivity)
+
+    def _on_render_to_file(self) -> None:
+        path, _selected_filter = QFileDialog.getSaveFileName(
+            self,
+            "Render Viewport to PNG",
+            "viewport.png",
+            "PNG Images (*.png)",
+        )
+        if not path:
+            return
+        if not path.lower().endswith(".png"):
+            path += ".png"
+        try:
+            self.viewer.save_viewport_png(path, transparent=True)
+        except Exception as exc:
+            QMessageBox.critical(self, "Render to File", str(exc))
 
     def _on_about(self) -> None:
         dlg = QDialog(self)

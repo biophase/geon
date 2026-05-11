@@ -28,6 +28,34 @@ class _RowMeta:
     original_id: Optional[int] = None
 
 
+def _load_schema_from_json_file(
+    parent: QWidget,
+    *,
+    dialog_title: str = "Load schema from JSON",
+    use_file_stem_as_fallback_name: bool = False,
+    replace_name_with_file_stem: bool = False,
+) -> Optional[SemanticSchema]:
+    json_path, _ = QFileDialog.getOpenFileName(
+        parent,
+        dialog_title,
+        "",
+        "JSON Files (*.json)",
+    )
+    if not json_path:
+        return None
+    try:
+        schema = SemanticSchema.from_json(json_path)
+    except Exception as exc:
+        QMessageBox.critical(parent, "Failed to load schema", str(exc))
+        return None
+    file_stem = Path(json_path).stem
+    if replace_name_with_file_stem:
+        schema.name = file_stem or schema.name
+    elif use_file_stem_as_fallback_name and not schema.name:
+        schema.name = file_stem
+    return schema
+
+
 class _SemanticSchemaDialogBase(QDialog):
     COL_ID = 0
     COL_COLOR = 1
@@ -172,6 +200,41 @@ class _SemanticSchemaDialogBase(QDialog):
 
         self.schema_name_edit.setText(schema.name)
         self._update_name_state()
+
+    def _replace_rows_from_schema(
+        self,
+        schema: SemanticSchema,
+        *,
+        original_ids_by_name: Optional[Dict[str, Optional[int]]] = None,
+    ) -> None:
+        self.table.setRowCount(0)
+        self._row_meta.clear()
+        self._insert_add_row()
+        for sem_cls in sorted(schema.semantic_classes, key=lambda cls: cls.id):
+            self._insert_class_row(
+                sem_cls.id,
+                sem_cls.color,
+                sem_cls.name,
+                required=sem_cls.id in self.required_ids,
+                original_id=(original_ids_by_name or {}).get(sem_cls.name),
+            )
+        self.schema_name_edit.setText(schema.name)
+        self._rewire_row_callbacks()
+        self._update_name_state()
+
+    def _load_schema_from_json(
+        self,
+        *,
+        dialog_title: str = "Load schema from JSON",
+        use_file_stem_as_fallback_name: bool = False,
+        replace_name_with_file_stem: bool = False,
+    ) -> Optional[SemanticSchema]:
+        return _load_schema_from_json_file(
+            self,
+            dialog_title=dialog_title,
+            use_file_stem_as_fallback_name=use_file_stem_as_fallback_name,
+            replace_name_with_file_stem=replace_name_with_file_stem,
+        )
 
     # ------------- Row creation helpers -------------
 
@@ -636,7 +699,35 @@ class SemanticSchemaCreationDialog(_SemanticSchemaDialogBase):
             taken_schema_names=taken_schema_names,
             window_title="Create Semantic Schema",
         )
+        self._insert_load_json_action()
         self._populate_defaults()
+
+    def _insert_load_json_action(self) -> None:
+        if self._left_layout is None:
+            return
+        self.btn_load_json = QPushButton("Load JSON...", self)
+        self.btn_load_json.clicked.connect(self._on_load_json_clicked)
+        insert_index = max(0, self._left_layout.count() - 1)
+        self._left_layout.insertWidget(insert_index, self.btn_load_json)
+
+    def _on_load_json_clicked(self) -> None:
+        answer = QMessageBox.warning(
+            self,
+            "Discard current edits?",
+            "Loading a schema from JSON will discard the current edits in this dialog. Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+
+        schema = self._load_schema_from_json(
+            dialog_title="Load schema from JSON",
+            use_file_stem_as_fallback_name=True,
+        )
+        if schema is None:
+            return
+        self._replace_rows_from_schema(schema)
 
 
 class _DeletedIdMappingDialog(QDialog):
@@ -745,20 +836,13 @@ class _AlignSchemaChoiceDialog(QDialog):
         layout.addWidget(buttons, 0)
 
     def _on_from_json(self) -> None:
-        json_path, _ = QFileDialog.getOpenFileName(
+        schema = _load_schema_from_json_file(
             self,
-            "Load schema from JSON",
-            "",
-            "JSON Files (*.json)",
+            dialog_title="Load schema from JSON",
+            replace_name_with_file_stem=True,
         )
-        if not json_path:
+        if schema is None:
             return
-        try:
-            schema = SemanticSchema.from_json(json_path)
-        except Exception as exc:
-            QMessageBox.critical(self, "Failed to load schema", str(exc))
-            return
-        schema.name = Path(json_path).stem or schema.name
         self._selected_schema = schema
         QDialog.accept(self)
 
@@ -867,25 +951,6 @@ class SemanticSchemaEditDialog(_SemanticSchemaDialogBase):
             meta = self._row_meta.get(r, _RowMeta())
             out[name] = meta.original_id
         return out
-
-    def _replace_rows_from_schema(
-        self,
-        schema: SemanticSchema,
-        *,
-        original_ids_by_name: Dict[str, Optional[int]],
-    ) -> None:
-        self.table.setRowCount(0)
-        self._row_meta.clear()
-        self._insert_add_row()
-        for sem_cls in sorted(schema.semantic_classes, key=lambda cls: cls.id):
-            self._insert_class_row(
-                sem_cls.id,
-                sem_cls.color,
-                sem_cls.name,
-                required=sem_cls.id in self.required_ids,
-                original_id=original_ids_by_name.get(sem_cls.name),
-            )
-        self._rewire_row_callbacks()
 
     def _on_align_clicked(self) -> None:
         err = self._validate_rows(include_schema_name=False)

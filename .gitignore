@@ -1,5 +1,6 @@
 main/*
 _temp/*
+_change-log.txt
 src/geon/_temp/*
 src/geon/_temp/cgal/
 .cmake*/

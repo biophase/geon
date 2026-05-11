@@ -72,6 +72,10 @@ class DocumentReference:
     @property
     def name(self) -> str:
         return self._name
+    
+    @name.setter
+    def name(self, value: str) -> None:
+        self._name = value
         # split = osp.split(self.path)
         # if not len(split):
         #     return '<Corrupted path>'
@@ -323,6 +327,25 @@ class Dataset:
                 raise ValueError(f"Attempted to add a DocumentReference with duplicate names: {doc_ref.name}")
         self._doc_refs.append(doc_ref)
         return doc_ref
+
+    def rename_document(self, doc: Document, new_name: str) -> None:
+        current_name = doc.name
+        if new_name == current_name:
+            return
+        if new_name in self.doc_ref_names:
+            raise ValueError(f"Document name already exists: {new_name}")
+
+        ref = next((candidate for candidate in self._doc_refs if candidate.name == current_name), None)
+        if ref is None:
+            raise ValueError(f"Document reference not found for: {current_name}")
+
+        loaded_doc = self._loaded_docs.pop(current_name, None)
+        doc.name = new_name
+        doc.meta["name"] = new_name
+        ref.name = new_name
+        ref.modState = RefModState.MODIFIED
+        if loaded_doc is not None:
+            self._loaded_docs[new_name] = loaded_doc
         
 
     

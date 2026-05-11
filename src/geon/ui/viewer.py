@@ -289,6 +289,36 @@ class VTKViewer(QWidget):
         
     def rerender(self):
         self.vtkWidget.GetRenderWindow().Render()
+
+    def save_viewport_png(self, path: str, transparent: bool = True) -> None:
+        render_window = self.vtkWidget.GetRenderWindow()
+        renderer = self._renderer
+
+        old_alpha_bit_planes = render_window.GetAlphaBitPlanes()
+        old_background = renderer.GetBackground()
+        old_background_alpha = renderer.GetBackgroundAlpha()
+
+        try:
+            if transparent:
+                render_window.SetAlphaBitPlanes(1)
+                renderer.SetBackgroundAlpha(0.0)
+            self.rerender()
+
+            window_to_image = vtk.vtkWindowToImageFilter()
+            window_to_image.SetInput(render_window)
+            window_to_image.SetInputBufferTypeToRGBA()
+            window_to_image.ReadFrontBufferOff()
+            window_to_image.Update()
+
+            writer = vtk.vtkPNGWriter()
+            writer.SetFileName(path)
+            writer.SetInputConnection(window_to_image.GetOutputPort())
+            writer.Write()
+        finally:
+            render_window.SetAlphaBitPlanes(old_alpha_bit_planes)
+            renderer.SetBackground(*old_background)
+            renderer.SetBackgroundAlpha(old_background_alpha)
+            self.rerender()
         
     def pick(self) -> PickResult:
         interactor = self._interactor_style.GetInteractor()

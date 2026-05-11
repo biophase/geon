@@ -11,6 +11,8 @@ class MenuBar(QMenuBar):
     updateDocumentsRequested    = pyqtSignal()
     importFromRequested         = pyqtSignal()
     saveDocRequested            = pyqtSignal()
+    renderToFileRequested       = pyqtSignal()
+    renameSceneRequested        = pyqtSignal()
     undoRequested               = pyqtSignal()
     redoRequested               = pyqtSignal()
     editPreferencesRequested    = pyqtSignal()
@@ -45,6 +47,15 @@ class MenuBar(QMenuBar):
         act_save_doc = cast(QAction, self.doc_menu.addAction("&Save"))
         act_save_doc.setShortcut(QKeySequence.StandardKey.Save)
         act_save_doc.triggered.connect(self.saveDocRequested)
+        self.scene_menu = cast(QMenu, self.doc_menu.addMenu("Scene"))
+        act_rename_scene = cast(QAction, self.scene_menu.addAction("Rename..."))
+        act_rename_scene.triggered.connect(self.renameSceneRequested)
+
+        # display menu
+        self.display_menu = QMenu("&Display", self)
+        act_render_to_file = cast(QAction, self.display_menu.addAction("Render to File"))
+        act_render_to_file.triggered.connect(self.renderToFileRequested)
+        self.addMenu(self.display_menu)
         
         # settings menu
         self.settings_menu = QMenu("&Settings", self)
