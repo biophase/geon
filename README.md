@@ -29,7 +29,7 @@ The tool is tested with Python 3.10 to 3.12 and under *Windows*, *Linux (Ubuntu)
 It requires `vtk` and `PyQt6`.
 
 
-To isntall from PyPI run:
+To install from PyPI run:
 
 ```
 pip install geon
