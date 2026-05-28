@@ -17,7 +17,8 @@ from ..semantic_schema_dialog import SemanticSchemaEditDialog
 
 from PyQt6.QtWidgets import (QWidget, QMenu, QHBoxLayout, QVBoxLayout, QLabel,
                              QPushButton, QToolButton, QGridLayout, QDialog,
-                             QMessageBox, QSpacerItem, QSizePolicy, QFileDialog)
+                             QMessageBox, QSpacerItem, QSizePolicy, QFileDialog,
+                             QSpinBox)
 from PyQt6.QtGui import QIcon
 from PyQt6.QtCore import Qt
 from geon.config.theme import UIStyle
@@ -101,6 +102,24 @@ def _decrease_point_size(
         layer.update()
         
         ctx.viewer.rerender()
+
+
+def _set_vector_component(
+    layer: PointCloudLayer,
+    controller: ToolController,
+    field_name: str,
+    component_index: int,
+    spinbox: QSpinBox,
+) -> None:
+    ctx = controller.ctx
+    if ctx is None:
+        return
+    clamped = layer.set_vector_field_active_index(field_name, component_index)
+    if spinbox.value() != clamped:
+        spinbox.blockSignals(True)
+        spinbox.setValue(clamped)
+        spinbox.blockSignals(False)
+    ctx.viewer.rerender()
         
 def _ribbon(
     layer:PointCloudLayer, 
@@ -283,10 +302,50 @@ def _ribbon(
             
             
         if af.field_type == FieldType.VECTOR:
-            pass # TODO: add choice for which dim to display (meta on layer)
+            if af.data.ndim == 2 and af.data.shape[1] > 1:
+                col_2 = QVBoxLayout()
+                row = QHBoxLayout()
+                label = QLabel("Component: ")
+                label.setStyleSheet(UIStyle.TYPE_LABEL.value)
+                spinbox = QSpinBox(w)
+                spinbox.setRange(0, af.data.shape[1] - 1)
+                spinbox.setValue(layer.vf_active_index[af.name])
+                spinbox.setKeyboardTracking(False)
+                spinbox.setFixedWidth(spinbox.fontMetrics().horizontalAdvance("888") + 34)
+                spinbox.valueChanged.connect(
+                    lambda value, fn=af.name, sb=spinbox: _set_vector_component(
+                        layer, controller, fn, value, sb
+                    )
+                )
+                count_label = QLabel(f"/ {af.data.shape[1] - 1}")
+                count_label.setStyleSheet(UIStyle.TYPE_LABEL.value)
+                row.addWidget(label)
+                row.addWidget(spinbox)
+                row.addWidget(count_label)
+                col_2.addLayout(row)
         
         if af.field_type == FieldType.NORMAL:
-            pass # TODO: add choice whether to show arrow display
+            if af.data.ndim == 2 and af.data.shape[1] > 1:
+                col_2 = QVBoxLayout()
+                row = QHBoxLayout()
+                label = QLabel("Component: ")
+                label.setStyleSheet(UIStyle.TYPE_LABEL.value)
+                spinbox = QSpinBox(w)
+                spinbox.setRange(0, af.data.shape[1] - 1)
+                spinbox.setValue(layer.vf_active_index[af.name])
+                spinbox.setKeyboardTracking(False)
+                spinbox.setFixedWidth(spinbox.fontMetrics().horizontalAdvance("888") + 34)
+                spinbox.valueChanged.connect(
+                    lambda value, fn=af.name, sb=spinbox: _set_vector_component(
+                        layer, controller, fn, value, sb
+                    )
+                )
+                count_label = QLabel(f"/ {af.data.shape[1] - 1}")
+                count_label.setStyleSheet(UIStyle.TYPE_LABEL.value)
+                row.addWidget(label)
+                row.addWidget(spinbox)
+                row.addWidget(count_label)
+                col_2.addLayout(row)
     
     
     if col_2 is not None:
@@ -386,7 +445,7 @@ def _text(layer:PointCloudLayer)->str:
     return layer.browser_name
 
 def _icon(layer:PointCloudLayer)->QIcon: 
-    ...
+    return QIcon(resource_path("tree_icon_pointcloud.png"))
 
 LAYER_UI.register(PointCloudLayer,
     LayerUIHooks(

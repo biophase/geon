@@ -1518,8 +1518,10 @@ class FieldEditorDialog(QDialog):
         return data
 
     def _assign_field_data(self, field: FieldBase, data: np.ndarray, ftype: FieldType) -> None:
-        if ftype in (FieldType.SEMANTIC, FieldType.INSTANCE):
+        if ftype == FieldType.SEMANTIC:
             field.data = np.asarray(data, np.int32).reshape(-1)
+        elif ftype == FieldType.INSTANCE:
+            field.data = np.asarray(data, np.int32).reshape(-1, 1)
         else:
             arr = np.asarray(data)
             if arr.ndim == 1:

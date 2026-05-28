@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 import vtk
 from geon.data.base import BaseData
 
-from typing import TypeVar, Generic, Optional, Sequence, Tuple
+from typing import Any, TypeVar, Generic, Optional, Sequence, Tuple
 from dataclasses import dataclass, field
 from enum import Enum, auto
 
@@ -141,6 +141,18 @@ class BaseLayer(Generic[TData], ABC):
         Optional hook for subclasses to clean up extra state after detaching
         """
         pass
+
+    def viewport_context_actions(self, ctx: Any, pick_result: Any) -> list[Any]:
+        """
+        Optional viewport right-click actions for the active layer.
+        """
+        return []
+
+    def handle_viewport_left_click(self, ctx: Any, event: Any, pick_result: Any) -> bool:
+        """
+        Optional active-layer click handler.
+        """
+        return False
 
     # VTK Property updates
     

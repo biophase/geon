@@ -53,6 +53,8 @@ class Scene:
         layer.detach()
         if delete_data:
             self._doc.remove_data(layer.id)
+        if self._active_layer_id == name:
+            self._active_layer_id = next(iter(self._layers.keys()), None)
             
     @property
     def active_layer(self)->Optional[BaseLayer]:
@@ -77,6 +79,8 @@ class Scene:
         for layer in self._layers.values():
             layer.detach()
         self._layers.clear()
+        self._actor_to_layer.clear()
+        self._active_layer_id = None
         for data in doc.scene_items.values():
             self.add_data(data)
         self._doc = doc
@@ -96,6 +100,7 @@ class Scene:
     def clear(self, delete_data: bool) -> None:
         for k in list(self._layers.keys()):
             self.remove_layer(k, delete_data)
+        self._active_layer_id = None
 
     @property
     def renderer(self) -> vtk.vtkRenderer:

@@ -1,6 +1,14 @@
 import vtk
+from dataclasses import dataclass
 
 from PyQt6.QtCore import QTimer
+
+
+@dataclass
+class RawPickResult:
+    prop: vtk.vtkProp | None
+    element_id: int
+    association: str
 
 
 class PointPicker:
@@ -9,12 +17,32 @@ class PointPicker:
         self.radius = int(radius_px)
         
         
-        self._selector = vtk.vtkOpenGLHardwareSelector()
-        self._selector.SetRenderer(self.renderer)
-        self._selector.SetFieldAssociation(vtk.vtkDataObject.FIELD_ASSOCIATION_POINTS)
+        self._point_selector = vtk.vtkOpenGLHardwareSelector()
+        self._point_selector.SetRenderer(self.renderer)
+        self._point_selector.SetFieldAssociation(vtk.vtkDataObject.FIELD_ASSOCIATION_POINTS)
+
+        self._cell_selector = vtk.vtkOpenGLHardwareSelector()
+        self._cell_selector.SetRenderer(self.renderer)
+        self._cell_selector.SetFieldAssociation(vtk.vtkDataObject.FIELD_ASSOCIATION_CELLS)
         
         
     def pick(self, interactor: vtk.vtkRenderWindowInteractor, x: int, y: int):
+        return self.pick_point(interactor, x, y)
+
+    def pick_point(self, interactor: vtk.vtkRenderWindowInteractor, x: int, y: int):
+        return self._pick_with_selector(interactor, x, y, self._point_selector, "point")
+
+    def pick_cell(self, interactor: vtk.vtkRenderWindowInteractor, x: int, y: int):
+        return self._pick_with_selector(interactor, x, y, self._cell_selector, "cell")
+
+    def _pick_with_selector(
+        self,
+        interactor: vtk.vtkRenderWindowInteractor,
+        x: int,
+        y: int,
+        selector: vtk.vtkOpenGLHardwareSelector,
+        association: str,
+    ):
         rw = interactor.GetRenderWindow()
         w, h = rw.GetSize()
         
@@ -27,8 +55,8 @@ class PointPicker:
         y1 = min(h - 1, y + r)
         
         
-        self._selector.SetArea(x0,y0,x1,y1)
-        selection = self._selector.Select()
+        selector.SetArea(x0,y0,x1,y1)
+        selection = selector.Select()
         if selection is None or selection.GetNumberOfNodes() == 0:
             return None
         
@@ -38,13 +66,13 @@ class PointPicker:
         if ids is None or ids.GetNumberOfTuples() == 0:
             return None
         
-        point_id = int(ids.GetValue(0))
+        element_id = int(ids.GetValue(0))
         props = node.GetProperties()
         prop_id = props.Get(vtk.vtkSelectionNode.PROP_ID()) if props else None
-        picked_prop = self._selector.GetPropFromID(int(prop_id)) \
+        picked_prop = selector.GetPropFromID(int(prop_id)) \
             if prop_id is not None else None
             
-        return picked_prop, point_id
+        return RawPickResult(picked_prop, element_id, association)
         
         
         

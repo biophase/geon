@@ -703,8 +703,11 @@ def mex(data:np.ndarray)->int:
     """
     returns the minimum excluded value
     """
+    data = np.asarray(data)
     if data.ndim == 0: 
         return 0
+    if data.ndim == 2 and 1 in data.shape:
+        data = data.reshape(-1)
     elif len(data) == 0:
         return 0
     else:
@@ -725,10 +728,10 @@ class InstanceSegmentation(FieldBase):
                  size: Optional[int] = None
                  ):
         if data is not None:
-            assert isinstance (data, np.ndarray), f"data should be a numpy array but got {type(data)}"
-            super().__init__(name, data.astype(np.int32), FieldType.INSTANCE)
+            data_arr = np.asarray(data, np.int32).reshape(-1, 1)
+            super().__init__(name, data_arr, FieldType.INSTANCE)
         elif size is not None:
-            super().__init__(name, np.zeros(size, dtype=np.int32), FieldType.INSTANCE)
+            super().__init__(name, np.zeros((size, 1), dtype=np.int32), FieldType.INSTANCE)
         
         else:
             raise ValueError("Either size or data should be provided.")
@@ -759,8 +762,7 @@ class InstanceSegmentation(FieldBase):
     @classmethod
     def from_hdf5_fieldgroup(cls, field_group: h5py.Group) -> "InstanceSegmentation":
         name, data, _, _ = cls._read_hdf5_fieldgroup(field_group)
-        data_arr = np.asarray(data, dtype=np.int32)
-        return cls(name=name, data=data_arr)
+        return cls(name=name, data=np.asarray(data, dtype=np.int32))
         
     
 

@@ -67,8 +67,8 @@ class AnnotatePointsCmd(Command):
                 self.inst_inds_old = field.data[self.selection_old].copy()
                 field = cast(InstanceSegmentation, field)
                 inst_ind_new = field.get_next_instance_id()
-                inst_inds_new = np.full(
-                    self.selection_old.shape[0], inst_ind_new, dtype = np.int32)
+                target_shape = field.data[self.selection_old].shape
+                inst_inds_new = np.full(target_shape, inst_ind_new, dtype=np.int32)
                 field.data[self.selection_old] = inst_inds_new
         layer.update()
         ctx.viewer.rerender()

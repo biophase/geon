@@ -1,7 +1,7 @@
 from PyQt6.QtGui import QMouseEvent, QResizeEvent
 from PyQt6.QtWidgets import (QWidget, QDockWidget, QLabel, QToolButton,QHBoxLayout,
                              QTreeWidget,QVBoxLayout, QGridLayout,QPushButton,
-                             QFrame
+                             QFrame, QMenu
                              )
 
 from geon.config.theme import *
@@ -13,7 +13,7 @@ from geon.rendering.base import BaseLayer
 from geon.rendering.scene import Scene
 
 
-from PyQt6.QtCore import Qt, QSize, QTimer
+from PyQt6.QtCore import Qt, QSize, QTimer, QPoint
 
 import vtkmodules.qt
 
@@ -37,6 +37,8 @@ class PickResult:
     prop: vtk.vtkProp| None
     element_idx: int | None
     world_xyz: tuple[float,float,float] | None
+    association: str | None = None
+    raw_element_idx: int | None = None
 
 class InteractorStyle(vtk.vtkInteractorStyleTrackballCamera):
     def __init__(self, 
@@ -53,6 +55,9 @@ class InteractorStyle(vtk.vtkInteractorStyleTrackballCamera):
         self.camera_enabled: bool = True
         self.last_click_time = 0
         self.mode_tool: Optional[ModeTool] = None
+        self._left_press_pos: Optional[tuple[int, int]] = None
+        self._right_press_pos: Optional[tuple[int, int]] = None
+        self._click_drag_threshold_px: int = 4
         
         # default state override
         self.SetMotionFactor(10.0)
@@ -91,6 +96,7 @@ class InteractorStyle(vtk.vtkInteractorStyleTrackballCamera):
     
     # events
     def left_button_press_event(self, _vtk_obj, _vtk_event):
+        self._left_press_pos = self.event_info.pos
         
         current_time = time.time()
         if current_time - self.last_click_time < 0.3:
@@ -114,12 +120,17 @@ class InteractorStyle(vtk.vtkInteractorStyleTrackballCamera):
             self._focus_camera()
 
     def left_button_release_event(self, _vtk_obj, _vtk_event):
+        event = self.event_info
         if self.camera_enabled:
             self.OnLeftButtonUp()
         if self.mode_tool is not None:
-            self.mode_tool.left_button_release_hook(self.event_info)
+            self.mode_tool.left_button_release_hook(event)
+        elif self._is_left_click(event.pos):
+            self._viewer.handle_viewport_left_click(event)
+        self._left_press_pos = None
 
     def right_button_press_event(self, _vtk_obj, _vtk_event):
+        self._right_press_pos = self.event_info.pos
         if self.mode_tool is not None:
             self.mode_tool.right_button_press_hook(self.event_info)        
         if self.camera_enabled:
@@ -132,8 +143,14 @@ class InteractorStyle(vtk.vtkInteractorStyleTrackballCamera):
             self.OnMiddleButtonDown()
 
     def right_button_release_event(self, _vtk_obj, _vtk_event):
+        event = self.event_info
         if self.camera_enabled:
             self.OnRightButtonUp()
+        if self.mode_tool is not None:
+            self.mode_tool.right_button_release_hook(event)
+        if self._is_context_click(event.pos):
+            self._viewer.show_viewport_context_menu(event.pos)
+        self._right_press_pos = None
 
     def middle_button_release_event(self, _vtk_obj, _vtk_event):
         if self.camera_enabled:
@@ -215,6 +232,20 @@ class InteractorStyle(vtk.vtkInteractorStyleTrackballCamera):
     def OnRightButtonUp(self):
         print(f"[OnRightButtonUp] called")
         super().OnMiddleButtonUp()
+
+    def _is_context_click(self, release_pos: tuple[int, int]) -> bool:
+        if self._right_press_pos is None:
+            return False
+        dx = release_pos[0] - self._right_press_pos[0]
+        dy = release_pos[1] - self._right_press_pos[1]
+        return (dx * dx + dy * dy) <= self._click_drag_threshold_px ** 2
+
+    def _is_left_click(self, release_pos: tuple[int, int]) -> bool:
+        if self._left_press_pos is None:
+            return False
+        dx = release_pos[0] - self._left_press_pos[0]
+        dy = release_pos[1] - self._left_press_pos[1]
+        return (dx * dx + dy * dy) <= self._click_drag_threshold_px ** 2
         
     def silence_vtk_defaults(self, obj, event):
         # override the char handler
@@ -320,25 +351,84 @@ class VTKViewer(QWidget):
             renderer.SetBackgroundAlpha(old_background_alpha)
             self.rerender()
         
-    def pick(self) -> PickResult:
+    def pick(self, *, prefer_cells: bool = False) -> PickResult:
         interactor = self._interactor_style.GetInteractor()
         x, y = interactor.GetEventPosition()
-        result = self.picker.pick(interactor, x, y)
+        result = self.picker.pick_cell(interactor, x, y) if prefer_cells else self.picker.pick_point(interactor, x, y)
         if result is None or self.scene is None:
-            return PickResult(None, None, None, None)
-        picked_prop, visible_id = result
+            return PickResult(None, None, None, None, None)
+        picked_prop = result.prop
+        visible_id = result.element_id
 
         layer = None
         if picked_prop is not None :
             layer = self.scene.layer_for_prop(picked_prop)
+            if (
+                layer is not None
+                and not prefer_cells
+                and hasattr(layer, "prefers_cell_pick")
+                and layer.prefers_cell_pick(picked_prop)
+            ):
+                cell_result = self.picker.pick_cell(interactor, x, y)
+                if cell_result is not None and cell_result.prop is not None:
+                    cell_layer = self.scene.layer_for_prop(cell_result.prop)
+                    if cell_layer is layer:
+                        picked_prop = cell_result.prop
+                        visible_id = cell_result.element_id
+                        result = cell_result
             if layer is None:
                 print(f'No layer found for prop {picked_prop}')
-                return PickResult(None, picked_prop, visible_id, None)
-            world_xyz = layer.world_xyz_from_picked_id(visible_id)
-            data_id = layer.data_index_from_picked_id(visible_id)
-            return PickResult(layer, picked_prop, data_id, world_xyz)
+                return PickResult(None, picked_prop, visible_id, None, result.association, visible_id)
+            if hasattr(layer, "data_index_from_pick"):
+                data_id = layer.data_index_from_pick(visible_id, picked_prop, result.association)
+            else:
+                data_id = layer.data_index_from_picked_id(visible_id)
+            if hasattr(layer, "world_xyz_from_pick"):
+                world_xyz = layer.world_xyz_from_pick(visible_id, picked_prop, result.association)
+            else:
+                world_xyz = layer.world_xyz_from_picked_id(visible_id)
+            return PickResult(layer, picked_prop, data_id, world_xyz, result.association, visible_id)
         else:
-            return PickResult(None, None, None, None)
+            return PickResult(None, None, None, None, result.association)
+
+    def handle_viewport_left_click(self, event: Event) -> None:
+        if self.scene is None:
+            return
+        layer = self.scene.active_layer
+        if layer is None:
+            return
+        prefer_cells = bool(getattr(layer, "use_cell_picking_for_selection", False))
+        pick_result = self.pick(prefer_cells=prefer_cells)
+        if pick_result.layer is not None and pick_result.layer is not layer:
+            pick_result = PickResult(None, None, None, None, None)
+        ctx = getattr(self.window(), "tool_controller", None)
+        tool_ctx = getattr(ctx, "ctx", None)
+        if tool_ctx is None:
+            return
+        if layer.handle_viewport_left_click(tool_ctx, event, pick_result):
+            self.rerender()
+
+    def show_viewport_context_menu(self, pos: tuple[int, int]) -> None:
+        if self.scene is None:
+            return
+        layer = self.scene.active_layer
+        if layer is None:
+            return
+        pick_result = self.pick(prefer_cells=True)
+        if pick_result.layer is not None and pick_result.layer is not layer:
+            pick_result = PickResult(None, None, None, None, None)
+        ctx = getattr(self.window(), "tool_controller", None)
+        tool_ctx = getattr(ctx, "ctx", None)
+        if tool_ctx is None:
+            return
+        actions = layer.viewport_context_actions(tool_ctx, pick_result)
+        if not actions:
+            return
+        menu = QMenu(self)
+        for action in actions:
+            menu.addAction(action)
+        x, y = pos
+        menu.exec(self.vtkWidget.mapToGlobal(QPoint(x, self.vtkWidget.height() - y)))
 
 
         
@@ -384,6 +474,32 @@ class VTKViewer(QWidget):
     def focus_camera_on_actor(self, actor: vtk.vtkProp):
         b = actor.GetBounds()
         self._renderer.ResetCamera(b)
+        self._renderer.ResetCameraClippingRange()
+        self.rerender()
+
+    def focus_camera_on_scene(self, scene: Scene) -> None:
+        bounds: list[float] | None = None
+        for layer in scene.layers.values():
+            if not layer.visible:
+                continue
+            for actor in layer.actors:
+                b = actor.GetBounds()
+                if b is None:
+                    continue
+                if any(v is None for v in b):
+                    continue
+                if bounds is None:
+                    bounds = [float(v) for v in b]
+                else:
+                    bounds[0] = min(bounds[0], float(b[0]))
+                    bounds[1] = max(bounds[1], float(b[1]))
+                    bounds[2] = min(bounds[2], float(b[2]))
+                    bounds[3] = max(bounds[3], float(b[3]))
+                    bounds[4] = min(bounds[4], float(b[4]))
+                    bounds[5] = max(bounds[5], float(b[5]))
+        if bounds is None:
+            return
+        self._renderer.ResetCamera(tuple(bounds))
         self._renderer.ResetCameraClippingRange()
         self.rerender()
         

@@ -6,7 +6,7 @@ from ..rendering.base import BaseLayer
 from ..rendering.pointcloud import PointCloudLayer
 
 from dataclasses import dataclass, field
-from typing import ClassVar, Optional
+from typing import Any, ClassVar, Optional
 import weakref
 
 import numpy as np
@@ -21,10 +21,10 @@ class SelectPointsCmd(Command):
     `selection_old` allows passin an explicit old selection, otherwise 
     infer from layer
     """
-    selection_new: Optional[np.ndarray]
-    layer_ref: weakref.ReferenceType[PointCloudLayer]
+    selection_new: Optional[Any]
+    layer_ref: weakref.ReferenceType[BaseLayer]
     ctx_ref: weakref.ReferenceType[ToolContext]
-    selection_old: Optional[np.ndarray] = None 
+    selection_old: Optional[Any] = None 
     
     def execute(self) -> None:
         layer = self.layer_ref()
@@ -72,12 +72,12 @@ class DeselectTool(CommandTool):
         layer = self.ctx.scene.active_layer
         if layer is None:
             return
-        if isinstance(layer, PointCloudLayer):
+        if isinstance(layer, PointCloudLayer) or hasattr(layer, "active_selection"):
             if layer.active_selection is None:
                 return
             else:
                 cmd = SelectPointsCmd(
-                    title="Deselect points",
+                    title="Deselect selection",
                     selection_new=None,
                     layer_ref=weakref.ref(layer),
                     ctx_ref=weakref.ref(self.ctx),

@@ -143,7 +143,7 @@ class PointCloudLayer(BaseLayer[PointCloudData]):
             if f_name in self._vf_active_index.keys():
                 self._vf_active_index[f_name] = \
                     min(self._vf_active_index[f_name], 
-                        self.data[f_name].shape[-1])
+                        max(0, self.data[f_name].shape[-1] - 1))
             else:
                 self._vf_active_index[f_name] = 0
     @property
@@ -181,6 +181,21 @@ class PointCloudLayer(BaseLayer[PointCloudData]):
     def set_active_field_name(self, name:str):
         self.active_field_name = name
         self.update()
+
+    def set_vector_field_active_index(self, field_name: str, index: int) -> int:
+        fields = self.data.get_fields(names=field_name)
+        if not fields:
+            raise KeyError(f"Field '{field_name}' not found.")
+        field = fields[0]
+        if field.field_type not in {FieldType.VECTOR, FieldType.NORMAL}:
+            raise ValueError(f"Field '{field_name}' is not a vector-like field.")
+        if field.data.ndim < 2:
+            raise ValueError(f"Field '{field_name}' has no component axis.")
+        max_index = max(0, field.data.shape[1] - 1)
+        clamped = int(max(0, min(max_index, index)))
+        self.vf_active_index[field_name] = clamped
+        self.update()
+        return clamped
 
     def _init_visibility_mask(self)->None:
         if self.data.points.ndim < 2:

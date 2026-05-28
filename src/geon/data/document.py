@@ -27,17 +27,32 @@ class Document:
         
         
 
-    def save_hdf5(self, path : Union[str, Path]):
+    def save_hdf5(
+        self,
+        path: Union[str, Path],
+        unsafe_format_version_override: Optional[int] = None,
+    ):
         dir_path, file_path = osp.split(path)
         os.makedirs(dir_path, exist_ok=True)
         path = Path(path)      
         with h5py.File(path,'w') as f:
             root = f.create_group("document")
-            self._save_to_group(root)
+            self._save_to_group(root, unsafe_format_version_override)
 
-    def _save_to_group(self, group: h5py.Group) -> None:
+    def _save_to_group(
+        self,
+        group: h5py.Group,
+        unsafe_format_version_override: Optional[int] = None,
+    ) -> None:
         # doc metadata
-        group.attrs['geon_format_version'] = GEON_FORMAT_VERSION
+        version = (
+            GEON_FORMAT_VERSION
+            if unsafe_format_version_override is None
+            else int(unsafe_format_version_override)
+        )
+        if version < 0:
+            raise ValueError("GEON format version must be non-negative.")
+        group.attrs['geon_format_version'] = version
         group.attrs['type'] = "Document"
         for k, v in self.meta.items():
             group.attrs[k] = v
@@ -90,9 +105,16 @@ class Document:
             if doc_type != "Document":
                 raise ValueError(f"Invalid root type '{doc_type}' in {path}")
             version = group.attrs.get("geon_format_version")
-            if version != GEON_FORMAT_VERSION:
+            if version is None:
+                version_int = 0
+            elif hasattr(version, "astype"):
+                version_int = int(version.astype(int))
+            else:
+                version_int = int(version)
+            if version_int > GEON_FORMAT_VERSION:
                 raise ValueError(
-                    f"Unsupported GEON format version {version}, expected {GEON_FORMAT_VERSION}"
+                    f"Unsupported GEON format version {version_int}; "
+                    f"current version is {GEON_FORMAT_VERSION}"
                 )
             
             loaded_meta: Dict[str, Any] = {}

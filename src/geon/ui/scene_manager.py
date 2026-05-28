@@ -3,6 +3,7 @@ from .viewer import VTKViewer
 from ..data.document import Document
 from ..rendering.scene import Scene
 from ..rendering.pointcloud import PointCloudLayer
+from ..rendering.cellcomplex import CellComplexLayer
 from ..rendering.base import BaseLayer
 from ..data.pointcloud import PointCloudData, FieldType, SemanticSegmentation, SemanticClass
 from ..tools.tool_context import ToolContext
@@ -10,6 +11,7 @@ from ..tools.selection import SelectPointsCmd
 from ..util.resources import resource_path
 from ..util.common import bool_op_index_mask
 from ..ui.boolean_dialog import BooleanChoiceDialog
+from ..ui.layers import LAYER_UI
 
 from geon.settings import Preferences
 import json
@@ -18,7 +20,7 @@ from ..tools.controller import ToolController
 
 from PyQt6.QtWidgets import (QStackedWidget, QLabel, QWidget, QVBoxLayout, QHBoxLayout, QTreeWidget,
                              QTreeWidgetItem, QCheckBox, QButtonGroup, QRadioButton, QHeaderView, QMenu,
-                             QDialog)
+                             QDialog, QMessageBox)
 from PyQt6.QtCore import Qt, pyqtSignal, QSize
 from PyQt6.QtGui import QIcon, QAction
 
@@ -121,11 +123,7 @@ class SceneManager(Dock):
             viewer=self.viewer,
             controller = self.tool_controller
             )
-        # focus camera on first layer in scene
-        scene_main_layer = self._scene.get_layer()
-        if scene_main_layer is not None:
-            scene_main_actor = scene_main_layer.actors[0] #FIXME: multiactors support?
-            self.viewer.focus_camera_on_actor(scene_main_actor)
+        self.viewer.focus_camera_on_scene(self._scene)
         self.populate_tree()
         
         self.viewer.rerender()
@@ -169,7 +167,14 @@ class SceneManager(Dock):
         layers_btnGroup_active.setExclusive(True)
         
         for key, layer in self._scene.layers.items():
-            layer_root = QTreeWidgetItem([layer.browser_name])
+            hooks = LAYER_UI.resolve(layer)
+            layer_text = hooks.tree_item_text(layer) if hooks.tree_item_text is not None else layer.browser_name
+            layer_root = QTreeWidgetItem([layer_text])
+            layer_root.setData(0, Qt.ItemDataRole.UserRole, layer)
+            if hooks.tree_item_icon is not None:
+                icon = hooks.tree_item_icon(layer)
+                if isinstance(icon, QIcon) and not icon.isNull():
+                    layer_root.setIcon(0, icon)
             self.tree.addTopLevelItem(layer_root)
             
             # activate button
@@ -178,6 +183,8 @@ class SceneManager(Dock):
                 self._scene.active_layer_id = layer.id
                 btn_active.setChecked(True)
                 activate_layer(layer)
+            elif self._scene.active_layer_id == layer.id:
+                btn_active.setChecked(True)
             btn_active.clicked.connect(lambda checked, l=layer: checked and activate_layer(l))
             layers_btnGroup_active.addButton(btn_active)
             
@@ -189,19 +196,32 @@ class SceneManager(Dock):
             btn_visible = CheckBoxVisible()
             btn_visible.setChecked(layer.visible)
             self.tree.setItemWidget(layer_root,2, self._center_widget(btn_visible))
-            def update_visibility(visibility: bool):
+            def update_visibility(visibility: bool, target_layer: BaseLayer):
+                layer = target_layer
                 layer.set_visible(visibility)
                 self.viewer.rerender()
-            btn_visible.clicked.connect(lambda checked: update_visibility(checked))
+            btn_visible.clicked.connect(lambda checked, l=layer: update_visibility(checked, l))
             
             # populate
             if isinstance (layer, PointCloudLayer):   
                 layer_root.setIcon(0, QIcon(resource_path("tree_icon_pointcloud.png")))
                 self._populate_point_cloud_layer(layer, layer_root)
+            elif isinstance(layer, CellComplexLayer):
+                self._populate_cell_complex_layer(layer, layer_root)
             else:
-                raise NotImplementedError(f"Please implement a `populate` method for type {type(layer)}")
+                layer_root.addChild(QTreeWidgetItem([type(layer).__name__]))
         self.tree.expandAll()
         self.update_tree_visibility()
+
+    def _populate_cell_complex_layer(
+        self,
+        layer: CellComplexLayer,
+        layer_root: QTreeWidgetItem,
+    ) -> None:
+        vertices_item = QTreeWidgetItem([f"Vertices ({layer.vertex_count:,})"])
+        edges_item = QTreeWidgetItem([f"Edges ({layer.edge_count:,})"])
+        layer_root.addChild(vertices_item)
+        layer_root.addChild(edges_item)
             
     def _populate_point_cloud_layer(self, 
                                     layer:PointCloudLayer, 
@@ -320,6 +340,7 @@ class SceneManager(Dock):
         
 
         sem_cls_handles = [o for o in objs if isinstance(o, SemClsHandle)]
+        layers = [o for o in objs if isinstance(o, BaseLayer)]
         
         menu = QMenu(self.tree)
             
@@ -331,12 +352,68 @@ class SceneManager(Dock):
                 act = menu.addAction(f"Select points of {len(sem_cls_handles)} classes.")
             act = cast(QAction, act)
             act.triggered.connect(lambda: self._selection_from_sem_cls_handles(sem_cls_handles))
+
+        if len(layers) == 1:
+            layer = layers[0]
+            hooks = LAYER_UI.resolve(layer)
+            if hooks.tree_menu is not None:
+                layer_menu = hooks.tree_menu(layer, self.tree, self.tool_controller)
+                if not layer_menu.isEmpty():
+                    if not menu.isEmpty():
+                        menu.addSeparator()
+                    for action in layer_menu.actions():
+                        menu.addAction(action)
+            if not menu.isEmpty():
+                menu.addSeparator()
+            act_delete_layer = menu.addAction("Delete layer")
+            act_delete_layer.triggered.connect(
+                lambda _checked=False, l=layer: self._delete_layer(l)
+            )
             
         
         viewport = self.tree.viewport()
         if viewport is None:
             return
+        if menu.isEmpty():
+            return
         menu.exec(viewport.mapToGlobal(pos))
+
+    def _confirm_delete_layer(self, layer: BaseLayer) -> bool:
+        msg = QMessageBox(self.tree)
+        msg.setIcon(QMessageBox.Icon.Warning)
+        msg.setWindowTitle("Delete Layer")
+        msg.setText(f"Delete layer '{layer.browser_name}'?")
+        msg.setInformativeText(
+            "This removes the layer from the scene and the document. "
+            "This action is irreversible."
+        )
+        delete_btn = msg.addButton("Delete", QMessageBox.ButtonRole.DestructiveRole)
+        msg.addButton(QMessageBox.StandardButton.Cancel)
+        msg.setDefaultButton(QMessageBox.StandardButton.Cancel)
+        msg.exec()
+        return msg.clickedButton() is delete_btn
+
+    def _delete_layer(self, layer: BaseLayer) -> None:
+        if self._scene is None:
+            return
+        if layer.id not in self._scene.layers:
+            return
+        if not self._confirm_delete_layer(layer):
+            return
+
+        self._scene.remove_layer(layer.id, delete_data=True)
+        window = self.viewer.window()
+        mark_modified = getattr(window, "_mark_active_doc_modified", None)
+        if callable(mark_modified):
+            mark_modified()
+        dataset_manager = getattr(window, "dataset_manager", None)
+        if dataset_manager is not None and hasattr(dataset_manager, "populate_tree"):
+            dataset_manager.populate_tree()
+        self.populate_tree()
+        active_layer = self._scene.active_layer
+        if active_layer is not None:
+            self.broadcastActivatedLayer.emit(active_layer)
+        self.viewer.rerender()
 
     def _selection_from_sem_cls_handles(self, handles:list[SemClsHandle]) -> None:
         if self._scene is None:

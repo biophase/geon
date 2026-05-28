@@ -1,8 +1,7 @@
 from PyQt6.QtWidgets import (
     QToolBar, QWidget, QVBoxLayout, QLabel, QHBoxLayout, QToolButton, 
-    QPushButton, QLayout
-    
-    )
+    QPushButton, QSizePolicy,
+)
 from PyQt6.QtCore import QSize, Qt
 from PyQt6.QtGui import QAction
 
@@ -89,6 +88,9 @@ class ContextRibbon(QToolBar):
 
         outer.addWidget(title_label)
         outer.addLayout(content_row)
+        group_content.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Expanding)
+        w.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
+        w.setFixedHeight(self.RIBBON_HEIGHT - 6)
 
         if group_type == "tool":
             w.setObjectName("tool_group")

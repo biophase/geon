@@ -11,6 +11,7 @@ from .annotate import AnnotateTool
 from .wand import WandTool
 from .seeded_region_growing import SeededRegionGrowingTool
 from .inspect import InspectTool
+from .cellcomplex import CellComplexAddEdgeTool, CellComplexAssociateTool, CellPickVertexTool
 from .camera import (
     TogglePerspectiveTool,
     CameraTopTool,
@@ -31,6 +32,9 @@ TOOL_REGISTRY.register(HideTool)
 TOOL_REGISTRY.register(IsolateTool)
 TOOL_REGISTRY.register(ShowTool)
 TOOL_REGISTRY.register(AnnotateTool)
+TOOL_REGISTRY.register(CellPickVertexTool)
+TOOL_REGISTRY.register(CellComplexAddEdgeTool)
+TOOL_REGISTRY.register(CellComplexAssociateTool)
 TOOL_REGISTRY.register(TogglePerspectiveTool)
 TOOL_REGISTRY.register(CameraTopTool)
 TOOL_REGISTRY.register(CameraBottomTool)

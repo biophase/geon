@@ -41,6 +41,24 @@ def test_preferences_load_missing_region_growing_keys(tmp_path: Path):
     assert loaded.get_region_growing_settings() == {}
 
 
+def test_preferences_cell_complex_round_trip(tmp_path: Path):
+    prefs_path = tmp_path / "prefs.toml"
+    prefs = Preferences(path=prefs_path)
+    prefs.cell_complex_size_mode = "world"
+    prefs.cell_complex_screen_size_px = 18.0
+    prefs.cell_complex_world_size = 0.25
+    prefs.cell_complex_edge_width = 3.0
+    prefs.cell_complex_default_color = [1, 2, 3]
+    prefs.save()
+
+    loaded = Preferences.load(prefs_path)
+    assert loaded.cell_complex_size_mode == "world"
+    assert loaded.cell_complex_screen_size_px == 18.0
+    assert loaded.cell_complex_world_size == 0.25
+    assert loaded.cell_complex_edge_width == 3.0
+    assert loaded.cell_complex_default_color == [1, 2, 3]
+
+
 def test_preferences_other_segmentation_round_trip(tmp_path: Path):
     prefs_path = tmp_path / "prefs.toml"
     prefs = Preferences(path=prefs_path)

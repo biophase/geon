@@ -1,5 +1,6 @@
 import random
 import colorsys
+import uuid
 import numpy as np
 from numpy.typing import NDArray
 
@@ -23,6 +24,10 @@ def generate_vibrant_color():
     g = _to_int(g)
     b = _to_int(b)
     return (r, g, b)
+
+def generate_uuid() -> str:
+    """Generate a canonical RFC 4122 random UUID string."""
+    return str(uuid.uuid4())
 
 def blend_colors(c1, c2, t):
     """Linearly blend two RGB colors with blend factor t (0<=t<=1)."""

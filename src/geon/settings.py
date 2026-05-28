@@ -14,6 +14,12 @@ DEFAULT_PREFS: Dict[str, Any] = {
     "user_name": "Unnamed User",
     "enable_telemetry": False,
     "camera_sensitivity": 10.0,
+    "cell_complex_size_mode": "screen",
+    "cell_complex_screen_size_px": 12.0,
+    "cell_complex_world_size": 0.1,
+    "cell_complex_edge_width": 1.0,
+    "cell_complex_default_color": [204, 204, 204],
+    "selection_color": [255, 128, 0],
 }
 
 REGION_GROWING_PREFIX = "region_growing__"
@@ -127,6 +133,16 @@ class Preferences:
     user_name: str = DEFAULT_PREFS["user_name"]
     enable_telemetry: bool = DEFAULT_PREFS["enable_telemetry"]
     camera_sensitivity: float = DEFAULT_PREFS["camera_sensitivity"]
+    cell_complex_size_mode: str = DEFAULT_PREFS["cell_complex_size_mode"]
+    cell_complex_screen_size_px: float = DEFAULT_PREFS["cell_complex_screen_size_px"]
+    cell_complex_world_size: float = DEFAULT_PREFS["cell_complex_world_size"]
+    cell_complex_edge_width: float = DEFAULT_PREFS["cell_complex_edge_width"]
+    cell_complex_default_color: list[int] = field(
+        default_factory=lambda: list(DEFAULT_PREFS["cell_complex_default_color"])
+    )
+    selection_color: list[int] = field(
+        default_factory=lambda: list(DEFAULT_PREFS["selection_color"])
+    )
     region_growing_settings: Dict[str, Any] = field(default_factory=dict)
     plane_ransac_settings: Dict[str, Any] = field(default_factory=dict)
     superpoints_settings: Dict[str, Any] = field(default_factory=dict)
@@ -165,6 +181,29 @@ class Preferences:
                 prefs.camera_sensitivity = float(cam_val)
             except (TypeError, ValueError):
                 prefs.camera_sensitivity = DEFAULT_PREFS["camera_sensitivity"]
+            prefs.cell_complex_size_mode = str(
+                data.get("cell_complex_size_mode", prefs.cell_complex_size_mode)
+            )
+            if prefs.cell_complex_size_mode not in {"screen", "world"}:
+                prefs.cell_complex_size_mode = DEFAULT_PREFS["cell_complex_size_mode"]
+            for attr in (
+                "cell_complex_screen_size_px",
+                "cell_complex_world_size",
+                "cell_complex_edge_width",
+            ):
+                try:
+                    setattr(prefs, attr, float(data.get(attr, getattr(prefs, attr))))
+                except (TypeError, ValueError):
+                    setattr(prefs, attr, DEFAULT_PREFS[attr])
+            for attr in ("cell_complex_default_color", "selection_color"):
+                color = data.get(attr, getattr(prefs, attr))
+                if isinstance(color, list) and len(color) == 3:
+                    try:
+                        setattr(prefs, attr, [
+                            int(max(0, min(255, int(c)))) for c in color
+                        ])
+                    except (TypeError, ValueError):
+                        setattr(prefs, attr, list(DEFAULT_PREFS[attr]))
             prefs.region_growing_settings = _tool_settings_from_data(data, REGION_GROWING_PREFIX)
             prefs.plane_ransac_settings = _tool_settings_from_data(data, PLANE_RANSAC_PREFIX)
             prefs.superpoints_settings = _tool_settings_from_data(data, SUPERPOINTS_PREFIX)
@@ -200,6 +239,12 @@ class Preferences:
             f'user_name = {_toml_scalar(self.user_name)}',
             f'enable_telemetry = {_toml_scalar(self.enable_telemetry)}',
             f'camera_sensitivity = {_toml_scalar(float(self.camera_sensitivity))}',
+            f'cell_complex_size_mode = {_toml_scalar(self.cell_complex_size_mode)}',
+            f'cell_complex_screen_size_px = {_toml_scalar(float(self.cell_complex_screen_size_px))}',
+            f'cell_complex_world_size = {_toml_scalar(float(self.cell_complex_world_size))}',
+            f'cell_complex_edge_width = {_toml_scalar(float(self.cell_complex_edge_width))}',
+            f'cell_complex_default_color = {_toml_scalar(self.cell_complex_default_color)}',
+            f'selection_color = {_toml_scalar(self.selection_color)}',
         ]
         tool_settings: Iterable[tuple[str, Dict[str, Any]]] = (
             (REGION_GROWING_PREFIX, self.region_growing_settings),

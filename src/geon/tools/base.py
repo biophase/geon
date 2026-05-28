@@ -197,7 +197,8 @@ class ModeTool(BaseTool):
         """
         override to define tool behaviour on a keyboard key press
         """
-        pass
+        if event.key is not None and event.key.lower() == "escape":
+            self.ctx.controller.deactivate_tool()
     
     def key_release_hook(self, event: Event) -> None:
         """

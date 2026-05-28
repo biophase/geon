@@ -14,7 +14,7 @@ class LayerUIHooks(Generic[T]):
     ribbon_sel_widget: Optional[Callable[[T, QWidget, ToolController], QWidget | None]] = None
     tree_menu: Optional[Callable[[T, QWidget, ToolController], QMenu]] = None
     tree_item_text: Optional[Callable[[T], str]] = None
-    tree_item_icon: Optional[Callable[[T], QIcon]] = None
+    tree_item_icon: Optional[Callable[[T], QIcon | None]] = None
     
 
 class LayerUIRegistry:

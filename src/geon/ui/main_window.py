@@ -11,9 +11,10 @@ from .region_growing_dialog import RegionGrowingDialog
 from .plane_ransac_dialog import PlaneRansacDialog
 from .superpoint_segmentation_dialog import SuperpointSegmentationDialog
 from .region_merge_dialog import RegionMergeDialog
+from .export_ply_dialog import PlyExportDialog
 
 
-from ..io.ply import ply_to_pcd
+from ..io.ply import pcd_to_ply, ply_to_pcd
 from ..algorithms.features import compute_pcd_features
 from ..algorithms.region_growing import (
     estimate_parameters as estimate_region_growing_parameters,
@@ -25,7 +26,11 @@ from ..algorithms.region_merge import merge_planar_regions
 from ..tools.controller import ToolController
 from ..ui.layers import LAYER_UI
 from ..rendering.pointcloud import PointCloudLayer
+from ..rendering.cellcomplex import CellComplexLayer
 from ..data.pointcloud import FieldType, SemanticSegmentation, SemanticSchema
+from ..data.cellcomplex import CellComplexData
+from ..data.camera import CameraData
+from ..data.document import Document
 from ..io.dataset import RefModState
 from geon.settings import Preferences
 from geon.version import get_version
@@ -160,6 +165,8 @@ class MainWindow(QMainWindow):
 
         self.dataset_manager.requestSetActiveDocInScene\
             .connect(self.scene_manager.on_document_loaded)
+        self.dataset_manager.requestSetActiveDocInScene\
+            .connect(lambda _doc: (self._apply_cell_complex_preferences(), self.viewer.rerender()))
         self.dataset_manager.requestClearUndoStacks\
             .connect(self.tool_controller.clear_undo_stacks)
         
@@ -167,12 +174,20 @@ class MainWindow(QMainWindow):
             .connect(self.dataset_manager.set_work_dir)
         self.menu_bar.importFromRequested\
             .connect(self.dataset_manager.import_doc_from_ply)
+        self.menu_bar.importCellComplexTxtRequested\
+            .connect(self._on_import_cell_complex_from_txt)
+        self.menu_bar.exportPointCloudPlyRequested\
+            .connect(self._on_export_active_point_cloud_to_ply)
         self.menu_bar.saveDocRequested\
             .connect(lambda: self.dataset_manager.save_scene_doc(self.scene_manager._scene, ignore_state=True))
         self.menu_bar.renderToFileRequested\
             .connect(self._on_render_to_file)
         self.menu_bar.renameSceneRequested\
             .connect(self._on_rename_scene)
+        self.menu_bar.createCameraSnapshotRequested\
+            .connect(self._on_create_camera_snapshot)
+        self.menu_bar.importCameraSnapshotJsonRequested\
+            .connect(self._on_import_camera_snapshot_from_json)
         self.menu_bar.undoRequested\
             .connect(lambda: self.tool_controller.command_manager.undo())
         self.menu_bar.redoRequested\
@@ -337,6 +352,178 @@ class MainWindow(QMainWindow):
             self.preferences.save()
             self.scene_manager.preferences = self.preferences
             self.viewer.set_camera_sensitivity(self.preferences.camera_sensitivity)
+            self._apply_cell_complex_preferences()
+            self.viewer.rerender()
+
+    def _apply_cell_complex_preferences(self) -> None:
+        scene = self.scene_manager._scene
+        if scene is None:
+            return
+        default_color = tuple(int(c) for c in self.preferences.cell_complex_default_color)
+        selection_color = tuple(int(c) for c in self.preferences.selection_color)
+        for layer in scene.layers.values():
+            if isinstance(layer, CellComplexLayer):
+                layer.set_visual_settings(
+                    size_mode=self.preferences.cell_complex_size_mode,
+                    screen_size_px=self.preferences.cell_complex_screen_size_px,
+                    world_size=self.preferences.cell_complex_world_size,
+                    edge_width=self.preferences.cell_complex_edge_width,
+                    default_color=default_color,
+                    selection_color=selection_color,
+                )
+
+    def _mark_active_doc_modified(self) -> None:
+        dataset = self.dataset_manager._dataset
+        scene = self.scene_manager._scene
+        if dataset is None or scene is None:
+            return
+        for ref in dataset.doc_refs:
+            if ref.name == scene.doc.name:
+                ref.modState = RefModState.MODIFIED
+                break
+
+    def _on_create_camera_snapshot(self) -> None:
+        scene = self.scene_manager._scene
+        if scene is None:
+            QMessageBox.information(
+                self,
+                "Camera Snapshot",
+                "Load a scene before creating a camera snapshot.",
+            )
+            return
+        camera_snapshot = CameraData.from_camera(self.viewer._renderer.GetActiveCamera())
+        scene.doc.add_data(camera_snapshot)
+        layer = scene.add_data(camera_snapshot)
+        scene.active_layer_id = layer.id
+        self._mark_active_doc_modified()
+        self.scene_manager.populate_tree()
+        self.dataset_manager.populate_tree()
+        self.scene_manager.broadcastActivatedLayer.emit(layer)
+        self.viewer.rerender()
+
+    def _on_import_camera_snapshot_from_json(self) -> None:
+        scene = self.scene_manager._scene
+        if scene is None:
+            QMessageBox.information(
+                self,
+                "Import Camera Snapshot",
+                "Load a scene before importing a camera snapshot.",
+            )
+            return
+        path, _selected_filter = QFileDialog.getOpenFileName(
+            self,
+            "Import Camera Snapshot JSON",
+            "",
+            "JSON Files (*.json);;All Files (*)",
+        )
+        if not path:
+            return
+        try:
+            camera_snapshot = CameraData.load_json(path)
+        except Exception as exc:
+            QMessageBox.critical(self, "Import Camera Snapshot", str(exc))
+            return
+        scene.doc.add_data(camera_snapshot)
+        layer = scene.add_data(camera_snapshot)
+        scene.active_layer_id = layer.id
+        self._mark_active_doc_modified()
+        self.scene_manager.populate_tree()
+        self.dataset_manager.populate_tree()
+        self.scene_manager.broadcastActivatedLayer.emit(layer)
+        self.viewer.rerender()
+
+    def _on_export_active_point_cloud_to_ply(self) -> None:
+        scene = self.scene_manager._scene
+        if scene is None or not isinstance(scene.active_layer, PointCloudLayer):
+            QMessageBox.information(
+                self,
+                "Export PLY",
+                "Select a point cloud layer before exporting to PLY.",
+            )
+            return
+
+        layer = scene.active_layer
+        dlg = PlyExportDialog(layer.data, parent=self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        opts = dlg.options()
+        if not opts.path:
+            QMessageBox.warning(self, "Export PLY", "Choose an output file.")
+            return
+        try:
+            pcd_to_ply(
+                layer.data,
+                opts.path,
+                field_names=opts.field_names,
+                field_dtypes=opts.field_dtypes,
+                coord_dtype=opts.coord_dtype,
+            )
+        except Exception as exc:
+            QMessageBox.critical(self, "Export PLY", str(exc))
+            return
+        QMessageBox.information(self, "Export PLY", f"Exported point cloud to:\n{opts.path}")
+
+    def _on_import_cell_complex_from_txt(self) -> None:
+        if self.dataset_manager._dataset is None:
+            success = self.dataset_manager.set_work_dir()
+            if self.dataset_manager._dataset is None or not success:
+                return
+
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Open CellComplex TXT File",
+            "",
+            "Text Files (*.txt);;All Files (*)",
+        )
+        if not file_path:
+            return
+        try:
+            cell_complex = CellComplexData.from_txt(file_path)
+        except Exception as exc:
+            QMessageBox.critical(self, "Import CellComplex", str(exc))
+            return
+
+        msg = QMessageBox(self)
+        msg.setWindowTitle("Import CellComplex")
+        msg.setText("Where should the CellComplex be imported?")
+        new_doc_btn = msg.addButton("New document", QMessageBox.ButtonRole.AcceptRole)
+        active_doc_btn = msg.addButton("Active document", QMessageBox.ButtonRole.ActionRole)
+        cancel_btn = msg.addButton(QMessageBox.StandardButton.Cancel)
+        active_doc_btn.setEnabled(self.scene_manager._scene is not None)
+        msg.setDefaultButton(new_doc_btn)
+        msg.exec()
+        clicked = msg.clickedButton()
+        if clicked is None or clicked is cancel_btn:
+            return
+
+        if clicked is active_doc_btn and self.scene_manager._scene is not None:
+            scene = self.scene_manager._scene
+            scene.doc.add_data(cell_complex)
+            layer = scene.add_data(cell_complex)
+            scene.active_layer_id = layer.id
+            self._apply_cell_complex_preferences()
+            self._mark_active_doc_modified()
+            self.scene_manager.populate_tree()
+            self.dataset_manager.populate_tree()
+            self.scene_manager.broadcastActivatedLayer.emit(layer)
+            self.viewer.rerender()
+            return
+
+        name_cand = file_path.replace("\\", "/").split("/")[-1]
+        name = name_cand.rsplit(".", 1)[0]
+        dataset = self.dataset_manager._dataset
+        if dataset is None:
+            return
+        base_name = name
+        suffix = 0
+        while name in dataset.doc_ref_names:
+            name = f"{base_name}_{suffix:03}"
+            suffix += 1
+        doc = Document(name)
+        doc.add_data(cell_complex)
+        doc_ref = dataset.add_document(doc)
+        self.dataset_manager.populate_tree()
+        self.dataset_manager.set_active_doc(doc_ref)
 
     def _on_render_to_file(self) -> None:
         path, _selected_filter = QFileDialog.getSaveFileName(
