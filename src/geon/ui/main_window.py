@@ -251,10 +251,11 @@ class MainWindow(QMainWindow):
         hooks = LAYER_UI.resolve(layer)
         if hooks.ribbon_widget is None:
             self.ribbon.clear_group("layer")
-            return
-        title = getattr(layer, "browser_name", "Layer")
-        widget = hooks.ribbon_widget(layer, self.ribbon, self.tool_controller)
-        self.ribbon.set_group(title, widget, "layer")
+        else:
+            title = getattr(layer, "browser_name", "Layer")
+            widget = hooks.ribbon_widget(layer, self.ribbon, self.tool_controller)
+            self.ribbon.set_group(title, widget, "layer")
+        self._on_layer_internal_sel_changed(layer)
         
     def _on_layer_internal_sel_changed(self, layer) -> None:
         hooks = LAYER_UI.resolve(layer)

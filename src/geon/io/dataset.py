@@ -6,6 +6,7 @@ import h5py
 
 from geon.data.document import Document
 from geon.data.pointcloud import SemanticSchema, PointCloudData, SemanticSegmentation
+from geon.data.cellcomplex import CellComplexData
 
 from geon.version import GEON_FORMAT_VERSION
 from typing import Union, Optional, cast, Callable
@@ -212,6 +213,45 @@ class Dataset:
         referenced_schemas  : dict[str, SemanticSchema] = dict()
         loaded_schemas      : dict[str, SemanticSchema] = dict()
 
+        def _point_key(ref_name: str, data_name: str, field_name: str, schema_name: str) -> str:
+            return f"point/{ref_name}/{data_name}/{field_name}/{schema_name}"
+
+        def _cell_key(ref_name: str, data_name: str, dim: int, attr_name: str, schema_name: str) -> str:
+            return f"cell/{ref_name}/{data_name}/{dim}/{attr_name}/{schema_name}"
+
+        def _scan_cell_complex_schemas(path: str) -> dict[str, SemanticSchema]:
+            out: dict[str, SemanticSchema] = {}
+
+            def _decode(value) -> str:
+                if isinstance(value, (bytes, bytearray)):
+                    return value.decode("utf-8")
+                return str(value)
+
+            with h5py.File(path, "r") as f:
+                doc_group = f.get("document")
+                if not isinstance(doc_group, h5py.Group):
+                    return out
+                doc_name = _decode(doc_group.attrs.get("name", "UnnamedDocument"))
+                for data_name, data_group in doc_group.items():
+                    if data_name == "telemetry" or not isinstance(data_group, h5py.Group):
+                        continue
+                    type_id = _decode(data_group.attrs.get("type_id", data_group.attrs.get("type", "")))
+                    if type_id != CellComplexData.get_type_id():
+                        continue
+                    schemas_group = data_group.get("semantic_attribute_schemas")
+                    if not isinstance(schemas_group, h5py.Group):
+                        continue
+                    for dim_name, dim_group in schemas_group.items():
+                        if not isinstance(dim_group, h5py.Group):
+                            continue
+                        dim = int(dim_name)
+                        for attr_name, attr_group in dim_group.items():
+                            if not isinstance(attr_group, h5py.Group):
+                                continue
+                            schema = SemanticSchema.from_hdf5_fieldgroup(attr_group)
+                            out[_cell_key(doc_name, str(data_name), dim, str(attr_name), schema.name)] = schema
+            return out
+
         for ref in self.doc_refs:
             doc = self._loaded_docs.get(ref.name)
             if doc is not None:
@@ -222,13 +262,26 @@ class Dataset:
                     if isinstance(data, PointCloudData):
                         for field in data.get_fields():
                             if isinstance (field, SemanticSegmentation):
-                                build_key = f"{ref.name}/{data_name}/{field.name}/{field.schema.name}"
+                                build_key = _point_key(ref.name, data_name, field.name, field.schema.name)
                                 loaded_schemas[build_key] = field.schema
+                    elif isinstance(data, CellComplexData):
+                        seen_cell_attrs: set[tuple[int, str, str]] = set()
+                        for dim, attr_name, schema in data.iter_semantic_attributes():
+                            key_tuple = (dim, attr_name, schema.name)
+                            if key_tuple in seen_cell_attrs:
+                                continue
+                            seen_cell_attrs.add(key_tuple)
+                            build_key = _cell_key(ref.name, data_name, dim, attr_name, schema.name)
+                            loaded_schemas[build_key] = schema
                 
             # gather schemas from referenced documents
             else:
                 assert ref.path is not None
-                referenced_schemas = referenced_schemas | SemanticSchema.scan_h5(ref.path)
+                referenced_schemas = referenced_schemas | {
+                    f"point/{key}": schema
+                    for key, schema in SemanticSchema.scan_h5(ref.path).items()
+                }
+                referenced_schemas = referenced_schemas | _scan_cell_complex_schemas(ref.path)
         pass                
         return referenced_schemas, loaded_schemas
     
@@ -274,17 +327,32 @@ class Dataset:
             if progress_cb is not None:
                 progress_cb(i, tot_len, build_key)
                 
-            r_name, data_name, field_name, schema_name = build_key.split('/')
+            key_parts = build_key.split('/')
+            kind = "point"
+            if key_parts[0] in {"point", "cell"}:
+                kind = key_parts.pop(0)
+            if kind == "point":
+                r_name, data_name, field_name, schema_name = key_parts
+            elif kind == "cell":
+                r_name, data_name, dim_text, attr_name, schema_name = key_parts
+                dim = int(dim_text)
+            else:
+                raise ValueError(f"Unknown semantic schema build key: {build_key}")
             ref = list([r for r in self.doc_refs if r.name == r_name])[0]
             
             doc = self._loaded_docs.get(ref.name)
             if doc is None:
                 doc = self._load_reference(ref)
             
-            data = cast(PointCloudData, doc.scene_items.get(data_name))
-            field = cast(SemanticSegmentation, data.get_fields(field_name)[0])
-            field.remap(old_2_new_ids)
-            field.schema = new_schema
+            data = doc.scene_items.get(data_name)
+            if kind == "point":
+                pcd = cast(PointCloudData, data)
+                field = cast(SemanticSegmentation, pcd.get_fields(field_name)[0])
+                field.remap(old_2_new_ids)
+                field.schema = new_schema
+            else:
+                cell_complex = cast(CellComplexData, data)
+                cell_complex.remap_semantic_attribute(dim, attr_name, old_2_new_ids, new_schema)
             if ref.path is None:
                 continue
             doc.save_hdf5(ref.path)

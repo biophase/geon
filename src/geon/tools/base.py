@@ -168,6 +168,12 @@ class ModeTool(BaseTool):
         override to define tool behaviour on right mouse click
         """
         pass
+
+    def right_button_release_hook(self, event: Event) -> None:
+        """
+        override to define tool behaviour on right mouse release
+        """
+        pass
     
     def middle_button_press_hook(self, event: Event) -> None:
         """

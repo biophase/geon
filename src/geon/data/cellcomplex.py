@@ -8,7 +8,7 @@ import numpy as np
 
 from .base import BaseData
 from .registry import register_data
-from .pointcloud import SemanticClass
+from .pointcloud import SemanticClass, SemanticSchema
 from ..util.common import generate_uuid
 
 CELL_COMPLEX_MAX_DIM=1
@@ -39,8 +39,9 @@ class PointCloudRef(GeometryRef):
 @dataclass(kw_only=True)
 class Cell(ABC):
     boundary: List[str] = field(default_factory=list)
-    semantic_type: Optional[SemanticClass] = None
-    attributes: dict[str, Any] = field(default_factory=dict)
+
+    semantic_attributes: Dict[str, int] = field(default_factory=dict)
+    attributes: Dict[str, Any] = field(default_factory=dict)
     geometry_refs: List[GeometryRef] = field(default_factory=list)
     id: str = field(default_factory=generate_uuid)
     dim: ClassVar[int]
@@ -49,6 +50,7 @@ class Cell(ABC):
     def validate(self, context:"CellComplexData"): 
         assert sum(cell.id == self.id for cell in context.get_cells()) <= 1, \
             "Duplicate ids are not allowed."
+
         
     
         
@@ -86,11 +88,17 @@ class CellComplexData(BaseData):
     
     def __init__(self, 
                  vertices: Optional[List[VertexCell]] = None,
-                 edges: Optional[List[EdgeCell]] = None
+                 edges: Optional[List[EdgeCell]] = None,
+                 semantic_attribute_schemas: Optional[Dict[int, Dict[str, SemanticSchema]]] = None,
                  ):
         super().__init__()
         self.vertices = list(vertices or [])
         self.edges = list(edges or [])
+        self.semantic_attribute_schemas: Dict[int, Dict[str, SemanticSchema]] = {
+            dim: dict((semantic_attribute_schemas or {}).get(dim, {}))
+            for dim in range(CELL_COMPLEX_MAX_DIM + 1)
+        }
+        self.normalize_and_validate()
         
 
     def get_cells (self, dim: Optional[int] = None) -> List[Cell]:
@@ -111,13 +119,21 @@ class CellComplexData(BaseData):
         assert id_vert_start in vert_ids, f"Vertex {id_vert_start} not in Cell Complex"
         assert id_vert_end in vert_ids, f"Vertex {id_vert_end} not in Cell Complex"
         edge = EdgeCell(boundary=[id_vert_start, id_vert_end])
-        edge.validate(self)
         self.edges.append(edge)
+        try:
+            self.normalize_and_validate()
+        except Exception:
+            self.edges.remove(edge)
+            raise
         return edge
 
     def append_edge(self, edge: EdgeCell) -> None:
-        edge.validate(self)
         self.edges.append(edge)
+        try:
+            self.normalize_and_validate()
+        except Exception:
+            self.edges.remove(edge)
+            raise
 
     def remove_edges(self, edge_ids: set[str]) -> List[EdgeCell]:
         removed = [edge for edge in self.edges if edge.id in edge_ids]
@@ -136,25 +152,53 @@ class CellComplexData(BaseData):
         return removed_vertices, removed_edges
 
     @staticmethod
-    def _semantic_to_dict(semantic_type: Optional[SemanticClass]) -> Optional[dict[str, Any]]:
-        if semantic_type is None:
-            return None
+    def _semantic_class_to_dict(semantic_class: SemanticClass) -> dict[str, Any]:
         return {
-            "id": int(semantic_type.id),
-            "name": semantic_type.name,
-            "color": list(semantic_type.color),
+            "id": int(semantic_class.id),
+            "name": semantic_class.name,
+            "color": list(semantic_class.color),
         }
 
     @staticmethod
-    def _semantic_from_dict(data: Optional[dict[str, Any]]) -> Optional[SemanticClass]:
-        if data is None:
-            return None
+    def _semantic_class_from_dict(data: dict[str, Any]) -> SemanticClass:
         color = data.get("color", (204, 204, 204))
         return SemanticClass(
             int(data["id"]),
             str(data["name"]),
             (int(color[0]), int(color[1]), int(color[2])),
         )
+
+    @staticmethod
+    def _semantic_attributes_to_dict(attrs: Dict[str, int]) -> dict[str, int]:
+        return {str(name): int(value) for name, value in attrs.items()}
+
+    @staticmethod
+    def _semantic_attributes_from_dict(data: dict[str, Any]) -> Dict[str, int]:
+        attrs: Dict[str, int] = {}
+        for name, value in data.items():
+            try:
+                if isinstance(value, dict) and "value" in value:
+                    attrs[str(name)] = int(value["value"]["id"])
+                else:
+                    attrs[str(name)] = int(value)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    "Invalid cell semantic attribute value. Expected integer class ids."
+                ) from exc
+        return attrs
+
+    @staticmethod
+    def _legacy_semantic_attribute_schemas_from_dict(
+        data: dict[str, Any],
+    ) -> Dict[str, SemanticSchema]:
+        schemas: Dict[str, SemanticSchema] = {}
+        for name, value in data.items():
+            if not isinstance(value, dict) or "schema" not in value:
+                continue
+            schema = SemanticSchema.from_dict(value.get("schema", {}))
+            schema.name = str(value.get("schema_name", schema.name))
+            schemas[str(name)] = schema
+        return schemas
 
     @staticmethod
     def _geometry_refs_to_dict(refs: List[GeometryRef]) -> list[dict[str, Any]]:
@@ -205,17 +249,31 @@ class CellComplexData(BaseData):
 
         return {
             "boundary": boundary,
-            "semantic_type": cls._semantic_from_dict(_attr_json("semantic_type", "null")),
+            "semantic_attributes": cls._semantic_attributes_from_dict(
+                _attr_json("semantic_attributes", "{}")
+            ),
             "attributes": _attr_json("attributes", "{}"),
             "geometry_refs": cls._geometry_refs_from_dict(_attr_json("geometry_refs", "[]")),
             "id": _decode(group.attrs["id"]),
         }
 
+    @classmethod
+    def _legacy_semantic_attribute_schemas_from_group(
+        cls,
+        group: h5py.Group,
+    ) -> Dict[str, SemanticSchema]:
+        value = group.attrs.get("semantic_attributes", "{}")
+        if isinstance(value, bytes):
+            value = value.decode("utf-8")
+        return cls._legacy_semantic_attribute_schemas_from_dict(json.loads(str(value)))
+
     @staticmethod
     def _save_common_cell(group: h5py.Group, cell: Cell) -> None:
         group.attrs["id"] = cell.id
         group.attrs["dim"] = cell.dim
-        group.attrs["semantic_type"] = json.dumps(CellComplexData._semantic_to_dict(cell.semantic_type))
+        group.attrs["semantic_attributes"] = json.dumps(
+            CellComplexData._semantic_attributes_to_dict(cell.semantic_attributes)
+        )
         group.attrs["attributes"] = json.dumps(cell.attributes)
         group.attrs["geometry_refs"] = json.dumps(CellComplexData._geometry_refs_to_dict(cell.geometry_refs))
         dt = h5py.string_dtype(encoding="utf-8")
@@ -224,6 +282,13 @@ class CellComplexData(BaseData):
     def save_hdf5(self, group: h5py.Group) -> h5py.Group:
         group.attrs["type_id"] = self.get_type_id()
         group.attrs["id"] = self.id
+
+        schemas_group = group.create_group("semantic_attribute_schemas")
+        for dim, schemas_by_name in self.semantic_attribute_schemas.items():
+            dim_group = schemas_group.create_group(str(dim))
+            for attr_name, schema in schemas_by_name.items():
+                attr_group = dim_group.create_group(attr_name)
+                schema.save_h5py(attr_group)
 
         vertices_group = group.create_group("vertices")
         for vertex in self.vertices:
@@ -239,6 +304,23 @@ class CellComplexData(BaseData):
 
     @classmethod
     def load_hdf5(cls, group: h5py.Group) -> "CellComplexData":
+        semantic_attribute_schemas: Dict[int, Dict[str, SemanticSchema]] = {
+            dim: {} for dim in range(CELL_COMPLEX_MAX_DIM + 1)
+        }
+        schemas_group = group.get("semantic_attribute_schemas")
+        if isinstance(schemas_group, h5py.Group):
+            for dim_name, dim_group in schemas_group.items():
+                if not isinstance(dim_group, h5py.Group):
+                    continue
+                dim = int(dim_name)
+                semantic_attribute_schemas.setdefault(dim, {})
+                for attr_name, attr_group in dim_group.items():
+                    if not isinstance(attr_group, h5py.Group):
+                        continue
+                    semantic_attribute_schemas[dim][str(attr_name)] = (
+                        SemanticSchema.from_hdf5_fieldgroup(attr_group)
+                    )
+
         vertices: List[VertexCell] = []
         vertices_group = group.get("vertices")
         if isinstance(vertices_group, h5py.Group):
@@ -249,6 +331,8 @@ class CellComplexData(BaseData):
                 if not isinstance(position_ds, h5py.Dataset):
                     raise ValueError("Vertex cell is missing a 'position' dataset.")
                 position_arr = np.asarray(position_ds[()], dtype=np.float64).reshape(3)
+                for attr_name, schema in cls._legacy_semantic_attribute_schemas_from_group(vertex_group).items():
+                    semantic_attribute_schemas.setdefault(0, {}).setdefault(attr_name, schema)
                 vertices.append(VertexCell(
                     position=(float(position_arr[0]), float(position_arr[1]), float(position_arr[2])),
                     **cls._common_cell_kwargs_from_group(vertex_group),
@@ -260,23 +344,145 @@ class CellComplexData(BaseData):
             for edge_group in edges_group.values():
                 if not isinstance(edge_group, h5py.Group):
                     continue
+                for attr_name, schema in cls._legacy_semantic_attribute_schemas_from_group(edge_group).items():
+                    semantic_attribute_schemas.setdefault(1, {}).setdefault(attr_name, schema)
                 edges.append(EdgeCell(**cls._common_cell_kwargs_from_group(edge_group)))
 
-        obj = cls(vertices=vertices, edges=edges)
+        obj = cls(
+            vertices=vertices,
+            edges=edges,
+            semantic_attribute_schemas=semantic_attribute_schemas,
+        )
         stored_id = group.attrs.get("id")
         if stored_id is not None:
             obj.id = stored_id.decode("utf-8") if isinstance(stored_id, bytes) else str(stored_id)
+        obj.normalize_and_validate()
         return obj
     
-    
+    @staticmethod
+    def _schema_key(schema: SemanticSchema) -> tuple[Any, ...]:
+        return (schema.name, schema.signature())
+
+    @staticmethod
+    def _default_semantic_value(schema: SemanticSchema) -> SemanticClass:
+        classes = sorted(schema.semantic_classes, key=lambda cls: cls.id)
+        for cls in classes:
+            if cls.id == -1 or cls.name == "_unlabeled":
+                return cls
+        if not classes:
+            raise ValueError(f"Semantic schema '{schema.name}' has no classes.")
+        return classes[0]
+
     def unify_attributes(self) -> None:
         for dim in range(CELL_COMPLEX_MAX_DIM + 1):
             attrs: set[str] = set()
+            sem_attrs_by_name = self.semantic_attribute_schemas.setdefault(dim, {})
+
             for cell in self.get_cells(dim):
                 attrs.update(cell.attributes.keys())
+                for attr_name, value in list(cell.semantic_attributes.items()):
+                    schema = sem_attrs_by_name.get(attr_name)
+                    if schema is None:
+                        raise ValueError(
+                            f"Semantic attribute '{attr_name}' has no schema registered "
+                            f"for cell dimension {dim}."
+                        )
+                    value_ids = {int(sem_cls.id) for sem_cls in schema.semantic_classes}
+                    value_id = int(value)
+                    if value_id not in value_ids:
+                        raise ValueError(
+                            f"Semantic attribute '{attr_name}' uses value id {value_id} "
+                            f"which is not in schema '{schema.name}'."
+                        )
+                    cell.semantic_attributes[attr_name] = value_id
+
             for cell in self.get_cells(dim):
                 for attr in attrs:
                     cell.attributes.setdefault(attr, None)
+                for sem_attr_name, sem_attr_schema in sem_attrs_by_name.items():
+                    cell.semantic_attributes.setdefault(
+                        sem_attr_name,
+                        int(self._default_semantic_value(sem_attr_schema).id),
+                    )
+
+    def normalize_and_validate(self) -> None:
+        self.unify_attributes()
+        for cell in self.get_cells():
+            cell.validate(self)
+
+    def iter_semantic_attributes(self):
+        for dim in range(CELL_COMPLEX_MAX_DIM + 1):
+            for attr_name, schema in self.semantic_attribute_schemas.get(dim, {}).items():
+                yield dim, attr_name, schema
+
+    def get_matching_semantic_attribute_schemas(
+        self,
+        schema: SemanticSchema,
+    ) -> dict[str, SemanticSchema]:
+        matches: dict[str, SemanticSchema] = {}
+        for dim, attr_name, candidate in self.iter_semantic_attributes():
+            if candidate.name != schema.name:
+                continue
+            if candidate.signature() != schema.signature():
+                continue
+            key = f"{dim}/{attr_name}/{candidate.name}"
+            matches[key] = candidate
+        return matches
+
+    def remap_semantic_attribute(
+        self,
+        dim: int,
+        attr_name: str,
+        old_to_new_ids: list[tuple[int, int]],
+        new_schema: SemanticSchema,
+    ) -> None:
+        mapping = {int(old_id): int(new_id) for old_id, new_id in old_to_new_ids}
+        default_value = self._default_semantic_value(new_schema)
+        new_ids = {int(sem_cls.id) for sem_cls in new_schema.semantic_classes}
+
+        for cell in self.get_cells(dim):
+            if attr_name not in cell.semantic_attributes:
+                continue
+            target_id = mapping.get(int(cell.semantic_attributes[attr_name]), int(default_value.id))
+            if target_id not in new_ids:
+                target_id = int(default_value.id)
+            cell.semantic_attributes[attr_name] = int(target_id)
+        self.semantic_attribute_schemas.setdefault(dim, {})[attr_name] = new_schema
+        self.normalize_and_validate()
+
+    def add_semantic_attribute(
+        self,
+        dim: int,
+        attr_name: str,
+        schema: SemanticSchema,
+    ) -> None:
+        attr_name = attr_name.strip()
+        if not attr_name:
+            raise ValueError("Semantic attribute name cannot be empty.")
+        if any(ch.isspace() for ch in attr_name):
+            raise ValueError("Semantic attribute name cannot contain spaces.")
+        schemas = self.semantic_attribute_schemas.setdefault(dim, {})
+        if attr_name in schemas:
+            raise ValueError(
+                f"Semantic attribute '{attr_name}' already exists for cell dimension {dim}."
+            )
+        schemas[attr_name] = schema
+        default_value = int(self._default_semantic_value(schema).id)
+        for cell in self.get_cells(dim):
+            cell.semantic_attributes[attr_name] = default_value
+        self.normalize_and_validate()
+
+    def delete_semantic_attribute(self, dim: int, attr_name: str) -> None:
+        schemas = self.semantic_attribute_schemas.setdefault(dim, {})
+        if attr_name not in schemas:
+            raise ValueError(
+                f"Semantic attribute '{attr_name}' does not exist for cell dimension {dim}."
+            )
+        schemas.pop(attr_name)
+        for cell in self.get_cells(dim):
+            cell.semantic_attributes.pop(attr_name, None)
+        self.normalize_and_validate()
+
             
     @classmethod
     def from_txt(cls, path: str, delimiter: str = ",") -> "CellComplexData":

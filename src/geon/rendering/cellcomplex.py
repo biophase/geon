@@ -34,6 +34,10 @@ class CellComplexLayer(BaseLayer[CellComplexData]):
         self.default_color: tuple[int, int, int] = theme.DEFAULT_SEGMENTATION_COLOR
         self.selection_color: tuple[int, int, int] = (255, 128, 0)
         self.face_opacity: float = 0.8
+        self.active_semantic_attribute_by_dim: dict[int, str | None] = {
+            0: None,
+            1: None,
+        }
 
         self._vertex_ids: list[str] = []
         self._vertex_id_to_index: dict[str, int] = {}
@@ -129,14 +133,40 @@ class CellComplexLayer(BaseLayer[CellComplexData]):
             self._positions = np.empty((0, 3), dtype=np.float32)
         self._sync_selection_timer()
 
+    def semantic_attribute_names(self, dim: int) -> list[str]:
+        return sorted(self.data.semantic_attribute_schemas.get(dim, {}).keys())
+
+    def set_active_semantic_attribute(self, dim: int, name: str | None) -> None:
+        if name is not None and name not in self.semantic_attribute_names(dim):
+            raise ValueError(f"Semantic attribute '{name}' is not available for dimension {dim}.")
+        self.active_semantic_attribute_by_dim[dim] = name
+        self.update()
+
+    def _sync_active_semantic_attributes(self) -> None:
+        for dim in range(2):
+            active_name = self.active_semantic_attribute_by_dim.get(dim)
+            if active_name is not None and active_name not in self.semantic_attribute_names(dim):
+                self.active_semantic_attribute_by_dim[dim] = None
+
     @staticmethod
     def _clamp_color(color: tuple[int, int, int] | list[int]) -> tuple[int, int, int]:
         return tuple(int(max(0, min(255, c))) for c in color)  # type: ignore[return-value]
 
     def _base_color(self, cell: VertexCell | EdgeCell) -> tuple[int, int, int]:
-        if cell.semantic_type is None:
+        attr_name = self.active_semantic_attribute_by_dim.get(cell.dim)
+        if attr_name is None:
             return self.default_color
-        return self._clamp_color(cell.semantic_type.color)
+        schema = self.data.semantic_attribute_schemas.get(cell.dim, {}).get(attr_name)
+        if schema is None:
+            return self.default_color
+        class_id = cell.semantic_attributes.get(attr_name)
+        if class_id is None:
+            return self.default_color
+        try:
+            sem_class = schema.by_id(int(class_id))
+        except IndexError:
+            return self.default_color
+        return self._clamp_color(sem_class.color)
 
     def _pulse_color(self) -> tuple[int, int, int]:
         pulse = 0.55 + 0.45 * math.sin(self._selection_phase)
@@ -374,6 +404,7 @@ class CellComplexLayer(BaseLayer[CellComplexData]):
         self._update_cube_polys()
 
     def update(self) -> None:
+        self._sync_active_semantic_attributes()
         self._build_vertex_cache()
         self._update_cube_polys()
         self._update_edge_poly()

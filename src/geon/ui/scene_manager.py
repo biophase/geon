@@ -12,6 +12,7 @@ from ..util.resources import resource_path
 from ..util.common import bool_op_index_mask
 from ..ui.boolean_dialog import BooleanChoiceDialog
 from ..ui.layers import LAYER_UI
+from ..ui.semantic_schema_dialog import SemanticSchemaEditDialog
 
 from geon.settings import Preferences
 import json
@@ -40,6 +41,12 @@ class SemClsHandle:
     layer: PointCloudLayer
     sem_cls: SemanticClass
     field: SemanticSegmentation
+
+@dataclass
+class CellSemAttrHandle:
+    layer: CellComplexLayer
+    dim: int
+    attr_name: str
 
 class CheckBoxActive(QRadioButton):
     def __init__(self):
@@ -125,6 +132,9 @@ class SceneManager(Dock):
             )
         self.viewer.focus_camera_on_scene(self._scene)
         self.populate_tree()
+        active_layer = self._scene.active_layer
+        if active_layer is not None:
+            self.broadcastActivatedLayer.emit(active_layer)
         
         self.viewer.rerender()
 
@@ -222,6 +232,40 @@ class SceneManager(Dock):
         edges_item = QTreeWidgetItem([f"Edges ({layer.edge_count:,})"])
         layer_root.addChild(vertices_item)
         layer_root.addChild(edges_item)
+        self._populate_cell_complex_semantic_attributes(layer, vertices_item, 0)
+        self._populate_cell_complex_semantic_attributes(layer, edges_item, 1)
+
+    def _populate_cell_complex_semantic_attributes(
+        self,
+        layer: CellComplexLayer,
+        parent_item: QTreeWidgetItem,
+        dim: int,
+    ) -> None:
+        names = layer.semantic_attribute_names(dim)
+        if not names:
+            return
+        group = QButtonGroup(self)
+        group.setExclusive(True)
+
+        def set_active_attr(attr_name: str) -> None:
+            layer.set_active_semantic_attribute(dim, attr_name)
+            self.broadcastActivatedLayer.emit(layer)
+            self.viewer.rerender()
+
+        active_name = layer.active_semantic_attribute_by_dim.get(dim)
+        for name in names:
+            item = QTreeWidgetItem([name])
+            item.setIcon(0, QIcon(resource_path("tree_icon_field.png")))
+            item.setData(0, Qt.ItemDataRole.UserRole, CellSemAttrHandle(layer, dim, name))
+            parent_item.addChild(item)
+            active_box = CheckBoxActive()
+            group.addButton(active_box)
+            if active_name == name:
+                active_box.setChecked(True)
+            active_box.clicked.connect(
+                lambda checked, attr_name=name: checked and set_active_attr(attr_name)
+            )
+            self.tree.setItemWidget(item, 1, self._center_widget(active_box))
             
     def _populate_point_cloud_layer(self, 
                                     layer:PointCloudLayer, 
@@ -340,6 +384,7 @@ class SceneManager(Dock):
         
 
         sem_cls_handles = [o for o in objs if isinstance(o, SemClsHandle)]
+        cell_sem_attr_handles = [o for o in objs if isinstance(o, CellSemAttrHandle)]
         layers = [o for o in objs if isinstance(o, BaseLayer)]
         
         menu = QMenu(self.tree)
@@ -353,12 +398,23 @@ class SceneManager(Dock):
             act = cast(QAction, act)
             act.triggered.connect(lambda: self._selection_from_sem_cls_handles(sem_cls_handles))
 
+        if len(cell_sem_attr_handles) == 1:
+            handle = cell_sem_attr_handles[0]
+            act_edit_schema = menu.addAction("Edit Schema")
+            act_edit_schema.triggered.connect(
+                lambda _checked=False, h=handle: self._edit_cell_semantic_attribute_schema(h)
+            )
+            act_delete_attr = menu.addAction("Delete attribute")
+            act_delete_attr.triggered.connect(
+                lambda _checked=False, h=handle: self._delete_cell_semantic_attribute(h)
+            )
+
         if len(layers) == 1:
             layer = layers[0]
             hooks = LAYER_UI.resolve(layer)
             if hooks.tree_menu is not None:
                 layer_menu = hooks.tree_menu(layer, self.tree, self.tool_controller)
-                if not layer_menu.isEmpty():
+                if layer_menu is not None and not layer_menu.isEmpty():
                     if not menu.isEmpty():
                         menu.addSeparator()
                     for action in layer_menu.actions():
@@ -413,6 +469,125 @@ class SceneManager(Dock):
         active_layer = self._scene.active_layer
         if active_layer is not None:
             self.broadcastActivatedLayer.emit(active_layer)
+        self.viewer.rerender()
+
+    def _cell_semantic_attribute_schema(self, handle: CellSemAttrHandle):
+        return handle.layer.data.semantic_attribute_schemas.get(handle.dim, {}).get(handle.attr_name)
+
+    def _collect_cell_schema_names(self, handle: CellSemAttrHandle, dataset_manager) -> list[str]:
+        dataset = getattr(dataset_manager, "_dataset", None) if dataset_manager is not None else None
+        if dataset is not None:
+            return sorted({schema.name for schema in dataset.unique_semantic_schemas})
+        return sorted({
+            schema.name
+            for _dim, _name, schema in handle.layer.data.iter_semantic_attributes()
+        })
+
+    def _collect_cell_align_schemas(self, handle: CellSemAttrHandle, dataset_manager):
+        dataset = getattr(dataset_manager, "_dataset", None) if dataset_manager is not None else None
+        if dataset is not None:
+            return list(dataset.unique_semantic_schemas)
+        schemas = []
+        seen = set()
+        for _dim, _name, schema in handle.layer.data.iter_semantic_attributes():
+            signature = schema.signature()
+            if signature in seen:
+                continue
+            schemas.append(schema)
+            seen.add(signature)
+        return schemas
+
+    def _edit_cell_semantic_attribute_schema(self, handle: CellSemAttrHandle) -> None:
+        current_schema = self._cell_semantic_attribute_schema(handle)
+        if current_schema is None:
+            return
+        window = self.viewer.window()
+        dataset_manager = getattr(window, "dataset_manager", None)
+        taken_names = self._collect_cell_schema_names(handle, dataset_manager)
+        align_schemas = self._collect_cell_align_schemas(handle, dataset_manager)
+
+        while True:
+            dlg = SemanticSchemaEditDialog(
+                schema=current_schema,
+                required_ids=[],
+                taken_schema_names=taken_names,
+                available_align_schemas=align_schemas,
+                parent=self.tree,
+            )
+            if dlg.exec() != QDialog.DialogCode.Accepted or dlg.schema is None:
+                return
+
+            use_dataset_update = (
+                dlg.update_existing and dataset_manager is not None
+                and getattr(dataset_manager, "_dataset", None) is not None
+                and hasattr(dataset_manager, "update_semantic_schema")
+            )
+            if use_dataset_update:
+                confirmed = dataset_manager.update_semantic_schema(
+                    dlg.old_schema,
+                    dlg.schema,
+                    dlg.old_2_new_ids,
+                )
+                if not confirmed:
+                    current_schema = dlg.schema
+                    continue
+            else:
+                if dlg.update_existing:
+                    QMessageBox.information(
+                        self.tree,
+                        "Dataset unavailable",
+                        "Dataset not available. Applying changes only to this semantic attribute.",
+                    )
+                handle.layer.data.remap_semantic_attribute(
+                    handle.dim,
+                    handle.attr_name,
+                    dlg.old_2_new_ids,
+                    dlg.schema,
+                )
+                mark_modified = getattr(window, "_mark_active_doc_modified", None)
+                if callable(mark_modified):
+                    mark_modified()
+
+            handle.layer.update()
+            self.populate_tree()
+            self.broadcastActivatedLayer.emit(handle.layer)
+            self.viewer.rerender()
+            break
+
+    def _confirm_delete_cell_semantic_attribute(self, handle: CellSemAttrHandle) -> bool:
+        dim_name = "nodes" if handle.dim == 0 else "edges" if handle.dim == 1 else f"dimension {handle.dim}"
+        msg = QMessageBox(self.tree)
+        msg.setIcon(QMessageBox.Icon.Warning)
+        msg.setWindowTitle("Delete Semantic Attribute")
+        msg.setText(f"Delete semantic attribute '{handle.attr_name}' from {dim_name}?")
+        msg.setInformativeText(
+            "This removes the attribute schema and all stored class values for that dimension. "
+            "This action is irreversible."
+        )
+        delete_btn = msg.addButton("Delete", QMessageBox.ButtonRole.DestructiveRole)
+        msg.addButton(QMessageBox.StandardButton.Cancel)
+        msg.setDefaultButton(QMessageBox.StandardButton.Cancel)
+        msg.exec()
+        return msg.clickedButton() is delete_btn
+
+    def _delete_cell_semantic_attribute(self, handle: CellSemAttrHandle) -> None:
+        if not self._confirm_delete_cell_semantic_attribute(handle):
+            return
+        try:
+            handle.layer.data.delete_semantic_attribute(handle.dim, handle.attr_name)
+        except ValueError as exc:
+            QMessageBox.warning(self.tree, "Cannot delete semantic attribute", str(exc))
+            return
+        handle.layer.update()
+        window = self.viewer.window()
+        mark_modified = getattr(window, "_mark_active_doc_modified", None)
+        if callable(mark_modified):
+            mark_modified()
+        dataset_manager = getattr(window, "dataset_manager", None)
+        if dataset_manager is not None and hasattr(dataset_manager, "populate_tree"):
+            dataset_manager.populate_tree()
+        self.populate_tree()
+        self.broadcastActivatedLayer.emit(handle.layer)
         self.viewer.rerender()
 
     def _selection_from_sem_cls_handles(self, handles:list[SemClsHandle]) -> None:

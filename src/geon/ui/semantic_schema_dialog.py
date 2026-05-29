@@ -61,6 +61,7 @@ class _SemanticSchemaDialogBase(QDialog):
     COL_COLOR = 1
     COL_NAME = 2
     COL_BTN = 3
+    COLOR_COLUMN_WIDTH = 78
 
     def __init__(
         self,
@@ -121,8 +122,9 @@ class _SemanticSchemaDialogBase(QDialog):
         assert isinstance(header, QHeaderView)
         header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(self.COL_ID, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(self.COL_COLOR, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(self.COL_COLOR, QHeaderView.ResizeMode.Fixed)
         header.setSectionResizeMode(self.COL_BTN, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.setColumnWidth(self.COL_COLOR, self.COLOR_COLUMN_WIDTH)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         right.addWidget(self.table, 1)
 
@@ -281,7 +283,7 @@ class _SemanticSchemaDialogBase(QDialog):
 
         # Color button
         color_btn = QPushButton("", self.table)
-        color_btn.setFixedWidth(60)
+        color_btn.setMinimumWidth(54)
         self._set_color_btn(color_btn, color)
         color_btn.clicked.connect(lambda _=False, r=insert_at: self._on_color_clicked(r))
         self.table.setCellWidget(insert_at, self.COL_COLOR, color_btn)

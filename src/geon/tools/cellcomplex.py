@@ -1,24 +1,26 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import ClassVar
+from typing import ClassVar, Optional
 import weakref
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QCursor, QIcon, QPixmap
+from PyQt6.QtCore import Qt, QSize
+from PyQt6.QtGui import QColor, QCursor, QIcon, QPixmap, QStandardItem, QStandardItemModel
 from PyQt6.QtWidgets import (
     QApplication,
     QComboBox,
+    QCompleter,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListView,
     QPushButton,
     QVBoxLayout,
     QWidget,
 )
 
 from geon.data.cellcomplex import EdgeCell, PointCloudRef
-from geon.data.pointcloud import FieldType, InstanceSegmentation
+from geon.data.pointcloud import FieldType, InstanceSegmentation, SemanticClass, SemanticSchema
 from geon.rendering.cellcomplex import CellComplexLayer
 from geon.rendering.pointcloud import PointCloudLayer
 from geon.util.resources import resource_path
@@ -29,6 +31,7 @@ from .tool_context import ToolContext
 
 
 def _refresh_context(ctx: ToolContext, layer: CellComplexLayer) -> None:
+    layer.data.normalize_and_validate()
     layer.update()
     ctx.controller.layer_internal_sel_changed.emit(layer)
     ctx.controller.scene_tree_request_change.emit()
@@ -36,6 +39,30 @@ def _refresh_context(ctx: ToolContext, layer: CellComplexLayer) -> None:
     if callable(mark_modified):
         mark_modified()
     ctx.viewer.rerender()
+
+
+def cell_complex_annotation_target(
+    layer: CellComplexLayer,
+) -> tuple[int, str, SemanticSchema] | None:
+    selected = set(layer.active_selection or ())
+    if not selected:
+        return None
+    dims: set[int] = set()
+    for cell_id in selected:
+        cell = layer.data.get_cell_by_id(cell_id)
+        if cell is None:
+            continue
+        dims.add(cell.dim)
+    if len(dims) != 1:
+        return None
+    dim = next(iter(dims))
+    attr_name = layer.active_semantic_attribute_by_dim.get(dim)
+    if attr_name is None:
+        return None
+    schema = layer.data.semantic_attribute_schemas.get(dim, {}).get(attr_name)
+    if schema is None:
+        return None
+    return dim, attr_name, schema
 
 
 @dataclass
@@ -169,6 +196,46 @@ class AddCellGeometryRefCmd(Command):
         if cell is None:
             return
         cell.geometry_refs = [ref for ref in cell.geometry_refs if ref is not self.ref]
+        _refresh_context(ctx, layer)
+
+
+@dataclass
+class AnnotateCellComplexSemanticCmd(Command):
+    layer_ref: weakref.ReferenceType[CellComplexLayer]
+    ctx_ref: weakref.ReferenceType[ToolContext]
+    cell_ids: set[str]
+    dim: int
+    attr_name: str
+    semantic_class: SemanticClass
+    _old_values: dict[str, int] = field(default_factory=dict, init=False)
+
+    def execute(self) -> None:
+        layer = self.layer_ref()
+        ctx = self.ctx_ref()
+        if layer is None or ctx is None:
+            return
+        self._old_values = {}
+        for cell_id in self.cell_ids:
+            cell = layer.data.get_cell_by_id(cell_id)
+            if cell is None or cell.dim != self.dim:
+                continue
+            if self.attr_name not in cell.semantic_attributes:
+                continue
+            self._old_values[cell_id] = int(cell.semantic_attributes[self.attr_name])
+            cell.semantic_attributes[self.attr_name] = int(self.semantic_class.id)
+        _refresh_context(ctx, layer)
+
+    def undo(self) -> None:
+        layer = self.layer_ref()
+        ctx = self.ctx_ref()
+        if layer is None or ctx is None:
+            return
+        for cell_id, old_value in self._old_values.items():
+            cell = layer.data.get_cell_by_id(cell_id)
+            if cell is None:
+                continue
+            if self.attr_name in cell.semantic_attributes:
+                cell.semantic_attributes[self.attr_name] = int(old_value)
         _refresh_context(ctx, layer)
 
 
@@ -465,4 +532,152 @@ class CellComplexAssociateTool(ModeTool):
         outer.addLayout(row2)
 
         self._populate_fields()
+        return w
+
+
+@dataclass
+class CellComplexAnnotateTool(ModeTool):
+    label: ClassVar = "cell_complex_annotate"
+    tooltip: ClassVar = "Annotate CellComplex semantics"
+    icon_path: ClassVar = resource_path("annotate.png")
+    shortcut: ClassVar = None
+    ui_zones: ClassVar = set()
+    use_local_cm: ClassVar[bool] = False
+    show_in_toolbar: ClassVar[bool] = False
+    cursor_icon_path: ClassVar = None
+    keep_focus: ClassVar[bool] = False
+
+    choice_sem_class: Optional[SemanticClass] = None
+    _class_input: QLineEdit | None = field(default=None, init=False)
+    _accept_btn: QPushButton | None = field(default=None, init=False)
+    _completer: QCompleter | None = field(default=None, init=False)
+    _class_model: QStandardItemModel | None = field(default=None, init=False)
+    _classes: list[SemanticClass] = field(default_factory=list, init=False)
+
+    def _layer(self) -> CellComplexLayer | None:
+        layer = self.ctx.scene.active_layer
+        return layer if isinstance(layer, CellComplexLayer) else None
+
+    def _target(self) -> tuple[int, str, SemanticSchema] | None:
+        layer = self._layer()
+        if layer is None:
+            return None
+        return cell_complex_annotation_target(layer)
+
+    @staticmethod
+    def _build_sem_class_model(classes: list[SemanticClass]) -> QStandardItemModel:
+        model = QStandardItemModel()
+        for sem_class in classes:
+            item = QStandardItem(sem_class.name)
+            r, g, b = sem_class.color
+            swatch = QPixmap(12, 12)
+            swatch.fill(QColor(r, g, b))
+            item.setIcon(QIcon(swatch))
+            model.appendRow(item)
+        return model
+
+    def _update_accept_enabled(self) -> None:
+        if self._accept_btn is None:
+            return
+        self._accept_btn.setEnabled(self._target() is not None and self.choice_sem_class is not None)
+
+    def _set_class_from_text(self, text: str) -> None:
+        name = text.strip()
+        self.choice_sem_class = next((cls for cls in self._classes if cls.name == name), None)
+        self._update_accept_enabled()
+
+    def _show_sem_class_popup(self) -> None:
+        if self._class_input is None or self._completer is None:
+            return
+        self._class_input.setFocus(Qt.FocusReason.OtherFocusReason)
+        self._completer.setCompletionPrefix("")
+        self._completer.complete(self._class_input.rect())
+
+    def _accept(self) -> None:
+        layer = self._layer()
+        target = self._target()
+        if layer is None or target is None or self.choice_sem_class is None:
+            return
+        dim, attr_name, _schema = target
+        cell_ids = {
+            cell_id
+            for cell_id in set(layer.active_selection or ())
+            if (layer.data.get_cell_by_id(cell_id) is not None
+                and layer.data.get_cell_by_id(cell_id).dim == dim)
+        }
+        if not cell_ids:
+            return
+        cmd = AnnotateCellComplexSemanticCmd(
+            title="Annotate cell complex semantics",
+            layer_ref=weakref.ref(layer),
+            ctx_ref=weakref.ref(self.ctx),
+            cell_ids=cell_ids,
+            dim=dim,
+            attr_name=attr_name,
+            semantic_class=self.choice_sem_class,
+        )
+        self.command_manager.do(cmd)
+        self.ctx.controller.deactivate_tool()
+
+    def left_button_release_hook(self, event: Event) -> None:
+        layer = self._layer()
+        if layer is not None:
+            layer.handle_viewport_left_click(self.ctx, event, self.ctx.viewer.pick(prefer_cells=True))
+        self._update_accept_enabled()
+
+    def activate(self) -> None:
+        return super().activate()
+
+    def create_context_widget(self, parent: QWidget) -> QWidget:
+        target = self._target()
+        if target is None:
+            w = QWidget(parent)
+            layout = QHBoxLayout(w)
+            layout.setContentsMargins(2, 1, 2, 1)
+            label = QLabel("Select cells from one dimension and activate a semantic attribute.", w)
+            label.setStyleSheet("QLabel { color: rgba(128,128,128,160); }")
+            layout.addWidget(label)
+            return w
+
+        dim, attr_name, schema = target
+        self._classes = list(schema.semantic_classes)
+
+        w = QWidget(parent)
+        outer = QHBoxLayout(w)
+        outer.setContentsMargins(2, 1, 2, 1)
+        outer.setSpacing(4)
+
+        outer.addWidget(QLabel(f"Dim {dim}: {attr_name}", w))
+        outer.addWidget(QLabel("Class:", w))
+
+        self._class_input = QLineEdit(w)
+        self._class_input.setPlaceholderText("Enter class ...")
+        self._class_model = self._build_sem_class_model(self._classes)
+        self._completer = QCompleter(self._class_model, self._class_input)
+        self._completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        self._completer.setFilterMode(Qt.MatchFlag.MatchContains)
+        popup = self._completer.popup()
+        if popup is not None:
+            popup = popup if isinstance(popup, QListView) else QListView(self._class_input)
+            popup.setUniformItemSizes(True)
+            popup.setIconSize(QSize(12, 12))
+            popup.setMinimumWidth(max(160, popup.sizeHintForColumn(0) + 24))
+            self._completer.setPopup(popup)
+        self._class_input.setCompleter(self._completer)
+        self._class_input.textEdited.connect(self._set_class_from_text)
+        self._completer.activated.connect(self._set_class_from_text)
+        outer.addWidget(self._class_input)
+
+        dropdown = QPushButton(w)
+        dropdown.setFixedSize(20, 20)
+        dropdown.setText("▼")
+        dropdown.setStyleSheet("font-size: 18Â§px;")
+        dropdown.setToolTip("Select semantic class")
+        dropdown.clicked.connect(self._show_sem_class_popup)
+        outer.addWidget(dropdown)
+
+        self._accept_btn = QPushButton("Accept", w)
+        self._accept_btn.pressed.connect(self._accept)
+        outer.addWidget(self._accept_btn)
+        self._update_accept_enabled()
         return w
