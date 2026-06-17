@@ -38,6 +38,7 @@ class CellComplexLayer(BaseLayer[CellComplexData]):
             0: None,
             1: None,
         }
+        self.node_gizmo_enabled: bool = False
 
         self._vertex_ids: list[str] = []
         self._vertex_id_to_index: dict[str, int] = {}
@@ -53,6 +54,10 @@ class CellComplexLayer(BaseLayer[CellComplexData]):
         self._face_actor: Optional[vtk.vtkActor] = None
         self._wire_actor: Optional[vtk.vtkActor] = None
         self._edge_actor: Optional[vtk.vtkActor] = None
+        self._gizmo_actors: dict[str, vtk.vtkActor] = {}
+        self._gizmo_handle_by_actor: dict[str, str] = {}
+        self._gizmo_hover_handle: Optional[str] = None
+        self._gizmo_origin: Optional[tuple[float, float, float]] = None
         self._camera_observer_id: Optional[int] = None
         self._observed_camera: Optional[vtk.vtkCamera] = None
         self._last_screen_scale_update: float = 0.0
@@ -100,6 +105,22 @@ class CellComplexLayer(BaseLayer[CellComplexData]):
 
     def selected_ids_by_dim(self, dim: int) -> list[str]:
         return [cell.id for cell in self.data.get_cells(dim) if cell.id in self._active_selection]
+
+    def selected_vertex_centroid(self) -> tuple[float, float, float] | None:
+        vertices = self.selected_vertices
+        if not vertices:
+            return None
+        pts = np.asarray([vertex.position for vertex in vertices], dtype=np.float64)
+        centroid = pts.mean(axis=0)
+        return (float(centroid[0]), float(centroid[1]), float(centroid[2]))
+
+    def set_node_gizmo_enabled(self, enabled: bool) -> None:
+        self.node_gizmo_enabled = bool(enabled)
+        self.update()
+
+    @property
+    def node_gizmo_origin(self) -> tuple[float, float, float] | None:
+        return self._gizmo_origin
 
     def set_visual_settings(
         self,
@@ -226,6 +247,125 @@ class CellComplexLayer(BaseLayer[CellComplexData]):
         distances = np.linalg.norm(self._positions - cam_pos[None, :], axis=1)
         world_per_px = 2.0 * distances * math.tan(fov_rad / 2.0) / float(viewport_h)
         return np.maximum(self.screen_size_px * world_per_px, 1e-6).astype(np.float32)
+
+    def _gizmo_world_scale(self, origin: tuple[float, float, float]) -> float:
+        if self.renderer is None:
+            return self.world_size * 8.0
+        renderer = self.renderer
+        camera = renderer.GetActiveCamera()
+        width, height = renderer.GetRenderWindow().GetSize()
+        viewport_h = max(1, int(height))
+        if camera.GetParallelProjection():
+            world_per_px = 2.0 * float(camera.GetParallelScale()) / float(viewport_h)
+        else:
+            fov_rad = math.radians(float(camera.GetViewAngle()))
+            cam_pos = np.asarray(camera.GetPosition(), dtype=np.float64)
+            origin_np = np.asarray(origin, dtype=np.float64)
+            distance = max(float(np.linalg.norm(origin_np - cam_pos)), 1e-6)
+            world_per_px = 2.0 * distance * math.tan(fov_rad / 2.0) / float(viewport_h)
+        return max(float(world_per_px * 64.0), 1e-6)
+
+    @staticmethod
+    def _make_plane_poly(handle: str) -> vtk.vtkPolyData:
+        lo = 0.20
+        hi = 0.46
+        coords_by_handle = {
+            "plane_xy": [(lo, lo, 0.0), (hi, lo, 0.0), (hi, hi, 0.0), (lo, hi, 0.0)],
+            "plane_yz": [(0.0, lo, lo), (0.0, hi, lo), (0.0, hi, hi), (0.0, lo, hi)],
+            "plane_xz": [(lo, 0.0, lo), (hi, 0.0, lo), (hi, 0.0, hi), (lo, 0.0, hi)],
+        }
+        points = vtk.vtkPoints()
+        for coord in coords_by_handle[handle]:
+            points.InsertNextPoint(*coord)
+        quad = vtk.vtkQuad()
+        for idx in range(4):
+            quad.GetPointIds().SetId(idx, idx)
+        cells = vtk.vtkCellArray()
+        cells.InsertNextCell(quad)
+        poly = vtk.vtkPolyData()
+        poly.SetPoints(points)
+        poly.SetPolys(cells)
+        return poly
+
+    @staticmethod
+    def _gizmo_color(handle: str) -> tuple[float, float, float]:
+        return {
+            "axis_x": (1.0, 0.0, 0.0),
+            "axis_y": (0.0, 0.75, 0.0),
+            "axis_z": (0.1, 0.25, 1.0),
+            "plane_xy": (0.1, 0.25, 1.0),
+            "plane_yz": (1.0, 0.0, 0.0),
+            "plane_xz": (0.0, 0.75, 0.0),
+            "camera": (0.55, 0.55, 0.55),
+        }[handle]
+
+    def _make_gizmo_actor(self, handle: str) -> vtk.vtkActor:
+        if handle.startswith("axis_"):
+            source = vtk.vtkArrowSource()
+            source.SetTipLength(0.28)
+            source.SetTipRadius(0.055)
+            source.SetShaftRadius(0.018)
+            source.Update()
+            mapper = vtk.vtkPolyDataMapper()
+            mapper.SetInputConnection(source.GetOutputPort())
+        elif handle.startswith("plane_"):
+            mapper = vtk.vtkPolyDataMapper()
+            mapper.SetInputData(self._make_plane_poly(handle))
+        else:
+            source = vtk.vtkSphereSource()
+            source.SetRadius(0.085)
+            source.SetThetaResolution(20)
+            source.SetPhiResolution(12)
+            source.Update()
+            mapper = vtk.vtkPolyDataMapper()
+            mapper.SetInputConnection(source.GetOutputPort())
+
+        actor = vtk.vtkActor()
+        actor.SetMapper(mapper)
+        prop = actor.GetProperty()
+        prop.SetColor(*self._gizmo_color(handle))
+        prop.SetAmbient(0.35)
+        if handle.startswith("plane_"):
+            prop.SetOpacity(0.35)
+        if handle == "axis_y":
+            actor.SetOrientation(0.0, 0.0, 90.0)
+        elif handle == "axis_z":
+            actor.SetOrientation(0.0, -90.0, 0.0)
+        actor.SetPickable(True)
+        actor.SetVisibility(False)
+        return actor
+
+    def _actor_key(self, prop: vtk.vtkProp) -> str:
+        return prop.GetAddressAsString("")
+
+    def gizmo_handle_from_prop(self, prop: vtk.vtkProp | None) -> str | None:
+        if prop is None:
+            return None
+        return self._gizmo_handle_by_actor.get(self._actor_key(prop))
+
+    def set_gizmo_hover_handle(self, handle: str | None) -> None:
+        if handle == self._gizmo_hover_handle:
+            return
+        self._gizmo_hover_handle = handle
+        highlight = tuple(c / 255.0 for c in self.selection_color)
+        for actor_handle, actor in self._gizmo_actors.items():
+            if actor_handle == handle:
+                actor.GetProperty().SetColor(*highlight)
+                continue
+            actor.GetProperty().SetColor(*self._gizmo_color(actor_handle))
+
+    def _update_gizmo(self) -> None:
+        origin = self.selected_vertex_centroid() if self.node_gizmo_enabled else None
+        self._gizmo_origin = origin
+        visible = origin is not None
+        for actor in self._gizmo_actors.values():
+            actor.SetVisibility(bool(visible and self.visible))
+        if origin is None:
+            return
+        scale = self._gizmo_world_scale(origin)
+        for actor in self._gizmo_actors.values():
+            actor.SetPosition(*origin)
+            actor.SetScale(scale, scale, scale)
 
     def _cube_geometry(self) -> tuple[NDArray[np.float32], NDArray[np.uint8]]:
         n = self._positions.shape[0]
@@ -384,7 +524,24 @@ class CellComplexLayer(BaseLayer[CellComplexData]):
         self._edge_actor.GetProperty().SetColor(*(c / 255.0 for c in self.default_color))
         self._edge_actor.GetProperty().SetLineWidth(self.edge_width)
 
+        self._gizmo_actors.clear()
+        self._gizmo_handle_by_actor.clear()
+        for handle in (
+            "axis_x",
+            "axis_y",
+            "axis_z",
+            "plane_xy",
+            "plane_yz",
+            "plane_xz",
+            "camera",
+        ):
+            actor = self._make_gizmo_actor(handle)
+            self._gizmo_actors[handle] = actor
+            self._gizmo_handle_by_actor[self._actor_key(actor)] = handle
+
         out_actors.extend([self._face_actor, self._wire_actor, self._edge_actor])
+        out_actors.extend(self._gizmo_actors.values())
+        self._update_gizmo()
 
         camera = renderer.GetActiveCamera()
         self._observed_camera = camera
@@ -402,6 +559,7 @@ class CellComplexLayer(BaseLayer[CellComplexData]):
             return
         self._last_screen_scale_update = now
         self._update_cube_polys()
+        self._update_gizmo()
 
     def update(self) -> None:
         self._sync_active_semantic_attributes()
@@ -413,6 +571,7 @@ class CellComplexLayer(BaseLayer[CellComplexData]):
         if self._edge_actor is not None:
             self._edge_actor.GetProperty().SetLineWidth(self.edge_width)
             self._edge_actor.GetProperty().SetColor(*(c / 255.0 for c in self.default_color))
+        self._update_gizmo()
 
     def prefers_cell_pick(self, prop: vtk.vtkProp | None) -> bool:
         return prop in {None, self._face_actor, self._wire_actor, self._edge_actor}
@@ -463,6 +622,8 @@ class CellComplexLayer(BaseLayer[CellComplexData]):
         prop: vtk.vtkProp | None,
         association: str | None = None,
     ) -> int:
+        if self.gizmo_handle_from_prop(prop) is not None:
+            return -1
         if prop is self._edge_actor and association == "cell":
             return self._edge_index_from_pick(sub_id)
         return self._vertex_index_from_pick(sub_id, prop, association)
@@ -480,6 +641,8 @@ class CellComplexLayer(BaseLayer[CellComplexData]):
         prop: vtk.vtkProp | None,
         association: str | None = None,
     ) -> tuple[float, float, float]:
+        if self.gizmo_handle_from_prop(prop) is not None and self._gizmo_origin is not None:
+            return self._gizmo_origin
         if prop is self._edge_actor and association == "cell":
             edge_id = self.cell_id_from_pick(sub_id, prop, association)
             edge = next((e for e in self.data.edges if e.id == edge_id), None)
@@ -502,6 +665,8 @@ class CellComplexLayer(BaseLayer[CellComplexData]):
         return {picked_id}
 
     def handle_viewport_left_click(self, ctx: Any, event: Any, pick_result: Any) -> bool:
+        if self.gizmo_handle_from_prop(getattr(pick_result, "prop", None)) is not None:
+            return False
         if pick_result.layer is not self or pick_result.prop is None or pick_result.element_idx is None:
             return False
         raw_element_idx = getattr(pick_result, "raw_element_idx", pick_result.element_idx)

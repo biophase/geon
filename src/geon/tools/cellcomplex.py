@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from typing import ClassVar, Optional
 import weakref
 
+import numpy as np
+
 from PyQt6.QtCore import Qt, QSize
 from PyQt6.QtGui import QColor, QCursor, QIcon, QPixmap, QStandardItem, QStandardItemModel
 from PyQt6.QtWidgets import (
@@ -240,6 +242,30 @@ class AnnotateCellComplexSemanticCmd(Command):
 
 
 @dataclass
+class TranslateCellComplexVerticesCmd(Command):
+    layer_ref: weakref.ReferenceType[CellComplexLayer]
+    ctx_ref: weakref.ReferenceType[ToolContext]
+    positions_old: dict[str, tuple[float, float, float]]
+    positions_new: dict[str, tuple[float, float, float]]
+
+    def execute(self) -> None:
+        layer = self.layer_ref()
+        ctx = self.ctx_ref()
+        if layer is None or ctx is None:
+            return
+        layer.data.set_vertex_positions(self.positions_new)
+        _refresh_context(ctx, layer)
+
+    def undo(self) -> None:
+        layer = self.layer_ref()
+        ctx = self.ctx_ref()
+        if layer is None or ctx is None:
+            return
+        layer.data.set_vertex_positions(self.positions_old)
+        _refresh_context(ctx, layer)
+
+
+@dataclass
 class CellPickVertexTool(ModeTool):
     label: ClassVar = "cell_pick_vertex"
     tooltip: ClassVar = "Pick cell vertices"
@@ -328,6 +354,216 @@ class CellComplexAddEdgeTool(ModeTool):
         self._create_btn.pressed.connect(self._create_edge)
         layout.addWidget(self._create_btn)
         self._update_context_ui()
+        return w
+
+
+@dataclass
+class CellComplexMoveNodesTool(ModeTool):
+    label: ClassVar = "cell_complex_move_nodes"
+    tooltip: ClassVar = "Move CellComplex nodes"
+    icon_path: ClassVar = resource_path("inspect_tool.png")
+    shortcut: ClassVar = None
+    ui_zones: ClassVar = set()
+    use_local_cm: ClassVar[bool] = False
+    show_in_toolbar: ClassVar[bool] = False
+    cursor_icon_path: ClassVar = None
+    keep_focus: ClassVar[bool] = False
+
+    _drag_handle: str | None = field(default=None, init=False)
+    _drag_origin: tuple[float, float, float] | None = field(default=None, init=False)
+    _drag_start_point: np.ndarray | None = field(default=None, init=False)
+    _positions_old: dict[str, tuple[float, float, float]] = field(default_factory=dict, init=False)
+
+    def _layer(self) -> CellComplexLayer | None:
+        layer = self.ctx.scene.active_layer
+        return layer if isinstance(layer, CellComplexLayer) else None
+
+    def _selected_vertex_positions(self, layer: CellComplexLayer) -> dict[str, tuple[float, float, float]]:
+        return {
+            vertex.id: tuple(float(v) for v in vertex.position)
+            for vertex in layer.selected_vertices
+        }
+
+    def _display_ray(self, event: Event) -> tuple[np.ndarray, np.ndarray]:
+        renderer = self.ctx.viewer._renderer
+        x, y = event.pos
+
+        def display_to_world(z: float) -> np.ndarray:
+            renderer.SetDisplayPoint(float(x), float(y), float(z))
+            renderer.DisplayToWorld()
+            wx, wy, wz, ww = renderer.GetWorldPoint()
+            if abs(float(ww)) < 1e-12:
+                return np.asarray([wx, wy, wz], dtype=np.float64)
+            return np.asarray([wx / ww, wy / ww, wz / ww], dtype=np.float64)
+
+        p0 = display_to_world(0.0)
+        p1 = display_to_world(1.0)
+        direction = p1 - p0
+        norm = float(np.linalg.norm(direction))
+        if norm < 1e-12:
+            return p0, np.asarray([0.0, 0.0, 1.0], dtype=np.float64)
+        return p0, direction / norm
+
+    @staticmethod
+    def _axis_for_handle(handle: str) -> np.ndarray:
+        return {
+            "axis_x": np.asarray([1.0, 0.0, 0.0], dtype=np.float64),
+            "axis_y": np.asarray([0.0, 1.0, 0.0], dtype=np.float64),
+            "axis_z": np.asarray([0.0, 0.0, 1.0], dtype=np.float64),
+        }[handle]
+
+    @staticmethod
+    def _plane_normal_for_handle(handle: str) -> np.ndarray:
+        return {
+            "plane_xy": np.asarray([0.0, 0.0, 1.0], dtype=np.float64),
+            "plane_yz": np.asarray([1.0, 0.0, 0.0], dtype=np.float64),
+            "plane_xz": np.asarray([0.0, 1.0, 0.0], dtype=np.float64),
+        }[handle]
+
+    def _camera_plane_normal(self) -> np.ndarray:
+        camera = self.ctx.viewer._renderer.GetActiveCamera()
+        n = np.asarray(camera.GetDirectionOfProjection(), dtype=np.float64)
+        norm = float(np.linalg.norm(n))
+        return n / norm if norm > 1e-12 else np.asarray([0.0, 0.0, 1.0], dtype=np.float64)
+
+    def _point_on_axis(
+        self,
+        ray_origin: np.ndarray,
+        ray_dir: np.ndarray,
+        origin: np.ndarray,
+        axis: np.ndarray,
+    ) -> np.ndarray | None:
+        matrix = np.column_stack((axis, -ray_dir))
+        rhs = ray_origin - origin
+        try:
+            params, *_ = np.linalg.lstsq(matrix, rhs, rcond=None)
+        except np.linalg.LinAlgError:
+            return None
+        return origin + axis * float(params[0])
+
+    def _point_on_plane(
+        self,
+        ray_origin: np.ndarray,
+        ray_dir: np.ndarray,
+        origin: np.ndarray,
+        normal: np.ndarray,
+    ) -> np.ndarray | None:
+        denom = float(np.dot(ray_dir, normal))
+        if abs(denom) < 1e-9:
+            return None
+        t = float(np.dot(origin - ray_origin, normal) / denom)
+        return ray_origin + ray_dir * t
+
+    def _constraint_point(self, event: Event, handle: str, origin: tuple[float, float, float]) -> np.ndarray | None:
+        ray_origin, ray_dir = self._display_ray(event)
+        origin_np = np.asarray(origin, dtype=np.float64)
+        if handle.startswith("axis_"):
+            return self._point_on_axis(ray_origin, ray_dir, origin_np, self._axis_for_handle(handle))
+        if handle.startswith("plane_"):
+            return self._point_on_plane(ray_origin, ray_dir, origin_np, self._plane_normal_for_handle(handle))
+        return self._point_on_plane(ray_origin, ray_dir, origin_np, self._camera_plane_normal())
+
+    def _pick_gizmo_handle(self) -> tuple[CellComplexLayer | None, str | None]:
+        layer = self._layer()
+        if layer is None:
+            return None, None
+        pick = self.ctx.viewer.pick()
+        if pick.layer is not layer:
+            return layer, None
+        return layer, layer.gizmo_handle_from_prop(pick.prop)
+
+    def activate(self) -> None:
+        super().activate()
+        layer = self._layer()
+        if layer is not None:
+            layer.set_node_gizmo_enabled(True)
+        self.ctx.viewer.set_camera_enabled(False)
+        self.ctx.viewer.rerender()
+
+    def deactivate(self) -> None:
+        layer = self._layer()
+        if layer is not None:
+            layer.set_node_gizmo_enabled(False)
+            layer.set_gizmo_hover_handle(None)
+        self.ctx.viewer.set_camera_enabled(True)
+        self.ctx.viewer.rerender()
+        return super().deactivate()
+
+    def left_button_press_hook(self, event: Event) -> None:
+        layer, handle = self._pick_gizmo_handle()
+        if layer is None or handle is None or layer.node_gizmo_origin is None:
+            return
+        positions = self._selected_vertex_positions(layer)
+        if not positions:
+            return
+        start_point = self._constraint_point(event, handle, layer.node_gizmo_origin)
+        if start_point is None:
+            return
+        self._drag_handle = handle
+        self._drag_origin = layer.node_gizmo_origin
+        self._drag_start_point = start_point
+        self._positions_old = positions
+
+    def mouse_move_event_hook(self, event: Event) -> None:
+        layer = self._layer()
+        if layer is None:
+            return
+        if self._drag_handle is None:
+            _layer, handle = self._pick_gizmo_handle()
+            layer.set_gizmo_hover_handle(handle)
+            self.ctx.viewer.rerender()
+            return
+        if self._drag_origin is None or self._drag_start_point is None:
+            return
+        current = self._constraint_point(event, self._drag_handle, self._drag_origin)
+        if current is None:
+            return
+        delta = current - self._drag_start_point
+        preview = {
+            vertex_id: (
+                old_pos[0] + float(delta[0]),
+                old_pos[1] + float(delta[1]),
+                old_pos[2] + float(delta[2]),
+            )
+            for vertex_id, old_pos in self._positions_old.items()
+        }
+        layer.data.set_vertex_positions(preview)
+        layer.update()
+        self.ctx.viewer.rerender()
+
+    def left_button_release_hook(self, event: Event) -> None:
+        layer = self._layer()
+        if layer is None:
+            return
+        if self._drag_handle is None:
+            layer.handle_viewport_left_click(self.ctx, event, self.ctx.viewer.pick(prefer_cells=True))
+            return
+        positions_new = self._selected_vertex_positions(layer)
+        positions_old = dict(self._positions_old)
+        layer.data.set_vertex_positions(positions_old)
+        layer.update()
+        self._drag_handle = None
+        self._drag_origin = None
+        self._drag_start_point = None
+        self._positions_old = {}
+
+        if positions_new == positions_old:
+            self.ctx.viewer.rerender()
+            return
+        cmd = TranslateCellComplexVerticesCmd(
+            title="Translate cell complex nodes",
+            layer_ref=weakref.ref(layer),
+            ctx_ref=weakref.ref(self.ctx),
+            positions_old=positions_old,
+            positions_new=positions_new,
+        )
+        self.command_manager.do(cmd)
+
+    def create_context_widget(self, parent: QWidget) -> QWidget:
+        w = QWidget(parent)
+        layout = QHBoxLayout(w)
+        layout.setContentsMargins(2, 1, 2, 1)
+        layout.addWidget(QLabel("Drag gizmo handles to move selected nodes.", w))
         return w
 
 

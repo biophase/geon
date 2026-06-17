@@ -113,6 +113,21 @@ class CellComplexData(BaseData):
 
     def get_cell_by_id(self, cell_id: str) -> Optional[Cell]:
         return next((cell for cell in self.get_cells() if cell.id == cell_id), None)
+
+    def get_vertex_by_id(self, vertex_id: str) -> Optional[VertexCell]:
+        return next((vertex for vertex in self.vertices if vertex.id == vertex_id), None)
+
+    def set_vertex_positions(
+        self,
+        positions_by_id: Dict[str, Tuple[float, float, float]],
+    ) -> None:
+        for vertex_id, position in positions_by_id.items():
+            vertex = self.get_vertex_by_id(vertex_id)
+            if vertex is None:
+                continue
+            x, y, z = position
+            vertex.position = (float(x), float(y), float(z))
+        self.normalize_and_validate()
         
     def build_edge(self, id_vert_start:str, id_vert_end:str) -> EdgeCell:
         vert_ids = [cell.id for cell in self.get_cells(dim=0)]

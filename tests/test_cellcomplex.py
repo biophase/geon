@@ -117,6 +117,20 @@ def test_delete_vertices_removes_incident_edges() -> None:
     assert complex_data.edges == []
 
 
+def test_set_vertex_positions_moves_nodes_and_preserves_edges() -> None:
+    a = VertexCell(position=(0.0, 0.0, 0.0), id="a")
+    b = VertexCell(position=(1.0, 0.0, 0.0), id="b")
+    complex_data = CellComplexData(vertices=[a, b])
+    edge = complex_data.build_edge("a", "b")
+
+    complex_data.set_vertex_positions({"a": (2.0, 3.0, 4.0), "missing": (9.0, 9.0, 9.0)})
+
+    assert complex_data.get_vertex_by_id("a").position == (2.0, 3.0, 4.0)
+    assert complex_data.get_vertex_by_id("b").position == (1.0, 0.0, 0.0)
+    assert complex_data.edges[0].id == edge.id
+    assert complex_data.edges[0].boundary == ["a", "b"]
+
+
 def test_hdf5_roundtrip(tmp_path) -> None:
     schema = _schema()
     a = VertexCell(
@@ -294,6 +308,34 @@ def test_cellcomplex_layer_cleans_missing_active_semantic_attribute() -> None:
     layer.update()
 
     assert layer.active_semantic_attribute_by_dim[0] is None
+
+
+def test_cellcomplex_layer_gizmo_origin_uses_selected_vertices_only() -> None:
+    a = VertexCell(position=(0.0, 0.0, 0.0), id="a")
+    b = VertexCell(position=(2.0, 0.0, 0.0), id="b")
+    edge = EdgeCell(id="e", boundary=["a", "b"])
+    layer = CellComplexLayer(CellComplexData(vertices=[a, b], edges=[edge]))
+
+    layer.active_selection = {"a", "b", "e"}
+    layer.set_node_gizmo_enabled(True)
+    layer.update()
+
+    assert layer.selected_vertex_centroid() == (1.0, 0.0, 0.0)
+    assert layer.node_gizmo_origin == (1.0, 0.0, 0.0)
+
+
+def test_cellcomplex_layer_gizmo_hides_without_selected_vertices() -> None:
+    a = VertexCell(position=(0.0, 0.0, 0.0), id="a")
+    b = VertexCell(position=(2.0, 0.0, 0.0), id="b")
+    edge = EdgeCell(id="e", boundary=["a", "b"])
+    layer = CellComplexLayer(CellComplexData(vertices=[a, b], edges=[edge]))
+
+    layer.active_selection = {"e"}
+    layer.set_node_gizmo_enabled(True)
+    layer.update()
+
+    assert layer.selected_vertex_centroid() is None
+    assert layer.node_gizmo_origin is None
 
 
 def test_remap_semantic_attribute_updates_values_and_schema() -> None:

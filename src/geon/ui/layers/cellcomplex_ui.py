@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QMessageBox,
     QPushButton,
+    QCheckBox,
     QSizePolicy,
     QWidget,
 )
@@ -20,6 +21,7 @@ from geon.tools.cellcomplex import (
     CellComplexAddEdgeTool,
     CellComplexAnnotateTool,
     CellComplexAssociateTool,
+    CellComplexMoveNodesTool,
     cell_complex_annotation_target,
 )
 from geon.tools.controller import ToolController
@@ -156,6 +158,27 @@ def _ribbon_selection(
     deselect_btn.setIcon(QIcon(resource_path("deselect.png")))
     deselect_btn.pressed.connect(lambda: controller.activate_tool("DeselectTool"))
     outer.addWidget(deselect_btn)
+    move_nodes = QCheckBox("Move nodes", w)
+    has_selected_nodes = bool(layer.selected_ids_by_dim(0))
+    move_nodes.setEnabled(has_selected_nodes)
+    move_nodes.setChecked(
+        layer.node_gizmo_enabled
+        and isinstance(controller.active_tool, CellComplexMoveNodesTool)
+    )
+
+    def _toggle_move_nodes(checked: bool) -> None:
+        if checked:
+            controller.activate_tool(CellComplexMoveNodesTool.__name__)
+        else:
+            if isinstance(controller.active_tool, CellComplexMoveNodesTool):
+                controller.deactivate_tool()
+            else:
+                layer.set_node_gizmo_enabled(False)
+                if controller.ctx is not None:
+                    controller.ctx.viewer.rerender()
+
+    move_nodes.toggled.connect(_toggle_move_nodes)
+    outer.addWidget(move_nodes)
     annotate_btn = QPushButton("Annotate", w)
     annotate_btn.setIcon(QIcon(CellComplexAnnotateTool.icon_path))
     annotate_btn.setEnabled(cell_complex_annotation_target(layer) is not None)

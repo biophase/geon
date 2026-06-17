@@ -15,6 +15,7 @@ from .cellcomplex import (
     CellComplexAddEdgeTool,
     CellComplexAnnotateTool,
     CellComplexAssociateTool,
+    CellComplexMoveNodesTool,
     CellPickVertexTool,
 )
 from .camera import (
@@ -41,6 +42,7 @@ TOOL_REGISTRY.register(CellPickVertexTool)
 TOOL_REGISTRY.register(CellComplexAddEdgeTool)
 TOOL_REGISTRY.register(CellComplexAssociateTool)
 TOOL_REGISTRY.register(CellComplexAnnotateTool)
+TOOL_REGISTRY.register(CellComplexMoveNodesTool)
 TOOL_REGISTRY.register(TogglePerspectiveTool)
 TOOL_REGISTRY.register(CameraTopTool)
 TOOL_REGISTRY.register(CameraBottomTool)
