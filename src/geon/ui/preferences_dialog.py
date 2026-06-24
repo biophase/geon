@@ -67,6 +67,15 @@ class PreferencesDialog(QDialog):
         self.cell_edge_width_input.setValue(float(self._prefs.cell_complex_edge_width))
         form.addRow("Cell edge width", self.cell_edge_width_input)
 
+        self.cell_reference_label_text_size_input = QDoubleSpinBox(self)
+        self.cell_reference_label_text_size_input.setDecimals(1)
+        self.cell_reference_label_text_size_input.setRange(6.0, 72.0)
+        self.cell_reference_label_text_size_input.setSingleStep(1.0)
+        self.cell_reference_label_text_size_input.setValue(
+            float(self._prefs.cell_complex_reference_label_text_size_px)
+        )
+        form.addRow("Reference label text size (px)", self.cell_reference_label_text_size_input)
+
         color_row = QLineEdit(self)
         color_row.setText(",".join(str(int(c)) for c in self._prefs.cell_complex_default_color))
         form.addRow("Cell default RGB", color_row)
@@ -94,6 +103,9 @@ class PreferencesDialog(QDialog):
         self._prefs.cell_complex_screen_size_px = float(self.cell_screen_size_input.value())
         self._prefs.cell_complex_world_size = float(self.cell_world_size_input.value())
         self._prefs.cell_complex_edge_width = float(self.cell_edge_width_input.value())
+        self._prefs.cell_complex_reference_label_text_size_px = float(
+            self.cell_reference_label_text_size_input.value()
+        )
         try:
             rgb = [int(part.strip()) for part in self.cell_color_text.text().split(",")]
             if len(rgb) != 3:

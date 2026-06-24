@@ -32,6 +32,17 @@ class _AnnotateSignals(QObject):
 
 
 @dataclass
+class _AnnotateRibbonSessionState:
+    add_semantic: bool = True
+    add_instance: bool = False
+    semantic_field_name: Optional[str] = None
+    instance_field_name: Optional[str] = None
+
+
+_ANNOTATE_RIBBON_SESSION = _AnnotateRibbonSessionState()
+
+
+@dataclass
 class AnnotatePointsCmd(Command):
     selection_old: NDArray[np.int32] = field(init=False)
     
@@ -133,7 +144,63 @@ class AnnotateTool(ModeTool):
         self._signals = _AnnotateSignals()
         self.requestAddField = self._signals.requestAddField
         self._refresh_available_fields()
+        self._restore_session_choices()
         self._refresh_sem_classes()
+
+    @staticmethod
+    def _field_by_name(
+        fields: list[SemanticSegmentation] | list[InstanceSegmentation],
+        name: Optional[str],
+    ) -> SemanticSegmentation | InstanceSegmentation | None:
+        if name is None:
+            return None
+        return next((field for field in fields if field.name == name), None)
+
+    @staticmethod
+    def _select_available_field(
+        fields: list[SemanticSegmentation] | list[InstanceSegmentation],
+        choice: object | None,
+        saved_name: Optional[str],
+    ) -> SemanticSegmentation | InstanceSegmentation | None:
+        saved = AnnotateTool._field_by_name(fields, saved_name)
+        if saved is not None:
+            return saved
+        if choice in fields:
+            return choice
+        return fields[0] if fields else None
+
+    def _restore_session_choices(self) -> None:
+        state = _ANNOTATE_RIBBON_SESSION
+        self.choice_add_semantic = state.add_semantic
+        self.choice_add_instance = state.add_instance
+        self.choice_sem_field = cast(
+            Optional[SemanticSegmentation],
+            self._select_available_field(
+                self.avail_sem_fields,
+                self.choice_sem_field,
+                state.semantic_field_name,
+            ),
+        )
+        self.choice_inst_field = cast(
+            Optional[InstanceSegmentation],
+            self._select_available_field(
+                self.avail_inst_fields,
+                self.choice_inst_field,
+                state.instance_field_name,
+            ),
+        )
+
+    def _save_session_toggles(self) -> None:
+        _ANNOTATE_RIBBON_SESSION.add_semantic = bool(self.choice_add_semantic)
+        _ANNOTATE_RIBBON_SESSION.add_instance = bool(self.choice_add_instance)
+
+    def _save_session_field_choices(self) -> None:
+        _ANNOTATE_RIBBON_SESSION.semantic_field_name = (
+            self.choice_sem_field.name if self.choice_sem_field is not None else None
+        )
+        _ANNOTATE_RIBBON_SESSION.instance_field_name = (
+            self.choice_inst_field.name if self.choice_inst_field is not None else None
+        )
 
     def _refresh_available_fields(self) -> None:
         layer = self.ctx.scene.active_layer
@@ -151,8 +218,14 @@ class AnnotateTool(ModeTool):
 
     def _refresh_sem_classes(self) -> None:
         self._refresh_available_fields()
-        if self.choice_sem_field not in self.avail_sem_fields:
-            self.choice_sem_field = self.avail_sem_fields[0] if self.avail_sem_fields else None
+        self.choice_sem_field = cast(
+            Optional[SemanticSegmentation],
+            self._select_available_field(
+                self.avail_sem_fields,
+                self.choice_sem_field,
+                _ANNOTATE_RIBBON_SESSION.semantic_field_name,
+            ),
+        )
                    
         if self.choice_sem_field is not None:
             schema = self.choice_sem_field.schema
@@ -211,13 +284,11 @@ class AnnotateTool(ModeTool):
         # grid pos 0,0: checkbox, shows and controls self.choice_add_semantic
         sem_checkbox = QCheckBox()
         sem_checkbox.setChecked(self.choice_add_semantic)
-        sem_checkbox.toggled.connect(lambda checked: setattr(self, "choice_add_semantic", checked))
         outer.addWidget(sem_checkbox, 0, 0)
 
         # grid pos 1,0: checkbox, shows and controls self.choice_add_instance
         inst_checkbox = QCheckBox()
         inst_checkbox.setChecked(self.choice_add_instance)
-        inst_checkbox.toggled.connect(lambda checked: setattr(self, "choice_add_instance", checked))
         outer.addWidget(inst_checkbox, 1, 0)
 
         # grid pos 0,1: QLabel("semantic field: ")
@@ -229,10 +300,24 @@ class AnnotateTool(ModeTool):
         outer.addWidget(inst_label, 1, 1)
 
         if self.choice_sem_field not in self.avail_sem_fields and self.avail_sem_fields:
-            self.choice_sem_field = self.avail_sem_fields[0]
+            self.choice_sem_field = cast(
+                Optional[SemanticSegmentation],
+                self._select_available_field(
+                    self.avail_sem_fields,
+                    self.choice_sem_field,
+                    _ANNOTATE_RIBBON_SESSION.semantic_field_name,
+                ),
+            )
 
         if self.choice_inst_field not in self.avail_inst_fields and self.avail_inst_fields:
-            self.choice_inst_field = self.avail_inst_fields[0]
+            self.choice_inst_field = cast(
+                Optional[InstanceSegmentation],
+                self._select_available_field(
+                    self.avail_inst_fields,
+                    self.choice_inst_field,
+                    _ANNOTATE_RIBBON_SESSION.instance_field_name,
+                ),
+            )
 
         # grid pos 0,2: Dropdown for semantic fields
         sem_combo = QComboBox(w)
@@ -252,6 +337,7 @@ class AnnotateTool(ModeTool):
                     )
                 return
             self.choice_sem_field = sem_combo.currentData()
+            self._save_session_field_choices()
             update_sem_class_ui()
 
         sem_combo.currentIndexChanged.connect(on_sem_changed)
@@ -275,6 +361,7 @@ class AnnotateTool(ModeTool):
                     )
                 return
             self.choice_inst_field = inst_combo.currentData()
+            self._save_session_field_choices()
             update_enabled_states()
 
         inst_combo.currentIndexChanged.connect(on_inst_changed)
@@ -387,6 +474,7 @@ class AnnotateTool(ModeTool):
             inst_enabled = inst_checkbox.isChecked()
             self.choice_add_semantic = sem_enabled
             self.choice_add_instance = inst_enabled
+            self._save_session_toggles()
             self.accept_possible = self._compute_accept_possible()
             sem_label.setEnabled(sem_enabled)
             sem_combo.setEnabled(sem_enabled)

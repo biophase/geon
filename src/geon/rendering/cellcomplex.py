@@ -12,7 +12,7 @@ from PyQt6.QtCore import QTimer
 from vtk.util import numpy_support as ns  # type: ignore
 
 from geon.config import theme
-from geon.data.cellcomplex import CellComplexData, EdgeCell, VertexCell
+from geon.data.cellcomplex import CellComplexData, EdgeCell, PointCloudRef, VertexCell
 
 from .base import BaseLayer
 from .layer_registry import layer_for
@@ -22,6 +22,7 @@ from .layer_registry import layer_for
 class CellComplexLayer(BaseLayer[CellComplexData]):
     layer_type_id = "cellcomplex"
     use_cell_picking_for_selection = True
+    vertex_cube_wire_width = 1.0
 
     def __init__(self, data: CellComplexData, browser_name: str = "Cell Complex"):
         super().__init__(data)
@@ -34,6 +35,8 @@ class CellComplexLayer(BaseLayer[CellComplexData]):
         self.default_color: tuple[int, int, int] = theme.DEFAULT_SEGMENTATION_COLOR
         self.selection_color: tuple[int, int, int] = (255, 128, 0)
         self.face_opacity: float = 0.8
+        self.show_reference_labels: bool = False
+        self.reference_label_text_size_px: float = 14.0
         self.active_semantic_attribute_by_dim: dict[int, str | None] = {
             0: None,
             1: None,
@@ -54,6 +57,7 @@ class CellComplexLayer(BaseLayer[CellComplexData]):
         self._face_actor: Optional[vtk.vtkActor] = None
         self._wire_actor: Optional[vtk.vtkActor] = None
         self._edge_actor: Optional[vtk.vtkActor] = None
+        self._reference_label_actors: list[tuple[vtk.vtkProp, tuple[float, float, float]]] = []
         self._gizmo_actors: dict[str, vtk.vtkActor] = {}
         self._gizmo_handle_by_actor: dict[str, str] = {}
         self._gizmo_hover_handle: Optional[str] = None
@@ -118,6 +122,10 @@ class CellComplexLayer(BaseLayer[CellComplexData]):
         self.node_gizmo_enabled = bool(enabled)
         self.update()
 
+    def set_reference_labels_enabled(self, enabled: bool) -> None:
+        self.show_reference_labels = bool(enabled)
+        self._update_reference_labels()
+
     @property
     def node_gizmo_origin(self) -> tuple[float, float, float] | None:
         return self._gizmo_origin
@@ -129,6 +137,7 @@ class CellComplexLayer(BaseLayer[CellComplexData]):
         screen_size_px: float,
         world_size: float,
         edge_width: float,
+        reference_label_text_size_px: float,
         default_color: tuple[int, int, int],
         selection_color: tuple[int, int, int] | None = None,
     ) -> None:
@@ -136,6 +145,7 @@ class CellComplexLayer(BaseLayer[CellComplexData]):
         self.screen_size_px = float(max(1.0, screen_size_px))
         self.world_size = float(max(1e-6, world_size))
         self.edge_width = float(max(1.0, edge_width))
+        self.reference_label_text_size_px = float(max(1.0, reference_label_text_size_px))
         self.default_color = self._clamp_color(default_color)
         if selection_color is not None:
             self.selection_color = self._clamp_color(selection_color)
@@ -482,6 +492,94 @@ class CellComplexLayer(BaseLayer[CellComplexData]):
             self._edge_poly.GetCellData().SetScalars(None)
         self._edge_poly.Modified()
 
+    def _clear_reference_label_actors(self) -> None:
+        renderer = self._renderer
+        for actor, _anchor in self._reference_label_actors:
+            if renderer is not None:
+                if hasattr(renderer, "RemoveActor2D"):
+                    renderer.RemoveActor2D(actor)
+                else:
+                    renderer.RemoveActor(actor)
+        self._reference_label_actors.clear()
+
+    @staticmethod
+    def _reference_label_text(ref: PointCloudRef) -> str:
+        return f"{ref.ref_id}/{ref.field_name}/{int(ref.instance_id)}"
+
+    def _reference_label_entries(self) -> list[tuple[tuple[float, float, float], str]]:
+        entries: list[tuple[tuple[float, float, float], str]] = []
+        vertex_positions = {vertex.id: vertex.position for vertex in self.data.vertices}
+
+        for vertex in self.data.vertices:
+            refs = [ref for ref in vertex.geometry_refs if isinstance(ref, PointCloudRef)]
+            if not refs:
+                continue
+            text = "\n".join(self._reference_label_text(ref) for ref in refs)
+            entries.append((vertex.position, text))
+
+        for edge in self.data.edges:
+            refs = [ref for ref in edge.geometry_refs if isinstance(ref, PointCloudRef)]
+            if not refs or len(edge.boundary) != 2:
+                continue
+            a = vertex_positions.get(edge.boundary[0])
+            b = vertex_positions.get(edge.boundary[1])
+            if a is None or b is None:
+                continue
+            anchor = (
+                (float(a[0]) + float(b[0])) * 0.5,
+                (float(a[1]) + float(b[1])) * 0.5,
+                (float(a[2]) + float(b[2])) * 0.5,
+            )
+            text = "\n".join(self._reference_label_text(ref) for ref in refs)
+            entries.append((anchor, text))
+
+        return entries
+
+    def _make_reference_label_actor(
+        self,
+        anchor: tuple[float, float, float],
+        text: str,
+    ) -> vtk.vtkProp:
+        actor = vtk.vtkTextActor()
+        actor.SetInput(text)
+        if hasattr(actor, "SetPickable"):
+            actor.SetPickable(False)
+        text_prop = actor.GetTextProperty()
+        text_prop.SetFontSize(int(round(self.reference_label_text_size_px)))
+        text_prop.SetColor(*theme.REFERENCE_LABEL_TEXT_COLOR)
+        if hasattr(text_prop, "SetBackgroundColor"):
+            text_prop.SetBackgroundColor(*theme.REFERENCE_LABEL_BACKGROUND_COLOR)
+        if hasattr(text_prop, "SetBackgroundOpacity"):
+            text_prop.SetBackgroundOpacity(float(theme.REFERENCE_LABEL_BACKGROUND_OPACITY))
+        return actor
+
+    def _update_reference_label_positions(self) -> None:
+        renderer = self._renderer
+        if renderer is None:
+            return
+        for actor, anchor in self._reference_label_actors:
+            renderer.SetWorldPoint(float(anchor[0]), float(anchor[1]), float(anchor[2]), 1.0)
+            renderer.WorldToDisplay()
+            x, y, _z = renderer.GetDisplayPoint()
+            if hasattr(actor, "SetDisplayPosition"):
+                actor.SetDisplayPosition(int(round(x)), int(round(y)))
+
+    def _update_reference_labels(self) -> None:
+        self._clear_reference_label_actors()
+        if not self.show_reference_labels or not self.visible:
+            return
+
+        renderer = self._renderer
+        for anchor, text in self._reference_label_entries():
+            actor = self._make_reference_label_actor(anchor, text)
+            self._reference_label_actors.append((actor, anchor))
+            if renderer is not None:
+                if hasattr(renderer, "AddActor2D"):
+                    renderer.AddActor2D(actor)
+                else:
+                    renderer.AddActor(actor)
+        self._update_reference_label_positions()
+
     def _make_cube_actor(self, poly: vtk.vtkPolyData, wireframe: bool) -> vtk.vtkActor:
         mapper = vtk.vtkPolyDataMapper()
         mapper.SetInputData(poly)
@@ -494,7 +592,7 @@ class CellComplexLayer(BaseLayer[CellComplexData]):
         if wireframe:
             prop.SetRepresentationToWireframe()
             prop.SetOpacity(1.0)
-            prop.SetLineWidth(self.edge_width)
+            prop.SetLineWidth(self.vertex_cube_wire_width)
         else:
             prop.SetRepresentationToSurface()
             prop.SetOpacity(self.face_opacity)
@@ -541,6 +639,7 @@ class CellComplexLayer(BaseLayer[CellComplexData]):
 
         out_actors.extend([self._face_actor, self._wire_actor, self._edge_actor])
         out_actors.extend(self._gizmo_actors.values())
+        self._update_reference_labels()
         self._update_gizmo()
 
         camera = renderer.GetActiveCamera()
@@ -552,26 +651,31 @@ class CellComplexLayer(BaseLayer[CellComplexData]):
         self._sync_selection_timer()
 
     def _on_camera_modified(self) -> None:
-        if self.size_mode != "screen":
-            return
         now = time.perf_counter()
         if now - self._last_screen_scale_update < 0.03:
             return
         self._last_screen_scale_update = now
-        self._update_cube_polys()
-        self._update_gizmo()
+        self._update_reference_label_positions()
+        if self.size_mode == "screen":
+            self._update_cube_polys()
+            self._update_gizmo()
 
     def update(self) -> None:
         self._sync_active_semantic_attributes()
         self._build_vertex_cache()
         self._update_cube_polys()
         self._update_edge_poly()
+        self._update_reference_labels()
         if self._wire_actor is not None:
-            self._wire_actor.GetProperty().SetLineWidth(self.edge_width)
+            self._wire_actor.GetProperty().SetLineWidth(self.vertex_cube_wire_width)
         if self._edge_actor is not None:
             self._edge_actor.GetProperty().SetLineWidth(self.edge_width)
             self._edge_actor.GetProperty().SetColor(*(c / 255.0 for c in self.default_color))
         self._update_gizmo()
+
+    def set_visible(self, visible: bool) -> None:
+        super().set_visible(visible)
+        self._update_reference_labels()
 
     def prefers_cell_pick(self, prop: vtk.vtkProp | None) -> bool:
         return prop in {None, self._face_actor, self._wire_actor, self._edge_actor}
@@ -746,6 +850,7 @@ class CellComplexLayer(BaseLayer[CellComplexData]):
 
     def detach(self) -> None:
         self._selection_timer.stop()
+        self._clear_reference_label_actors()
         if self._camera_observer_id is not None and self._observed_camera is not None:
             self._observed_camera.RemoveObserver(self._camera_observer_id)
         self._camera_observer_id = None

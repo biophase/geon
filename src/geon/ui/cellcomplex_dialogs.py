@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -18,11 +19,16 @@ from PyQt6.QtWidgets import (
     QFormLayout,
     QVBoxLayout,
 )
+import numpy as np
+import weakref
 
 from geon.data.cellcomplex import Cell, PointCloudRef
-from geon.data.pointcloud import SemanticSchema
+from geon.data.pointcloud import FieldType, InstanceSegmentation, SemanticSchema
 from geon.rendering.cellcomplex import CellComplexLayer
 from geon.rendering.pointcloud import PointCloudLayer
+from geon.tools.selection import SelectPointsCmd
+from geon.ui.boolean_dialog import BooleanChoiceDialog
+from geon.util.common import bool_op_index_mask
 from geon.util.resources import resource_path
 from geon.ui.semantic_schema_dialog import SemanticSchemaCreationDialog
 
@@ -203,9 +209,9 @@ class CellComplexAttributesDialog(QDialog):
     def _make_references_tab(self) -> QTableWidget:
         table = QTableWidget(self)
         refs = list(self._cell.geometry_refs)
-        table.setColumnCount(4)
+        table.setColumnCount(5)
         table.setRowCount(len(refs))
-        table.setHorizontalHeaderLabels(["", "Layer ID", "View", "Clear"])
+        table.setHorizontalHeaderLabels(["", "Layer ID", "Select", "View", "Clear"])
         for row, ref in enumerate(refs):
             layer = self._layer_for_ref(ref.ref_id)
             icon_item = QTableWidgetItem("")
@@ -214,6 +220,10 @@ class CellComplexAttributesDialog(QDialog):
             table.setItem(row, 0, icon_item)
             table.setItem(row, 1, QTableWidgetItem(ref.ref_id))
 
+            select_btn = QPushButton("Select", table)
+            select_btn.clicked.connect(lambda _checked=False, r=ref: self._select_ref(r))
+            table.setCellWidget(row, 2, select_btn)
+
             view_btn = QPushButton("View", table)
             view_btn.clicked.connect(
                 lambda _checked=False, r=ref: GeometryRefPropertiesDialog(
@@ -221,17 +231,18 @@ class CellComplexAttributesDialog(QDialog):
                     self,
                 ).exec()
             )
-            table.setCellWidget(row, 2, view_btn)
+            table.setCellWidget(row, 3, view_btn)
 
             clear_btn = QPushButton("Clear", table)
             clear_btn.clicked.connect(lambda _checked=False, r=ref: self._clear_ref(r))
-            table.setCellWidget(row, 3, clear_btn)
+            table.setCellWidget(row, 4, clear_btn)
         header = table.horizontalHeader()
         if header is not None:
             header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
             header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
             header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
             header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+            header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
         return table
 
     def _make_attributes_tab(self) -> QTableWidget:
@@ -283,5 +294,81 @@ class CellComplexAttributesDialog(QDialog):
         mark_modified = getattr(self._ctx.viewer.window(), "_mark_active_doc_modified", None)
         if callable(mark_modified):
             mark_modified()
+        self._layer.update()
+        self._ctx.viewer.rerender()
         self.accept()
         CellComplexAttributesDialog(self._layer, self._cell, self._ctx, self.parent()).exec()
+
+    def _activate_reference_layer(self, layer: PointCloudLayer) -> None:
+        scene = getattr(self._ctx, "scene", None)
+        if scene is None:
+            return
+        scene.active_layer_id = layer.id
+        layer.set_visible(True)
+        window = self._ctx.viewer.window()
+        scene_manager = getattr(window, "scene_manager", None)
+        if scene_manager is not None:
+            scene_manager.populate_tree()
+            if hasattr(scene_manager, "broadcastActivatedLayer"):
+                scene_manager.broadcastActivatedLayer.emit(layer)
+        self._ctx.viewer.rerender()
+
+    def _select_ref(self, ref: PointCloudRef) -> None:
+        if not isinstance(ref, PointCloudRef):
+            QMessageBox.warning(self, "Cannot select reference", "Unsupported reference type.")
+            return
+
+        layer = self._layer_for_ref(ref.ref_id)
+        if not isinstance(layer, PointCloudLayer):
+            QMessageBox.warning(
+                self,
+                "Cannot select reference",
+                f"Referenced point cloud layer '{ref.ref_id}' was not found.",
+            )
+            return
+
+        self._activate_reference_layer(layer)
+
+        fields = layer.data.get_fields(names=ref.field_name, field_type=FieldType.INSTANCE)
+        field = fields[0] if fields else None
+        if not isinstance(field, InstanceSegmentation):
+            QMessageBox.warning(
+                self,
+                "Cannot select reference",
+                f"Instance field '{ref.field_name}' was not found on layer '{ref.ref_id}'.",
+            )
+            return
+
+        candidate = np.flatnonzero(field.data.reshape(-1) == int(ref.instance_id)).astype(
+            np.int32,
+            copy=False,
+        )
+        if candidate.size == 0:
+            QMessageBox.warning(
+                self,
+                "Cannot select reference",
+                f"No points use instance id {int(ref.instance_id)} in field '{ref.field_name}'.",
+            )
+            return
+
+        selection_old = layer.active_selection.copy() if layer.active_selection is not None else None
+        selection_new = candidate
+        if selection_old is not None and selection_old.size > 0:
+            dlg = BooleanChoiceDialog(
+                self,
+                message="Choose how to combine with previous selection:",
+            )
+            if dlg.exec() != QDialog.DialogCode.Accepted or dlg.choice is None:
+                return
+            selection_new = bool_op_index_mask(selection_old, candidate, dlg.choice)
+        if selection_new.size == 0:
+            selection_new = None
+
+        cmd = SelectPointsCmd(
+            title="Select referenced geometry",
+            selection_new=selection_new,
+            layer_ref=weakref.ref(layer),
+            ctx_ref=weakref.ref(self._ctx),
+            selection_old=selection_old,
+        )
+        self._ctx.controller.command_manager.do(cmd)

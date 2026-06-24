@@ -18,6 +18,7 @@ DEFAULT_PREFS: Dict[str, Any] = {
     "cell_complex_screen_size_px": 12.0,
     "cell_complex_world_size": 0.1,
     "cell_complex_edge_width": 1.0,
+    "cell_complex_reference_label_text_size_px": 14.0,
     "cell_complex_default_color": [204, 204, 204],
     "selection_color": [255, 128, 0],
 }
@@ -137,6 +138,9 @@ class Preferences:
     cell_complex_screen_size_px: float = DEFAULT_PREFS["cell_complex_screen_size_px"]
     cell_complex_world_size: float = DEFAULT_PREFS["cell_complex_world_size"]
     cell_complex_edge_width: float = DEFAULT_PREFS["cell_complex_edge_width"]
+    cell_complex_reference_label_text_size_px: float = DEFAULT_PREFS[
+        "cell_complex_reference_label_text_size_px"
+    ]
     cell_complex_default_color: list[int] = field(
         default_factory=lambda: list(DEFAULT_PREFS["cell_complex_default_color"])
     )
@@ -190,6 +194,7 @@ class Preferences:
                 "cell_complex_screen_size_px",
                 "cell_complex_world_size",
                 "cell_complex_edge_width",
+                "cell_complex_reference_label_text_size_px",
             ):
                 try:
                     setattr(prefs, attr, float(data.get(attr, getattr(prefs, attr))))
@@ -243,6 +248,7 @@ class Preferences:
             f'cell_complex_screen_size_px = {_toml_scalar(float(self.cell_complex_screen_size_px))}',
             f'cell_complex_world_size = {_toml_scalar(float(self.cell_complex_world_size))}',
             f'cell_complex_edge_width = {_toml_scalar(float(self.cell_complex_edge_width))}',
+            f'cell_complex_reference_label_text_size_px = {_toml_scalar(float(self.cell_complex_reference_label_text_size_px))}',
             f'cell_complex_default_color = {_toml_scalar(self.cell_complex_default_color)}',
             f'selection_color = {_toml_scalar(self.selection_color)}',
         ]

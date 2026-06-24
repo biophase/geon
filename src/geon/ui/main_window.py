@@ -369,6 +369,9 @@ class MainWindow(QMainWindow):
                     screen_size_px=self.preferences.cell_complex_screen_size_px,
                     world_size=self.preferences.cell_complex_world_size,
                     edge_width=self.preferences.cell_complex_edge_width,
+                    reference_label_text_size_px=(
+                        self.preferences.cell_complex_reference_label_text_size_px
+                    ),
                     default_color=default_color,
                     selection_color=selection_color,
                 )

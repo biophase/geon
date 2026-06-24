@@ -120,11 +120,18 @@ def _ribbon(
     outer.setContentsMargins(2, 1, 2, 1)
     outer.setSpacing(8)
 
-    stats = QLabel(
-        f"Vertices: {layer.vertex_count:,}   Edges: {layer.edge_count:,}   "
-        f"Size: {layer.size_mode}"
-    )
-    stats.setStyleSheet(UIStyle.TYPE_LABEL.value)
+    stats = QWidget(w)
+    stats_grid = QGridLayout(stats)
+    stats_grid.setContentsMargins(0, 0, 0, 0)
+    stats_grid.setHorizontalSpacing(4)
+    stats_grid.setVerticalSpacing(2)
+    vertices_label = QLabel(f"Vertices: {layer.vertex_count:,}", stats)
+    edges_label = QLabel(f"Edges: {layer.edge_count:,}", stats)
+    vertices_label.setStyleSheet(UIStyle.TYPE_LABEL.value)
+    edges_label.setStyleSheet(UIStyle.TYPE_LABEL.value)
+    stats_grid.addWidget(vertices_label, 0, 0)
+    stats_grid.addWidget(edges_label, 1, 0)
+    stats.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Expanding)
     outer.addWidget(stats)
 
     add_edge_btn = QPushButton("Add edge", w)
@@ -136,7 +143,18 @@ def _ribbon(
     associate_btn = QPushButton("Associate", w)
     associate_btn.setIcon(QIcon(CellComplexAssociateTool.icon_path))
     associate_btn.pressed.connect(lambda: controller.activate_tool(CellComplexAssociateTool.__name__))
-    outer.addWidget(_button_columns([add_edge_btn, create_attr_btn, associate_btn], w))
+
+    show_refs = QCheckBox("Show references", w)
+    show_refs.setChecked(layer.show_reference_labels)
+
+    def _toggle_reference_labels(checked: bool) -> None:
+        layer.set_reference_labels_enabled(checked)
+        if controller.ctx is not None:
+            controller.ctx.viewer.rerender()
+
+    show_refs.toggled.connect(_toggle_reference_labels)
+    outer.addWidget(_button_columns([add_edge_btn, create_attr_btn, associate_btn, show_refs], w))
+
     w.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Expanding)
     return w
 
@@ -154,10 +172,11 @@ def _ribbon_selection(
     label = QLabel(f"Size: {layer.browser_sel_descr}", w)
     label.setStyleSheet(UIStyle.TYPE_LABEL.value)
     outer.addWidget(label)
+
     deselect_btn = QPushButton("Deselect", w)
     deselect_btn.setIcon(QIcon(resource_path("deselect.png")))
     deselect_btn.pressed.connect(lambda: controller.activate_tool("DeselectTool"))
-    outer.addWidget(deselect_btn)
+
     move_nodes = QCheckBox("Move nodes", w)
     has_selected_nodes = bool(layer.selected_ids_by_dim(0))
     move_nodes.setEnabled(has_selected_nodes)
@@ -178,12 +197,13 @@ def _ribbon_selection(
                     controller.ctx.viewer.rerender()
 
     move_nodes.toggled.connect(_toggle_move_nodes)
-    outer.addWidget(move_nodes)
+
     annotate_btn = QPushButton("Annotate", w)
     annotate_btn.setIcon(QIcon(CellComplexAnnotateTool.icon_path))
     annotate_btn.setEnabled(cell_complex_annotation_target(layer) is not None)
     annotate_btn.pressed.connect(lambda: controller.activate_tool(CellComplexAnnotateTool.__name__))
-    outer.addWidget(annotate_btn)
+    outer.addWidget(_button_columns([deselect_btn, move_nodes, annotate_btn], w))
+
     w.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Expanding)
     return w
 
