@@ -157,10 +157,20 @@ class PointCloudData(BaseData):
             name = f"{field_prefix}{new_id:04}"
             
         if data is not None:
-            assert data.ndim == 2, \
-                f"Fields should have two dims but got: {data.shape}"
-            assert data.shape[0] == self.points.shape[0],\
-                f"First field shape axis {data.shape[0]} doesn't match point number {self.points.shape[0]}"
+            if field_type in (FieldType.SEMANTIC, FieldType.INSTANCE):
+                data_arr = np.asarray(data)
+                is_flat = data_arr.ndim == 1 or (
+                    data_arr.ndim == 2 and 1 in data_arr.shape
+                )
+                assert is_flat, \
+                    f"Segmentation fields should be flat arrays but got: {data_arr.shape}"
+                assert data_arr.size == self.points.shape[0], \
+                    f"Field length {data_arr.size} doesn't match point number {self.points.shape[0]}"
+            else:
+                assert data.ndim == 2, \
+                    f"Fields should have two dims but got: {data.shape}"
+                assert data.shape[0] == self.points.shape[0],\
+                    f"First field shape axis {data.shape[0]} doesn't match point number {self.points.shape[0]}"
             
         # fields with specialized classes
         if field_type == FieldType.SEMANTIC:

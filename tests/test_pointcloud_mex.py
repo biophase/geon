@@ -48,6 +48,20 @@ def test_instance_segmentation_size_uses_column_vector() -> None:
     assert field.data[:, 0].tolist() == [0, 0, 0]
 
 
+def test_pointcloud_add_instance_field_accepts_flat_data() -> None:
+    pcd = PointCloudData(np.zeros((3, 3), dtype=np.float32))
+
+    pcd.add_field(
+        name="instances",
+        data=np.asarray([0, 1, 3], dtype=np.int32),
+        field_type=FieldType.INSTANCE,
+    )
+
+    field = pcd.get_fields(names="instances")[0]
+    assert field.data.shape == (3, 1)
+    assert field.data[:, 0].tolist() == [0, 1, 3]
+
+
 def test_instance_segmentation_hdf5_load_migrates_flat_data(tmp_path) -> None:
     path = tmp_path / "instances.h5"
     with h5py.File(path, "w") as h5:
