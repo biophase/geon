@@ -32,7 +32,10 @@ jobs:
         run: python -m pip install --upgrade pip setuptools wheel cmake ninja
 
       - name: Build and install
-        run: python -m pip install ".[test]"
+        run: python -m pip install --no-cache-dir --force-reinstall ".[test]"
+
+      - name: Show imported package path
+        run: python -c "import geon.data.pointcloud as p; print(p.__file__)"
 
       - name: Run tests
         run: python -m pytest
