@@ -14,10 +14,16 @@ class Command(ABC):
     
     
 class LambdaCommand(Command):
-    def __init__(self, label: str, execute: Callable, undo: Callable):
+    def __init__(self, label: str, execute: Callable[[], None], undo: Callable[[], None]):
         super().__init__(label)
-        self.execute = execute
-        self.undo = undo
+        self._execute = execute
+        self._undo = undo
+
+    def execute(self) -> None:
+        self._execute()
+
+    def undo(self) -> None:
+        self._undo()
         
 
 @dataclass

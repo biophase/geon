@@ -5,6 +5,8 @@ from typing import Tuple
 DEFAULT_OBJ_COLOR: Tuple[float,float,float] = (0.6,0.6,0.6)
 DEFAULT_SEGMENTATION_COLOR: Tuple[int,int,int] = (204, 204, 204)
 DEFAULT_RENDERER_BACKGROUND: Tuple[float,float,float] = (.1,.1,.1)
+SELECTION_COLOR: Tuple[int, int, int] = (255, 128, 0)
+VIEWPORT_TEXT_COLOR: Tuple[float, float, float] = (1.0, 1.0, 1.0)
 REFERENCE_LABEL_TEXT_COLOR: Tuple[float, float, float] = (1.0, 1.0, 1.0)
 REFERENCE_LABEL_BACKGROUND_COLOR: Tuple[float, float, float] = (0.0, 0.0, 0.0)
 REFERENCE_LABEL_BACKGROUND_OPACITY: float = 0.55

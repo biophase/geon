@@ -35,7 +35,17 @@ class BaseData(ABC):
         and return it.
         """
         ...
-        
+
+    @abstractmethod
+    def get_extents(self) -> tuple[float, float, float, float, float, float] | None:
+        """
+        Return world-space bounds as (xmin, xmax, ymin, ymax, zmin, zmax).
+
+        Data objects without spatial extents may return None.
+        """
+        ...
+
+
     @classmethod
     def get_type_id(cls) -> str:
         return cls.type_id or cls.__name__
@@ -55,4 +65,3 @@ class BaseData(ABC):
     
     def __init__(self):
         self.id = self._generate_id()
-        

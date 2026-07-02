@@ -49,6 +49,7 @@ def test_preferences_cell_complex_round_trip(tmp_path: Path):
     prefs.cell_complex_world_size = 0.25
     prefs.cell_complex_edge_width = 3.0
     prefs.cell_complex_default_color = [1, 2, 3]
+    prefs.viewport_text_color = [4, 5, 6]
     prefs.save()
 
     loaded = Preferences.load(prefs_path)
@@ -57,6 +58,7 @@ def test_preferences_cell_complex_round_trip(tmp_path: Path):
     assert loaded.cell_complex_world_size == 0.25
     assert loaded.cell_complex_edge_width == 3.0
     assert loaded.cell_complex_default_color == [1, 2, 3]
+    assert loaded.viewport_text_color == [4, 5, 6]
 
 
 def test_preferences_other_segmentation_round_trip(tmp_path: Path):

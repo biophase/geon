@@ -112,6 +112,7 @@ class PointCloudLayer(BaseLayer[PointCloudData]):
         
         self._mapper_fine:      Optional[vtk.vtkMapper] = None
         self._mapper_coarse:    Optional[vtk.vtkMapper] = None
+        self._clipping_planes: list[vtk.vtkPlane] = []
 
         self._main_actor: Optional[vtk.vtkLODActor] = None
 
@@ -257,6 +258,7 @@ class PointCloudLayer(BaseLayer[PointCloudData]):
         # build mappers
         self._poly, self._mapper_fine = _build_points(points_np)
         self._poly_coarse, self._mapper_coarse = _build_points(points_np[::int(1/coarse_ratio)])
+        self._apply_clipping_planes()
 
         
 
@@ -270,6 +272,22 @@ class PointCloudLayer(BaseLayer[PointCloudData]):
         self._main_actor = actor
 
         self._init_visibility_mask()
+
+    def _apply_clipping_planes(self) -> None:
+        for mapper in (self._mapper_fine, self._mapper_coarse):
+            if mapper is None:
+                continue
+            mapper.RemoveAllClippingPlanes()
+            for plane in self._clipping_planes:
+                mapper.AddClippingPlane(plane)
+
+    def set_clipping_planes(self, planes: list[vtk.vtkPlane]) -> None:
+        self._clipping_planes = list(planes)
+        self._apply_clipping_planes()
+
+    def clear_clipping_planes(self) -> None:
+        self._clipping_planes = []
+        self._apply_clipping_planes()
 
 
     @property

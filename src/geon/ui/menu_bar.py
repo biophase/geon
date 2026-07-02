@@ -17,6 +17,7 @@ class MenuBar(QMenuBar):
     renameSceneRequested        = pyqtSignal()
     createCameraSnapshotRequested = pyqtSignal()
     importCameraSnapshotJsonRequested = pyqtSignal()
+    createEmptyBoundingBoxLayerRequested = pyqtSignal()
     undoRequested               = pyqtSignal()
     redoRequested               = pyqtSignal()
     editPreferencesRequested    = pyqtSignal()
@@ -64,6 +65,13 @@ class MenuBar(QMenuBar):
         act_render_to_file = cast(QAction, self.display_menu.addAction("Render to File"))
         act_render_to_file.triggered.connect(self.renderToFileRequested)
         self.addMenu(self.display_menu)
+
+        # layer menu
+        self.layer_menu = QMenu("&Layer", self)
+        bbox_menu = cast(QMenu, self.layer_menu.addMenu("Bounding box"))
+        act_empty_bbox = cast(QAction, bbox_menu.addAction("Create empty layer"))
+        act_empty_bbox.triggered.connect(self.createEmptyBoundingBoxLayerRequested)
+        self.addMenu(self.layer_menu)
         
         # settings menu
         self.settings_menu = QMenu("&Settings", self)

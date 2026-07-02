@@ -86,6 +86,11 @@ class PreferencesDialog(QDialog):
         form.addRow("Selection RGB", selection_color_row)
         self.selection_color_text = selection_color_row
 
+        viewport_text_color_row = QLineEdit(self)
+        viewport_text_color_row.setText(",".join(str(int(c)) for c in self._prefs.viewport_text_color))
+        form.addRow("Viewport text RGB", viewport_text_color_row)
+        self.viewport_text_color_text = viewport_text_color_row
+
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
             parent=self,
@@ -124,3 +129,12 @@ class PreferencesDialog(QDialog):
             ]
         except ValueError:
             self._prefs.selection_color = [255, 128, 0]
+        try:
+            rgb = [int(part.strip()) for part in self.viewport_text_color_text.text().split(",")]
+            if len(rgb) != 3:
+                raise ValueError
+            self._prefs.viewport_text_color = [
+                int(max(0, min(255, c))) for c in rgb
+            ]
+        except ValueError:
+            self._prefs.viewport_text_color = [255, 255, 255]

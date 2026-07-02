@@ -68,6 +68,25 @@ class PointCloudData(BaseData):
         self._fields: List["FieldBase"] = []
         self._field_added_callbacks: List[Callable[["FieldBase"], None]] = []
 
+    def get_extents(self) -> tuple[float, float, float, float, float, float] | None:
+        if self.points.size == 0:
+            return None
+        points = np.asarray(self.points, dtype=np.float64)
+        if points.ndim != 2 or points.shape[1] < 3:
+            return None
+        mins = np.nanmin(points[:, :3], axis=0)
+        maxs = np.nanmax(points[:, :3], axis=0)
+        if not np.all(np.isfinite(mins)) or not np.all(np.isfinite(maxs)):
+            return None
+        return (
+            float(mins[0]),
+            float(maxs[0]),
+            float(mins[1]),
+            float(maxs[1]),
+            float(mins[2]),
+            float(maxs[2]),
+        )
+
     def save_hdf5(self, group: h5py.Group) -> h5py.Group:
         group.attrs["type_id"] = self.get_type_id()
         group.attrs["id"] = self.id

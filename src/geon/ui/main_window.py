@@ -27,9 +27,11 @@ from ..tools.controller import ToolController
 from ..ui.layers import LAYER_UI
 from ..rendering.pointcloud import PointCloudLayer
 from ..rendering.cellcomplex import CellComplexLayer
+from ..rendering.boundingbox import BoundingBoxLayer
 from ..data.pointcloud import FieldType, SemanticSegmentation, SemanticSchema
 from ..data.cellcomplex import CellComplexData
 from ..data.camera import CameraData
+from ..data.boundingbox import BoundingBoxData
 from ..data.document import Document
 from ..io.dataset import RefModState
 from geon.settings import Preferences
@@ -166,7 +168,7 @@ class MainWindow(QMainWindow):
         self.dataset_manager.requestSetActiveDocInScene\
             .connect(self.scene_manager.on_document_loaded)
         self.dataset_manager.requestSetActiveDocInScene\
-            .connect(lambda _doc: (self._apply_cell_complex_preferences(), self.viewer.rerender()))
+            .connect(lambda _doc: (self._apply_cell_complex_preferences(), self._apply_bounding_box_preferences(), self.viewer.rerender()))
         self.dataset_manager.requestClearUndoStacks\
             .connect(self.tool_controller.clear_undo_stacks)
         
@@ -188,6 +190,8 @@ class MainWindow(QMainWindow):
             .connect(self._on_create_camera_snapshot)
         self.menu_bar.importCameraSnapshotJsonRequested\
             .connect(self._on_import_camera_snapshot_from_json)
+        self.menu_bar.createEmptyBoundingBoxLayerRequested\
+            .connect(self._on_create_empty_bounding_box_layer)
         self.menu_bar.undoRequested\
             .connect(lambda: self.tool_controller.command_manager.undo())
         self.menu_bar.redoRequested\
@@ -354,6 +358,7 @@ class MainWindow(QMainWindow):
             self.scene_manager.preferences = self.preferences
             self.viewer.set_camera_sensitivity(self.preferences.camera_sensitivity)
             self._apply_cell_complex_preferences()
+            self._apply_bounding_box_preferences()
             self.viewer.rerender()
 
     def _apply_cell_complex_preferences(self) -> None:
@@ -372,6 +377,19 @@ class MainWindow(QMainWindow):
                     reference_label_text_size_px=(
                         self.preferences.cell_complex_reference_label_text_size_px
                     ),
+                    default_color=default_color,
+                    selection_color=selection_color,
+                )
+
+    def _apply_bounding_box_preferences(self) -> None:
+        scene = self.scene_manager._scene
+        if scene is None:
+            return
+        default_color = tuple(int(c) for c in self.preferences.cell_complex_default_color)
+        selection_color = tuple(int(c) for c in self.preferences.selection_color)
+        for layer in scene.layers.values():
+            if isinstance(layer, BoundingBoxLayer):
+                layer.set_visual_settings(
                     default_color=default_color,
                     selection_color=selection_color,
                 )
@@ -528,6 +546,26 @@ class MainWindow(QMainWindow):
         doc_ref = dataset.add_document(doc)
         self.dataset_manager.populate_tree()
         self.dataset_manager.set_active_doc(doc_ref)
+
+    def _on_create_empty_bounding_box_layer(self) -> None:
+        scene = self.scene_manager._scene
+        if scene is None:
+            QMessageBox.information(
+                self,
+                "Create Bounding Box Layer",
+                "Load a scene before creating a bounding box layer.",
+            )
+            return
+        data = BoundingBoxData([])
+        scene.doc.add_data(data)
+        layer = scene.add_data(data)
+        scene.active_layer_id = layer.id
+        self._apply_bounding_box_preferences()
+        self._mark_active_doc_modified()
+        self.scene_manager.populate_tree()
+        self.dataset_manager.populate_tree()
+        self.scene_manager.broadcastActivatedLayer.emit(layer)
+        self.viewer.rerender()
 
     def _on_render_to_file(self) -> None:
         path, _selected_filter = QFileDialog.getSaveFileName(

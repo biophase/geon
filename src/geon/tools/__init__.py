@@ -18,6 +18,7 @@ from .cellcomplex import (
     CellComplexMoveNodesTool,
     CellPickVertexTool,
 )
+from .boundingbox import CreateHorizontalBoundingBoxTool
 from .camera import (
     TogglePerspectiveTool,
     CameraTopTool,
@@ -43,6 +44,7 @@ TOOL_REGISTRY.register(CellComplexAddEdgeTool)
 TOOL_REGISTRY.register(CellComplexAssociateTool)
 TOOL_REGISTRY.register(CellComplexAnnotateTool)
 TOOL_REGISTRY.register(CellComplexMoveNodesTool)
+TOOL_REGISTRY.register(CreateHorizontalBoundingBoxTool)
 TOOL_REGISTRY.register(TogglePerspectiveTool)
 TOOL_REGISTRY.register(CameraTopTool)
 TOOL_REGISTRY.register(CameraBottomTool)

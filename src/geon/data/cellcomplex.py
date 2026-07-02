@@ -111,6 +111,25 @@ class CellComplexData(BaseData):
         else :
             raise ValueError(f"Dim {dim} not supported")
 
+    def get_extents(self) -> tuple[float, float, float, float, float, float] | None:
+        if not self.vertices:
+            return None
+        positions = np.asarray([vertex.position for vertex in self.vertices], dtype=np.float64)
+        if positions.size == 0:
+            return None
+        mins = np.nanmin(positions, axis=0)
+        maxs = np.nanmax(positions, axis=0)
+        if not np.all(np.isfinite(mins)) or not np.all(np.isfinite(maxs)):
+            return None
+        return (
+            float(mins[0]),
+            float(maxs[0]),
+            float(mins[1]),
+            float(maxs[1]),
+            float(mins[2]),
+            float(maxs[2]),
+        )
+
     def get_cell_by_id(self, cell_id: str) -> Optional[Cell]:
         return next((cell for cell in self.get_cells() if cell.id == cell_id), None)
 

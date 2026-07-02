@@ -87,6 +87,9 @@ class CameraData(BaseData):
         camera.SetWindowCenter(*self.window_center)
         camera.SetViewShear(*self.view_shear)
 
+    def get_extents(self) -> tuple[float, float, float, float, float, float] | None:
+        return None
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "type_id": self.get_type_id(),

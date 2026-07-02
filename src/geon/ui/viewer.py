@@ -283,6 +283,7 @@ class VTKViewer(QWidget):
         self._pivot_point = (0,0,0)
         self._pivot_sphere_source = None
         self.pivot_actor = None
+        self._viewport_text_actor: vtk.vtkTextActor | None = None
         
         
         
@@ -319,7 +320,47 @@ class VTKViewer(QWidget):
         
         
     def rerender(self):
+        self._update_viewport_text_position()
         self.vtkWidget.GetRenderWindow().Render()
+
+    def show_viewport_text(
+        self,
+        text: str,
+        *,
+        color: tuple[float, float, float] = VIEWPORT_TEXT_COLOR,
+        font_size: int = 18,
+    ) -> None:
+        if self._viewport_text_actor is None:
+            actor = vtk.vtkTextActor()
+            actor.SetPickable(False)
+            prop = actor.GetTextProperty()
+            prop.SetJustificationToCentered()
+            prop.SetVerticalJustificationToTop()
+            if hasattr(prop, "SetBackgroundColor"):
+                prop.SetBackgroundColor(0.0, 0.0, 0.0)
+            if hasattr(prop, "SetBackgroundOpacity"):
+                prop.SetBackgroundOpacity(0.45)
+            self._viewport_text_actor = actor
+            self._renderer.AddActor2D(actor)
+        self._viewport_text_actor.SetInput(text)
+        prop = self._viewport_text_actor.GetTextProperty()
+        prop.SetColor(*color)
+        prop.SetFontSize(int(font_size))
+        self._update_viewport_text_position()
+        self.rerender()
+
+    def clear_viewport_text(self) -> None:
+        if self._viewport_text_actor is None:
+            return
+        self._renderer.RemoveActor2D(self._viewport_text_actor)
+        self._viewport_text_actor = None
+        self.rerender()
+
+    def _update_viewport_text_position(self) -> None:
+        if self._viewport_text_actor is None:
+            return
+        width, height = self.vtkWidget.GetRenderWindow().GetSize()
+        self._viewport_text_actor.SetDisplayPosition(int(width * 0.5), max(0, int(height) - 16))
 
     def save_viewport_png(self, path: str, transparent: bool = True) -> None:
         render_window = self.vtkWidget.GetRenderWindow()

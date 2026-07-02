@@ -21,6 +21,7 @@ DEFAULT_PREFS: Dict[str, Any] = {
     "cell_complex_reference_label_text_size_px": 14.0,
     "cell_complex_default_color": [204, 204, 204],
     "selection_color": [255, 128, 0],
+    "viewport_text_color": [255, 255, 255],
 }
 
 REGION_GROWING_PREFIX = "region_growing__"
@@ -147,6 +148,9 @@ class Preferences:
     selection_color: list[int] = field(
         default_factory=lambda: list(DEFAULT_PREFS["selection_color"])
     )
+    viewport_text_color: list[int] = field(
+        default_factory=lambda: list(DEFAULT_PREFS["viewport_text_color"])
+    )
     region_growing_settings: Dict[str, Any] = field(default_factory=dict)
     plane_ransac_settings: Dict[str, Any] = field(default_factory=dict)
     superpoints_settings: Dict[str, Any] = field(default_factory=dict)
@@ -200,7 +204,7 @@ class Preferences:
                     setattr(prefs, attr, float(data.get(attr, getattr(prefs, attr))))
                 except (TypeError, ValueError):
                     setattr(prefs, attr, DEFAULT_PREFS[attr])
-            for attr in ("cell_complex_default_color", "selection_color"):
+            for attr in ("cell_complex_default_color", "selection_color", "viewport_text_color"):
                 color = data.get(attr, getattr(prefs, attr))
                 if isinstance(color, list) and len(color) == 3:
                     try:
@@ -251,6 +255,7 @@ class Preferences:
             f'cell_complex_reference_label_text_size_px = {_toml_scalar(float(self.cell_complex_reference_label_text_size_px))}',
             f'cell_complex_default_color = {_toml_scalar(self.cell_complex_default_color)}',
             f'selection_color = {_toml_scalar(self.selection_color)}',
+            f'viewport_text_color = {_toml_scalar(self.viewport_text_color)}',
         ]
         tool_settings: Iterable[tuple[str, Dict[str, Any]]] = (
             (REGION_GROWING_PREFIX, self.region_growing_settings),
