@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import math
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import h5py
 import numpy as np
@@ -24,7 +24,7 @@ FACE_NAMES = ("bottom", "top", "xmin", "xmax", "ymin", "ymax")
 @dataclass
 class BoundingBox:
     id: str = field(default_factory=generate_uuid)
-    center_bottom_xyz: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    center_bottom_xyz: Tuple[float, float, float] = (0.0, 0.0, 0.0)
     yaw: float = 0.0
     pitch: float = 0.0
     roll: float = 0.0
@@ -32,7 +32,7 @@ class BoundingBox:
     depth: float = 1.0
     height: float = 1.0
     semantic_id: Optional[int] = None
-    attributes: dict[str, Any] = field(default_factory=dict)
+    attributes: Dict[str, Any] = field(default_factory=dict)
 
     @staticmethod
     def _rotation_matrix(yaw: float, pitch: float, roll: float) -> NDArray[np.float64]:
@@ -49,7 +49,7 @@ class BoundingBox:
         return self._rotation_matrix(self.yaw, self.pitch, self.roll)
 
     @property
-    def dimensions(self) -> tuple[float, float, float]:
+    def dimensions(self) -> Tuple[float, float, float]:
         return (float(self.width), float(self.depth), float(self.height))
 
     def transform_matrix(self) -> NDArray[np.float64]:
@@ -80,11 +80,11 @@ class BoundingBox:
         origin = np.asarray(self.center_bottom_xyz, dtype=np.float64)
         return origin[None, :] + self.local_corners() @ self.rotation_matrix.T
 
-    def axes(self) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
+    def axes(self) -> Tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
         r = self.rotation_matrix
         return r[:, 0], r[:, 1], r[:, 2]
 
-    def face_quads(self) -> dict[str, tuple[int, int, int, int]]:
+    def face_quads(self) -> Dict[str, Tuple[int, int, int, int]]:
         return {
             "bottom": (0, 1, 2, 3),
             "top": (4, 5, 6, 7),
@@ -169,9 +169,9 @@ class BoundingBox:
     @classmethod
     def from_horizontal_corners(
         cls,
-        c1: tuple[float, float, float],
-        c2: tuple[float, float, float],
-        c3: tuple[float, float, float],
+        c1: Tuple[float, float, float],
+        c2: Tuple[float, float, float],
+        c3: Tuple[float, float, float],
         bottom_z: float,
         top_z: float,
         *,
@@ -213,18 +213,18 @@ class BoundingBoxData(BaseData):
 
     def __init__(
         self,
-        boxes: Optional[list[BoundingBox]] = None,
+        boxes: Optional[List[BoundingBox]] = None,
         schema: Optional[SemanticSchema] = None,
     ):
         super().__init__()
-        self.boxes: list[BoundingBox] = list(boxes or [])
+        self.boxes: List[BoundingBox] = list(boxes or [])
         self.schema = schema
 
     @property
     def box_count(self) -> int:
         return len(self.boxes)
 
-    def get_extents(self) -> tuple[float, float, float, float, float, float] | None:
+    def get_extents(self) -> Optional[Tuple[float, float, float, float, float, float]]:
         if not self.boxes:
             return None
         corners = np.concatenate([box.corners() for box in self.boxes], axis=0)
@@ -288,7 +288,7 @@ class BoundingBoxData(BaseData):
         sem_ids = np.asarray(sem_ds[()], dtype=np.int32) if isinstance(sem_ds, h5py.Dataset) else np.full((len(ids),), -1, dtype=np.int32)
         attr_ds = group.get("attributes_json")
         attr_values = [decode_utf8(v) for v in attr_ds[()]] if isinstance(attr_ds, h5py.Dataset) else ["{}"] * len(ids)
-        boxes: list[BoundingBox] = []
+        boxes: List[BoundingBox] = []
         for i, box_id in enumerate(ids):
             try:
                 attrs = json.loads(attr_values[i])
