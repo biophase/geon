@@ -2,7 +2,7 @@ import json
 import pickle
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Dict, List, Literal, Optional, Tuple, TypedDict, Type, Union, cast, Callable
+from typing import Callable, Dict, List, Literal, Optional, Set, Tuple, TypedDict, Type, Union, cast
 from pathlib import Path
 
 import h5py
@@ -68,7 +68,7 @@ class PointCloudData(BaseData):
         self._fields: List["FieldBase"] = []
         self._field_added_callbacks: List[Callable[["FieldBase"], None]] = []
 
-    def get_extents(self) -> tuple[float, float, float, float, float, float] | None:
+    def get_extents(self) -> Optional[Tuple[float, float, float, float, float, float]]:
         if self.points.size == 0:
             return None
         points = np.asarray(self.points, dtype=np.float64)
@@ -315,7 +315,7 @@ class PointCloudData(BaseData):
 
         return structured
     
-    # def reset_cmap_bounds(self, field_names:list[str]):
+    # def reset_cmap_bounds(self, field_names: List[str]):
     #     for field in  self.get_fields(names=field_names):
     #         if field.color_map is not None:
     #             field.color_map.color_positions[0]
@@ -571,7 +571,7 @@ class SemanticSchema:
 
         old_to_new: List[Tuple[int, int]] = []
         aligned_classes: List[SemanticClass] = []
-        handled_active_names: set[str] = set()
+        handled_active_names: Set[str] = set()
 
         target_unlabeled = _unlabeled(target_schema)
         active_unlabeled = _unlabeled(self)
@@ -852,7 +852,7 @@ class SemanticSegmentation(FieldBase):
         """
         Remap the field data.
         :param old_to_new: pairs of indices [(old id, new id), ...]
-        :type old_to_new: list[tuple[int, int]]
+        :type old_to_new: List[Tuple[int, int]]
         """
 
         id_min = int(self.data.min())

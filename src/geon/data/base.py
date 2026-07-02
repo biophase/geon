@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod 
-from typing import Optional, ClassVar, Type, Dict
+from typing import Optional, ClassVar, Type, Dict, Tuple
 import h5py
 
 
@@ -37,7 +37,7 @@ class BaseData(ABC):
         ...
 
     @abstractmethod
-    def get_extents(self) -> tuple[float, float, float, float, float, float] | None:
+    def get_extents(self) -> Optional[Tuple[float, float, float, float, float, float]]:
         """
         Return world-space bounds as (xmin, xmax, ymin, ymax, zmin, zmax).
 

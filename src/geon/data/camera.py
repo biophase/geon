@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import h5py
 import numpy as np
@@ -18,12 +18,12 @@ def _decode(value: Any) -> str:
     return str(value)
 
 
-def _float_tuple(values: Sequence[float], size: int) -> tuple[float, ...]:
+def _float_tuple(values: Sequence[float], size: int) -> Tuple[float, ...]:
     arr = np.asarray(values, dtype=np.float64).reshape(size)
     return tuple(float(v) for v in arr)
 
 
-def _list(values: Sequence[float]) -> list[float]:
+def _list(values: Sequence[float]) -> List[float]:
     return [float(v) for v in values]
 
 
@@ -87,10 +87,10 @@ class CameraData(BaseData):
         camera.SetWindowCenter(*self.window_center)
         camera.SetViewShear(*self.view_shear)
 
-    def get_extents(self) -> tuple[float, float, float, float, float, float] | None:
+    def get_extents(self) -> Optional[Tuple[float, float, float, float, float, float]]:
         return None
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> Dict[str, Any]:
         return {
             "type_id": self.get_type_id(),
             "name": self.name,
@@ -106,7 +106,7 @@ class CameraData(BaseData):
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "CameraData":
+    def from_dict(cls, data: Dict[str, Any]) -> "CameraData":
         type_id = data.get("type_id", cls.get_type_id())
         if type_id != cls.get_type_id():
             raise ValueError(f"Expected camera snapshot type_id '{cls.get_type_id()}', got '{type_id}'.")
@@ -123,12 +123,12 @@ class CameraData(BaseData):
             view_shear=data.get("view_shear", (0.0, 0.0, 1.0)),
         )
 
-    def save_json(self, path: str | Path) -> None:
+    def save_json(self, path: Union[str, Path]) -> None:
         path = Path(path)
         path.write_text(json.dumps(self.to_dict(), indent=2), encoding="utf-8")
 
     @classmethod
-    def load_json(cls, path: str | Path) -> "CameraData":
+    def load_json(cls, path: Union[str, Path]) -> "CameraData":
         path = Path(path)
         raw = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(raw, dict):
@@ -152,7 +152,7 @@ class CameraData(BaseData):
 
     @classmethod
     def load_hdf5(cls, group: h5py.Group) -> "CameraData":
-        def dataset_tuple(name: str, size: int, fallback: Sequence[float]) -> tuple[float, ...]:
+        def dataset_tuple(name: str, size: int, fallback: Sequence[float]) -> Tuple[float, ...]:
             ds = group.get(name)
             if isinstance(ds, h5py.Dataset):
                 return _float_tuple(ds[()], size)

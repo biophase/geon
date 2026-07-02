@@ -1,6 +1,6 @@
 import json
 from dataclasses import dataclass, field
-from typing import Any, ClassVar, Dict, List, Tuple, Optional
+from typing import Any, ClassVar, Dict, List, Optional, Set, Tuple
 from abc import ABC, abstractmethod
 
 import h5py
@@ -36,7 +36,7 @@ class PointCloudRef(GeometryRef):
         return props
 
 
-@dataclass(kw_only=True)
+@dataclass
 class Cell(ABC):
     boundary: List[str] = field(default_factory=list)
 
@@ -55,20 +55,54 @@ class Cell(ABC):
     
         
     
-@dataclass
+@dataclass(init=False)
 class VertexCell(Cell):
     dim: ClassVar[int] = 0
     position: Tuple[float, float, float]
+
+    def __init__(
+        self,
+        position: Tuple[float, float, float],
+        boundary: Optional[List[str]] = None,
+        semantic_attributes: Optional[Dict[str, int]] = None,
+        attributes: Optional[Dict[str, Any]] = None,
+        geometry_refs: Optional[List[GeometryRef]] = None,
+        id: Optional[str] = None,
+    ) -> None:
+        super().__init__(
+            boundary=list(boundary or []),
+            semantic_attributes=dict(semantic_attributes or {}),
+            attributes=dict(attributes or {}),
+            geometry_refs=list(geometry_refs or []),
+            id=id or generate_uuid(),
+        )
+        self.position = (float(position[0]), float(position[1]), float(position[2]))
 
     def validate(self, context: "CellComplexData") -> None:
         super().validate(context)
         assert len(self.boundary) == 0, "Vertices are not allowed to have boundaries."
         assert self.dim == 0, "Vertices must have dim=0"
 
-@dataclass(kw_only=True)
+@dataclass(init=False)
 class EdgeCell(Cell):
     dim: ClassVar[int] = 1
     boundary: List[str]
+
+    def __init__(
+        self,
+        boundary: List[str],
+        semantic_attributes: Optional[Dict[str, int]] = None,
+        attributes: Optional[Dict[str, Any]] = None,
+        geometry_refs: Optional[List[GeometryRef]] = None,
+        id: Optional[str] = None,
+    ) -> None:
+        super().__init__(
+            boundary=list(boundary),
+            semantic_attributes=dict(semantic_attributes or {}),
+            attributes=dict(attributes or {}),
+            geometry_refs=list(geometry_refs or []),
+            id=id or generate_uuid(),
+        )
     
         
     def validate(self, context: "CellComplexData") -> None:
@@ -111,7 +145,7 @@ class CellComplexData(BaseData):
         else :
             raise ValueError(f"Dim {dim} not supported")
 
-    def get_extents(self) -> tuple[float, float, float, float, float, float] | None:
+    def get_extents(self) -> Optional[Tuple[float, float, float, float, float, float]]:
         if not self.vertices:
             return None
         positions = np.asarray([vertex.position for vertex in self.vertices], dtype=np.float64)
@@ -169,12 +203,12 @@ class CellComplexData(BaseData):
             self.edges.remove(edge)
             raise
 
-    def remove_edges(self, edge_ids: set[str]) -> List[EdgeCell]:
+    def remove_edges(self, edge_ids: Set[str]) -> List[EdgeCell]:
         removed = [edge for edge in self.edges if edge.id in edge_ids]
         self.edges = [edge for edge in self.edges if edge.id not in edge_ids]
         return removed
 
-    def remove_vertices(self, vertex_ids: set[str]) -> tuple[List[VertexCell], List[EdgeCell]]:
+    def remove_vertices(self, vertex_ids: Set[str]) -> Tuple[List[VertexCell], List[EdgeCell]]:
         removed_vertices = [vertex for vertex in self.vertices if vertex.id in vertex_ids]
         self.vertices = [vertex for vertex in self.vertices if vertex.id not in vertex_ids]
         incident_edge_ids = {
@@ -186,7 +220,7 @@ class CellComplexData(BaseData):
         return removed_vertices, removed_edges
 
     @staticmethod
-    def _semantic_class_to_dict(semantic_class: SemanticClass) -> dict[str, Any]:
+    def _semantic_class_to_dict(semantic_class: SemanticClass) -> Dict[str, Any]:
         return {
             "id": int(semantic_class.id),
             "name": semantic_class.name,
@@ -194,7 +228,7 @@ class CellComplexData(BaseData):
         }
 
     @staticmethod
-    def _semantic_class_from_dict(data: dict[str, Any]) -> SemanticClass:
+    def _semantic_class_from_dict(data: Dict[str, Any]) -> SemanticClass:
         color = data.get("color", (204, 204, 204))
         return SemanticClass(
             int(data["id"]),
@@ -203,11 +237,11 @@ class CellComplexData(BaseData):
         )
 
     @staticmethod
-    def _semantic_attributes_to_dict(attrs: Dict[str, int]) -> dict[str, int]:
+    def _semantic_attributes_to_dict(attrs: Dict[str, int]) -> Dict[str, int]:
         return {str(name): int(value) for name, value in attrs.items()}
 
     @staticmethod
-    def _semantic_attributes_from_dict(data: dict[str, Any]) -> Dict[str, int]:
+    def _semantic_attributes_from_dict(data: Dict[str, Any]) -> Dict[str, int]:
         attrs: Dict[str, int] = {}
         for name, value in data.items():
             try:
@@ -223,7 +257,7 @@ class CellComplexData(BaseData):
 
     @staticmethod
     def _legacy_semantic_attribute_schemas_from_dict(
-        data: dict[str, Any],
+        data: Dict[str, Any],
     ) -> Dict[str, SemanticSchema]:
         schemas: Dict[str, SemanticSchema] = {}
         for name, value in data.items():
@@ -235,8 +269,8 @@ class CellComplexData(BaseData):
         return schemas
 
     @staticmethod
-    def _geometry_refs_to_dict(refs: List[GeometryRef]) -> list[dict[str, Any]]:
-        out: list[dict[str, Any]] = []
+    def _geometry_refs_to_dict(refs: List[GeometryRef]) -> List[Dict[str, Any]]:
+        out: List[Dict[str, Any]] = []
         for ref in refs:
             if isinstance(ref, PointCloudRef):
                 out.append({
@@ -248,7 +282,7 @@ class CellComplexData(BaseData):
         return out
 
     @staticmethod
-    def _geometry_refs_from_dict(data: list[dict[str, Any]]) -> List[GeometryRef]:
+    def _geometry_refs_from_dict(data: List[Dict[str, Any]]) -> List[GeometryRef]:
         refs: List[GeometryRef] = []
         for item in data:
             if item.get("type") == "PointCloudRef":
@@ -260,7 +294,7 @@ class CellComplexData(BaseData):
         return refs
 
     @classmethod
-    def _common_cell_kwargs_from_group(cls, group: h5py.Group) -> dict[str, Any]:
+    def _common_cell_kwargs_from_group(cls, group: h5py.Group) -> Dict[str, Any]:
         def _decode(value: Any) -> str:
             if isinstance(value, bytes):
                 return value.decode("utf-8")
@@ -394,7 +428,7 @@ class CellComplexData(BaseData):
         return obj
     
     @staticmethod
-    def _schema_key(schema: SemanticSchema) -> tuple[Any, ...]:
+    def _schema_key(schema: SemanticSchema) -> Tuple[Any, ...]:
         return (schema.name, schema.signature())
 
     @staticmethod
@@ -409,7 +443,7 @@ class CellComplexData(BaseData):
 
     def unify_attributes(self) -> None:
         for dim in range(CELL_COMPLEX_MAX_DIM + 1):
-            attrs: set[str] = set()
+            attrs: Set[str] = set()
             sem_attrs_by_name = self.semantic_attribute_schemas.setdefault(dim, {})
 
             for cell in self.get_cells(dim):
@@ -452,8 +486,8 @@ class CellComplexData(BaseData):
     def get_matching_semantic_attribute_schemas(
         self,
         schema: SemanticSchema,
-    ) -> dict[str, SemanticSchema]:
-        matches: dict[str, SemanticSchema] = {}
+    ) -> Dict[str, SemanticSchema]:
+        matches: Dict[str, SemanticSchema] = {}
         for dim, attr_name, candidate in self.iter_semantic_attributes():
             if candidate.name != schema.name:
                 continue
@@ -467,7 +501,7 @@ class CellComplexData(BaseData):
         self,
         dim: int,
         attr_name: str,
-        old_to_new_ids: list[tuple[int, int]],
+        old_to_new_ids: List[Tuple[int, int]],
         new_schema: SemanticSchema,
     ) -> None:
         mapping = {int(old_id): int(new_id) for old_id, new_id in old_to_new_ids}
