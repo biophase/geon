@@ -44,6 +44,35 @@ class AddBoundingBoxCmd(Command):
         layer.update()
 
 
+@dataclass
+class AddBoundingBoxesCmd(Command):
+    """Add several boxes as one undoable operation."""
+
+    layer_ref: weakref.ReferenceType[BoundingBoxLayer]
+    boxes: list[BoundingBox]
+
+    def execute(self) -> None:
+        layer = self.layer_ref()
+        if layer is None:
+            return
+        box_ids = [box.id for box in self.boxes]
+        if len(set(box_ids)) != len(box_ids):
+            raise ValueError("Bounding boxes to add must have unique IDs.")
+        conflicts = [box_id for box_id in box_ids if layer.data.get_box(box_id) is not None]
+        if conflicts:
+            raise ValueError(f"Duplicate bounding box id '{conflicts[0]}'.")
+        for box in self.boxes:
+            layer.data.append_box(copy.deepcopy(box))
+        layer.update()
+
+    def undo(self) -> None:
+        layer = self.layer_ref()
+        if layer is None:
+            return
+        for box in self.boxes:
+            layer.data.remove_box(box.id)
+        layer.update()
+
 def _display_ray(renderer: vtk.vtkRenderer, pos: tuple[int, int]) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
     x, y = pos
 

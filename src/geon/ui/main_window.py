@@ -13,6 +13,7 @@ from .superpoint_segmentation_dialog import SuperpointSegmentationDialog
 from .region_merge_dialog import RegionMergeDialog
 from .corner_cleanup_dialog import CornerCleanupDialog
 from .connected_components_dialog import ConnectedComponentsDialog
+from .fit_obb_dialog import FitObbDialog
 from .export_ply_dialog import PlyExportDialog
 
 
@@ -27,7 +28,9 @@ from ..algorithms.superpoints import segment_superpoints
 from ..algorithms.region_merge import merge_planar_regions
 from ..algorithms.corner_cleanup import cleanup_corner_regions
 from ..algorithms.connected_components import segment_connected_components
+from ..algorithms.fit_obb import fit_obb
 from ..tools.controller import ToolController
+from ..tools.boundingbox import AddBoundingBoxesCmd
 from ..ui.layers import LAYER_UI
 from ..rendering.pointcloud import PointCloudLayer
 from ..rendering.cellcomplex import CellComplexLayer
@@ -79,6 +82,7 @@ from geon._native import region_merge as _native_region_merge
 from geon._native import corner_cleanup as _native_corner_cleanup
 import numpy as np
 import time
+import weakref
 
 
 class _RenameSceneDialog(QDialog):
@@ -208,6 +212,8 @@ class MainWindow(QMainWindow):
             .connect(self._on_import_camera_snapshot_from_json)
         self.menu_bar.createEmptyBoundingBoxLayerRequested\
             .connect(self._on_create_empty_bounding_box_layer)
+        self.menu_bar.fitObbFromSelectionRequested\
+            .connect(self._on_fit_obb_from_selection)
         self.menu_bar.undoRequested\
             .connect(lambda: self.tool_controller.command_manager.undo())
         self.menu_bar.redoRequested\
@@ -592,6 +598,124 @@ class MainWindow(QMainWindow):
         self.scene_manager.populate_tree()
         self.dataset_manager.populate_tree()
         self.scene_manager.broadcastActivatedLayer.emit(layer)
+        self.viewer.rerender()
+
+    def _on_fit_obb_from_selection(self) -> None:
+        scene = self.scene_manager._scene
+        if scene is None:
+            QMessageBox.information(
+                self,
+                "Fit oriented bounding box",
+                "Load a scene before fitting a bounding box.",
+            )
+            return
+        source_layer = self._get_active_pointcloud_layer()
+        if source_layer is None:
+            QMessageBox.information(
+                self,
+                "Fit oriented bounding box",
+                "Activate a point-cloud layer first.",
+            )
+            return
+        selection = source_layer.active_selection
+        if not any(isinstance(layer, BoundingBoxLayer) for layer in scene.layers.values()):
+            QMessageBox.information(
+                self,
+                "Fit oriented bounding box",
+                "Create a bounding-box layer before fitting a box.",
+            )
+            return
+
+        # Snapshot the current selection, falling back to the complete cloud.
+        if selection is None or selection.size == 0:
+            selected_indices = np.arange(
+                source_layer.data.points.shape[0], dtype=np.int64
+            )
+        else:
+            selected_indices = np.asarray(selection, dtype=np.int64).reshape(-1).copy()
+        if (
+            selected_indices.size == 0
+            or int(selected_indices.min()) < 0
+            or int(selected_indices.max()) >= source_layer.data.points.shape[0]
+            or np.unique(selected_indices).size != selected_indices.size
+        ):
+            QMessageBox.warning(
+                self,
+                "Fit oriented bounding box",
+                "The point cloud is empty or its active selection is invalid.",
+            )
+            return
+
+        dialog = FitObbDialog(scene, source_layer, selected_indices.size, parent=self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        target_layer = dialog.target_layer()
+        if target_layer is None:
+            return
+
+        point_groups: list[tuple[int | None, np.ndarray]] = [(None, selected_indices)]
+        separation_field_name = dialog.separation_field_name()
+        if separation_field_name is not None:
+            fields = source_layer.data.get_fields(names=separation_field_name)
+            if (
+                not fields
+                or fields[0].field_type not in (FieldType.INSTANCE, FieldType.SEMANTIC)
+            ):
+                QMessageBox.warning(
+                    self,
+                    "Fit oriented bounding box",
+                    "The selected separation field is no longer available.",
+                )
+                return
+            field_values = np.asarray(fields[0].data).reshape(-1)
+            if field_values.shape[0] != source_layer.data.points.shape[0]:
+                QMessageBox.warning(
+                    self,
+                    "Fit oriented bounding box",
+                    "The separation field length does not match the point cloud.",
+                )
+                return
+            selected_values = field_values[selected_indices]
+            point_groups = [
+                (int(value), selected_indices[selected_values == value])
+                for value in np.unique(selected_values)
+            ]
+
+        boxes = []
+        try:
+            for field_value, group_indices in point_groups:
+                box = fit_obb(
+                    source_layer.data.points[group_indices],
+                    method=dialog.method(),
+                    trim=dialog.trim(),
+                )
+                if separation_field_name is not None:
+                    box.attributes.update({
+                        "separation_field": separation_field_name,
+                        "separation_value": field_value,
+                    })
+                boxes.append(box)
+        except (TypeError, ValueError) as exc:
+            QMessageBox.warning(self, "Fit oriented bounding box", str(exc))
+            return
+
+        self.tool_controller.do_global(
+            AddBoundingBoxesCmd(
+                "Fit oriented bounding boxes",
+                weakref.ref(target_layer),
+                boxes,
+            )
+        )
+        target_layer.active_selection = {box.id for box in boxes}
+        scene.active_layer_id = target_layer.id
+        self._mark_active_doc_modified()
+        self.scene_manager.populate_tree()
+        self.dataset_manager.populate_tree()
+        self.scene_manager.broadcastActivatedLayer.emit(target_layer)
+        self.statusBar().showMessage(
+            f"Added {len(boxes):,} fitted bounding box(es).",
+            8000,
+        )
         self.viewer.rerender()
 
     def _on_render_to_file(self) -> None:

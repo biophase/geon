@@ -18,6 +18,7 @@ class MenuBar(QMenuBar):
     createCameraSnapshotRequested = pyqtSignal()
     importCameraSnapshotJsonRequested = pyqtSignal()
     createEmptyBoundingBoxLayerRequested = pyqtSignal()
+    fitObbFromSelectionRequested = pyqtSignal()
     undoRequested               = pyqtSignal()
     redoRequested               = pyqtSignal()
     editPreferencesRequested    = pyqtSignal()
@@ -71,6 +72,8 @@ class MenuBar(QMenuBar):
         bbox_menu = cast(QMenu, self.layer_menu.addMenu("Bounding box"))
         act_empty_bbox = cast(QAction, bbox_menu.addAction("Create empty layer"))
         act_empty_bbox.triggered.connect(self.createEmptyBoundingBoxLayerRequested)
+        act_fit_obb = cast(QAction, bbox_menu.addAction("Fit OBB..."))
+        act_fit_obb.triggered.connect(self.fitObbFromSelectionRequested)
         self.addMenu(self.layer_menu)
         
         # settings menu
