@@ -9,12 +9,14 @@ from PyQt6.QtWidgets import (
     QDialogButtonBox,
     QDoubleSpinBox,
     QFormLayout,
-    QGroupBox,
+    QButtonGroup,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QPushButton,
+    QRadioButton,
     QSpinBox,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -32,7 +34,10 @@ REGION_GROWING_DEFAULTS: dict[str, object] = {
     "estimate_seed": 0,
     "normal_mode": "compute",
     "normal_field_name": None,
+    "on_selection_only": False,
+    "output_mode": "create_new",
     "output_field_base": "planar_regions",
+    "output_existing_field_name": None,
     "confidence": 0.99,
     "enable_seed_gating": True,
     "seed_min_neighbors": 10,
@@ -77,12 +82,22 @@ class RegionGrowingDialog(QDialog):
         self._ok_button: Optional[QPushButton] = None
 
         layout = QVBoxLayout(self)
+        self.tabs = QTabWidget(self)
+        layout.addWidget(self.tabs)
 
-        form = QFormLayout()
-        layout.addLayout(form)
+        base_tab = QWidget(self.tabs)
+        form = QFormLayout(base_tab)
+        self._base_form = form
+        self.tabs.addTab(base_tab, "Base")
 
         self.layer_combo = QComboBox(self)
         form.addRow("Point cloud layer", self.layer_combo)
+
+        self.selection_only_box = QCheckBox("On selection only", self)
+        self.selection_only_box.setToolTip(
+            "Run estimation and segmentation only on the active point selection."
+        )
+        form.addRow(self.selection_only_box)
 
         self.epsilon_spin = QDoubleSpinBox(self)
         self.epsilon_spin.setRange(1e-6, 1e6)
@@ -127,12 +142,23 @@ class RegionGrowingDialog(QDialog):
         self.normal_field_combo = QComboBox(self)
         form.addRow("Normals field", self.normal_field_combo)
 
-        self.field_name_edit = QLineEdit(self)
-        form.addRow("Output field base", self.field_name_edit)
+        self.create_new_field_radio = QRadioButton("Create new field", self)
+        self.write_existing_field_radio = QRadioButton("Write in existing field", self)
+        self.output_mode_group = QButtonGroup(self)
+        self.output_mode_group.addButton(self.create_new_field_radio)
+        self.output_mode_group.addButton(self.write_existing_field_radio)
+        form.addRow(self.create_new_field_radio)
 
-        advanced_group = QGroupBox("Advanced", self)
-        advanced_form = QFormLayout(advanced_group)
-        layout.addWidget(advanced_group)
+        self.field_name_edit = QLineEdit(self)
+        form.addRow("New field base", self.field_name_edit)
+
+        form.addRow(self.write_existing_field_radio)
+        self.existing_field_combo = QComboBox(self)
+        form.addRow("Existing instance field", self.existing_field_combo)
+
+        advanced_tab = QWidget(self.tabs)
+        advanced_form = QFormLayout(advanced_tab)
+        self.tabs.addTab(advanced_tab, "Advanced")
 
         self.confidence_spin = QDoubleSpinBox(self)
         self.confidence_spin.setRange(0.5, 0.999999)
@@ -187,17 +213,21 @@ class RegionGrowingDialog(QDialog):
         )
         advanced_form.addRow("Fail-rate threshold", self.failrate_threshold_spin)
 
+        chunking_tab = QWidget(self.tabs)
+        chunking_form = QFormLayout(chunking_tab)
+        self.tabs.addTab(chunking_tab, "Chunking & Merge")
+
         self.chunk_mode_combo = QComboBox(self)
         self.chunk_mode_combo.addItem("Auto target points", "auto")
         self.chunk_mode_combo.addItem("Explicit xyz", "explicit")
-        advanced_form.addRow("Chunk mode", self.chunk_mode_combo)
+        chunking_form.addRow("Chunk mode", self.chunk_mode_combo)
 
         self.enable_chunking_box = QCheckBox("Enable chunking", self)
-        advanced_form.addRow(self.enable_chunking_box)
+        chunking_form.addRow(self.enable_chunking_box)
 
         self.target_points_spin = QSpinBox(self)
         self.target_points_spin.setRange(1000, 50_000_000)
-        advanced_form.addRow("Target points/chunk", self.target_points_spin)
+        chunking_form.addRow("Target points/chunk", self.target_points_spin)
 
         explicit_chunk_row = QWidget(self)
         explicit_chunk_layout = QHBoxLayout(explicit_chunk_row)
@@ -214,25 +244,25 @@ class RegionGrowingDialog(QDialog):
         explicit_chunk_layout.addWidget(self.chunk_y_spin)
         explicit_chunk_layout.addWidget(QLabel("Z", explicit_chunk_row))
         explicit_chunk_layout.addWidget(self.chunk_z_spin)
-        advanced_form.addRow("Chunk xyz", explicit_chunk_row)
+        chunking_form.addRow("Chunk xyz", explicit_chunk_row)
 
         self.overlap_factor_spin = QDoubleSpinBox(self)
         self.overlap_factor_spin.setRange(2.5, 20.0)
         self.overlap_factor_spin.setDecimals(3)
-        advanced_form.addRow("Overlap factor", self.overlap_factor_spin)
+        chunking_form.addRow("Overlap factor", self.overlap_factor_spin)
 
         self.merge_angle_spin = QDoubleSpinBox(self)
         self.merge_angle_spin.setRange(0.0, 90.0)
         self.merge_angle_spin.setDecimals(2)
-        advanced_form.addRow("Merge angle (deg)", self.merge_angle_spin)
+        chunking_form.addRow("Merge angle (deg)", self.merge_angle_spin)
 
         self.merge_dist_factor_spin = QDoubleSpinBox(self)
         self.merge_dist_factor_spin.setRange(0.0, 20.0)
         self.merge_dist_factor_spin.setDecimals(3)
-        advanced_form.addRow("Merge distance factor", self.merge_dist_factor_spin)
+        chunking_form.addRow("Merge distance factor", self.merge_dist_factor_spin)
 
         self.enable_reconciliation_box = QCheckBox("Enable reconciliation", self)
-        advanced_form.addRow(self.enable_reconciliation_box)
+        chunking_form.addRow(self.enable_reconciliation_box)
 
         self.epsilon_multiplier_spin = QDoubleSpinBox(self)
         self.epsilon_multiplier_spin.setRange(0.1, 100.0)
@@ -279,15 +309,20 @@ class RegionGrowingDialog(QDialog):
         self._ok_button = buttons.button(QDialogButtonBox.StandardButton.Ok)
 
         self._populate_layers(scene, active_layer)
-        self._refresh_normals_fields()
+        self._refresh_layer_state()
         self._apply_settings(settings or {})
         self._update_chunk_mode_visibility()
+        self._update_output_controls()
         self._validate()
 
-        self.layer_combo.currentIndexChanged.connect(self._refresh_normals_fields)
+        self.layer_combo.currentIndexChanged.connect(self._refresh_layer_state)
         self.normal_mode_combo.currentIndexChanged.connect(self._validate)
         self.normal_field_combo.currentIndexChanged.connect(self._validate)
         self.field_name_edit.textChanged.connect(self._validate)
+        self.existing_field_combo.currentIndexChanged.connect(self._validate)
+        self.create_new_field_radio.toggled.connect(self._update_output_controls)
+        self.write_existing_field_radio.toggled.connect(self._update_output_controls)
+        self.selection_only_box.toggled.connect(self._validate)
         self.chunk_mode_combo.currentIndexChanged.connect(self._update_chunk_mode_visibility)
         self.chunk_mode_combo.currentIndexChanged.connect(self._validate)
         self.enable_chunking_box.toggled.connect(self._update_chunk_mode_visibility)
@@ -305,6 +340,25 @@ class RegionGrowingDialog(QDialog):
         self.estimate_sample_spin.setValue(int(merged["estimate_sample_size"]))
         self.estimate_seed_spin.setValue(int(merged["estimate_seed"]))
         self.field_name_edit.setText(str(merged["output_field_base"]))
+        self.selection_only_box.setChecked(
+            bool(merged["on_selection_only"]) and self.selection_only_box.isEnabled()
+        )
+        output_mode = str(merged.get("output_mode", "create_new"))
+        existing_field_name = merged.get("output_existing_field_name")
+        existing_idx = (
+            self.existing_field_combo.findText(existing_field_name)
+            if isinstance(existing_field_name, str)
+            else -1
+        )
+        if (
+            output_mode == "write_existing"
+            and self.write_existing_field_radio.isEnabled()
+            and existing_idx >= 0
+        ):
+            self.write_existing_field_radio.setChecked(True)
+            self.existing_field_combo.setCurrentIndex(existing_idx)
+        else:
+            self.create_new_field_radio.setChecked(True)
         self.confidence_spin.setValue(float(merged["confidence"]))
         self.enable_seed_gating_box.setChecked(bool(merged["enable_seed_gating"]))
         self.seed_min_neighbors_spin.setValue(int(merged["seed_min_neighbors"]))
@@ -370,17 +424,42 @@ class RegionGrowingDialog(QDialog):
         if active_layer is not None and active_layer in self._layers:
             self.layer_combo.setCurrentIndex(self._layers.index(active_layer))
 
-    def _refresh_normals_fields(self) -> None:
+    def _refresh_layer_state(self) -> None:
         self.normal_field_combo.clear()
+        self.existing_field_combo.clear()
         layer = self.selected_layer()
         if layer is None:
             self.normal_field_combo.setEnabled(False)
+            self.selection_only_box.setChecked(False)
+            self.selection_only_box.setEnabled(False)
+            self.write_existing_field_radio.setEnabled(False)
+            self.create_new_field_radio.setChecked(True)
             self._validate()
             return
         normals = self._normal_fields_by_layer.get(id(layer), [])
         for name in normals:
             self.normal_field_combo.addItem(name)
-        self.normal_field_combo.setEnabled(len(normals) > 0)
+        for field in layer.data.get_fields(field_type=FieldType.INSTANCE):
+            self.existing_field_combo.addItem(field.name)
+
+        selection = layer.active_selection
+        has_selection = selection is not None and selection.size > 0
+        self.selection_only_box.setEnabled(has_selection)
+        if not has_selection:
+            self.selection_only_box.setChecked(False)
+
+        has_instance_fields = self.existing_field_combo.count() > 0
+        self.write_existing_field_radio.setEnabled(has_instance_fields)
+        if not has_instance_fields:
+            self.create_new_field_radio.setChecked(True)
+        self._update_output_controls()
+        self._validate()
+
+    def _update_output_controls(self) -> None:
+        create_new = self.output_mode() == "create_new"
+        self._base_form.setRowVisible(self.field_name_edit, create_new)
+        self._base_form.setRowVisible(self.existing_field_combo, not create_new)
+        self.existing_field_combo.setEnabled(not create_new and self.existing_field_combo.count() > 0)
         self._validate()
 
     def _update_chunk_mode_visibility(self) -> None:
@@ -434,7 +513,9 @@ class RegionGrowingDialog(QDialog):
             ok = False
         if use_provided and self.normal_field_name() is None:
             ok = False
-        if not self.output_field_base().strip():
+        if self.output_mode() == "create_new" and not self.output_field_base().strip():
+            ok = False
+        if self.output_mode() == "write_existing" and self.existing_field_name() is None:
             ok = False
         if self._ok_button is not None:
             self._ok_button.setEnabled(ok)
@@ -469,6 +550,18 @@ class RegionGrowingDialog(QDialog):
 
     def output_field_base(self) -> str:
         return self.field_name_edit.text().strip()
+
+    def output_mode(self) -> str:
+        return "write_existing" if self.write_existing_field_radio.isChecked() else "create_new"
+
+    def existing_field_name(self) -> Optional[str]:
+        if self.existing_field_combo.count() == 0:
+            return None
+        name = self.existing_field_combo.currentText().strip()
+        return name or None
+
+    def on_selection_only(self) -> bool:
+        return self.selection_only_box.isEnabled() and self.selection_only_box.isChecked()
 
     def estimate_kwargs(self) -> dict[str, int]:
         return {
@@ -530,7 +623,10 @@ class RegionGrowingDialog(QDialog):
             "estimate_seed": int(self.estimate_seed_spin.value()),
             "normal_mode": self.normal_mode(),
             "normal_field_name": self.normal_field_name(),
+            "on_selection_only": self.on_selection_only(),
+            "output_mode": self.output_mode(),
             "output_field_base": self.output_field_base(),
+            "output_existing_field_name": self.existing_field_name(),
             "confidence": float(self.confidence_spin.value()),
             "enable_seed_gating": bool(self.enable_seed_gating_box.isChecked()),
             "seed_min_neighbors": int(self.seed_min_neighbors_spin.value()),

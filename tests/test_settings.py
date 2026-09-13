@@ -13,6 +13,9 @@ def test_preferences_region_growing_round_trip(tmp_path: Path):
             "enable_chunking": True,
             "normal_mode": "compute",
             "global_reassign_enabled": False,
+            "on_selection_only": True,
+            "output_mode": "write_existing",
+            "output_existing_field_name": "instances",
         }
     )
     prefs.save()
@@ -24,6 +27,9 @@ def test_preferences_region_growing_round_trip(tmp_path: Path):
     assert rg["enable_chunking"] is True
     assert rg["normal_mode"] == "compute"
     assert rg["global_reassign_enabled"] is False
+    assert rg["on_selection_only"] is True
+    assert rg["output_mode"] == "write_existing"
+    assert rg["output_existing_field_name"] == "instances"
 
 
 def test_preferences_load_missing_region_growing_keys(tmp_path: Path):
@@ -85,6 +91,21 @@ def test_preferences_other_segmentation_round_trip(tmp_path: Path):
             "min_region_size": 30,
         }
     )
+    prefs.set_corner_cleanup_settings(
+        {
+            "source_field_name": "regions",
+            "on_selection_only": True,
+            "neighbor_radius_factor": 3.0,
+        }
+    )
+    prefs.set_connected_components_settings(
+        {
+            "epsilon": 0.07,
+            "on_selection_only": True,
+            "output_mode": "write_existing",
+            "output_existing_field_name": "regions",
+        }
+    )
     prefs.save()
 
     loaded = Preferences.load(prefs_path)
@@ -92,3 +113,12 @@ def test_preferences_other_segmentation_round_trip(tmp_path: Path):
     assert loaded.get_plane_ransac_settings()["normal_mode"] == "compute"
     assert loaded.get_superpoints_settings()["feature_field_names"] == ["normals", "intensity"]
     assert loaded.get_region_merge_settings()["source_field_name"] == "superpoints"
+    corner_cleanup = loaded.get_corner_cleanup_settings()
+    assert corner_cleanup["source_field_name"] == "regions"
+    assert corner_cleanup["on_selection_only"] is True
+    assert corner_cleanup["neighbor_radius_factor"] == 3.0
+    connected = loaded.get_connected_components_settings()
+    assert connected["epsilon"] == 0.07
+    assert connected["on_selection_only"] is True
+    assert connected["output_mode"] == "write_existing"
+    assert connected["output_existing_field_name"] == "regions"

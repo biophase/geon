@@ -10,6 +10,7 @@ from ...tools.controller import ToolController
 from ...tools.selection import DeselectTool
 from ...tools.visibility import HideTool, IsolateTool
 from ...tools.annotate import AnnotateTool
+from ...tools.split_between import SplitBetweenTool
 from ...tools.base import BaseTool
 from ..dataset_manager import DatasetManager
 from ..semantic_schema_dialog import SemanticSchemaEditDialog
@@ -203,7 +204,12 @@ def _ribbon(
         if af.field_type == FieldType.INTENSITY:
             pass
         if af.field_type == FieldType.INSTANCE:
-            pass
+            col_2 = QVBoxLayout()
+            split_btn = QPushButton("Split between", w)
+            split_btn.setFixedHeight(22)
+            split_btn.clicked.connect(
+                lambda: controller.activate_tool(SplitBetweenTool.__name__))
+            col_2.addWidget(split_btn)
         if af.field_type == FieldType.SCALAR:
             pass
         if af.field_type == FieldType.SEMANTIC:

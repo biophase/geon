@@ -35,6 +35,13 @@ def estimate_parameters(
 ) -> Tuple[float, int, float, dict[str, Any]]: ...
 
 
+def connected_components(
+    coords: NDArray[np.float32],
+    *,
+    epsilon: float,
+) -> Tuple[NDArray[np.int32], dict[str, Any]]: ...
+
+
 def segment_planar_regions(
     coords: NDArray[np.float32],
     normals: NDArray[np.float32] | None = ...,

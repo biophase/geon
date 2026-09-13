@@ -28,12 +28,16 @@ REGION_GROWING_PREFIX = "region_growing__"
 PLANE_RANSAC_PREFIX = "plane_ransac__"
 SUPERPOINTS_PREFIX = "superpoints__"
 REGION_MERGE_PREFIX = "region_merge__"
+CORNER_CLEANUP_PREFIX = "corner_cleanup__"
+CONNECTED_COMPONENTS_PREFIX = "connected_components__"
 
 _TOOL_PREFIXES: Dict[str, str] = {
     "region_growing": REGION_GROWING_PREFIX,
     "plane_ransac": PLANE_RANSAC_PREFIX,
     "superpoints": SUPERPOINTS_PREFIX,
     "region_merge": REGION_MERGE_PREFIX,
+    "corner_cleanup": CORNER_CLEANUP_PREFIX,
+    "connected_components": CONNECTED_COMPONENTS_PREFIX,
 }
 
 
@@ -155,6 +159,8 @@ class Preferences:
     plane_ransac_settings: Dict[str, Any] = field(default_factory=dict)
     superpoints_settings: Dict[str, Any] = field(default_factory=dict)
     region_merge_settings: Dict[str, Any] = field(default_factory=dict)
+    corner_cleanup_settings: Dict[str, Any] = field(default_factory=dict)
+    connected_components_settings: Dict[str, Any] = field(default_factory=dict)
     path: Path = None  # type: ignore
 
     def __post_init__(self) -> None:
@@ -217,6 +223,10 @@ class Preferences:
             prefs.plane_ransac_settings = _tool_settings_from_data(data, PLANE_RANSAC_PREFIX)
             prefs.superpoints_settings = _tool_settings_from_data(data, SUPERPOINTS_PREFIX)
             prefs.region_merge_settings = _tool_settings_from_data(data, REGION_MERGE_PREFIX)
+            prefs.corner_cleanup_settings = _tool_settings_from_data(data, CORNER_CLEANUP_PREFIX)
+            prefs.connected_components_settings = _tool_settings_from_data(
+                data, CONNECTED_COMPONENTS_PREFIX
+            )
         return prefs
 
     def set_region_growing_settings(self, settings: Dict[str, Any]) -> None:
@@ -243,6 +253,18 @@ class Preferences:
     def get_region_merge_settings(self) -> Dict[str, Any]:
         return dict(self.region_merge_settings)
 
+    def set_corner_cleanup_settings(self, settings: Dict[str, Any]) -> None:
+        self.corner_cleanup_settings = _sanitize_settings(settings)
+
+    def get_corner_cleanup_settings(self) -> Dict[str, Any]:
+        return dict(self.corner_cleanup_settings)
+
+    def set_connected_components_settings(self, settings: Dict[str, Any]) -> None:
+        self.connected_components_settings = _sanitize_settings(settings)
+
+    def get_connected_components_settings(self) -> Dict[str, Any]:
+        return dict(self.connected_components_settings)
+
     def to_toml(self) -> str:
         lines = [
             f'user_name = {_toml_scalar(self.user_name)}',
@@ -262,6 +284,8 @@ class Preferences:
             (PLANE_RANSAC_PREFIX, self.plane_ransac_settings),
             (SUPERPOINTS_PREFIX, self.superpoints_settings),
             (REGION_MERGE_PREFIX, self.region_merge_settings),
+            (CORNER_CLEANUP_PREFIX, self.corner_cleanup_settings),
+            (CONNECTED_COMPONENTS_PREFIX, self.connected_components_settings),
         )
         for prefix, settings in tool_settings:
             for key in sorted(settings):

@@ -108,6 +108,7 @@ class PointCloudLayer(BaseLayer[PointCloudData]):
         self._active_field_name:    Optional[str] = None
         self._visibility_mask:      Optional[NDArray[np.bool_]] = None
         self._active_selection:     Optional[NDArray[np.int32]] = None
+        self._temporary_point_opacity: Optional[NDArray[np.float32]] = None
         self._selection_overlay:    SelectionOverlay = SelectionOverlay(self)
         
         self._mapper_fine:      Optional[vtk.vtkMapper] = None
@@ -181,6 +182,27 @@ class PointCloudLayer(BaseLayer[PointCloudData]):
     
     def set_active_field_name(self, name:str):
         self.active_field_name = name
+        self.update()
+
+    def set_temporary_point_opacity(
+        self,
+        indices: NDArray[np.integer],
+        opacity: float = 0.5,
+    ) -> None:
+        index_array = np.asarray(indices)
+        if index_array.ndim != 1 or not np.issubdtype(index_array.dtype, np.integer):
+            raise ValueError("Opacity indices must be a one-dimensional integer array.")
+        if index_array.size and (index_array.min() < 0 or index_array.max() >= self.data.points.shape[0]):
+            raise IndexError("Opacity indices are outside the point cloud.")
+        values = np.ones(self.data.points.shape[0], dtype=np.float32)
+        values[index_array.astype(np.int64, copy=False)] = np.clip(float(opacity), 0.0, 1.0)
+        self._temporary_point_opacity = values
+        self.update()
+
+    def clear_temporary_point_opacity(self) -> None:
+        if self._temporary_point_opacity is None:
+            return
+        self._temporary_point_opacity = None
         self.update()
 
     def set_vector_field_active_index(self, field_name: str, index: int) -> int:
@@ -390,13 +412,20 @@ class PointCloudLayer(BaseLayer[PointCloudData]):
         else:
             visible_points_np = self.data.points
 
+        if colors_np is not None and self._temporary_point_opacity is not None:
+            opacity = self._temporary_point_opacity
+            if self._visibility_mask is not None:
+                opacity = opacity[self._visibility_mask]
+            alpha = np.rint(np.clip(opacity, 0.0, 1.0) * 255.0).astype(np.uint8)
+            colors_np = np.column_stack((colors_np, alpha))
+
         vtk_points = self._poly.GetPoints()
         vtk_points.SetData(ns.numpy_to_vtk(visible_points_np, deep=False))
         
         # push scalars/colors to vtk
         if colors_np is not None:
             vtk_colors = ns.numpy_to_vtk(colors_np, deep=False)
-            vtk_colors.SetNumberOfComponents(3)
+            vtk_colors.SetNumberOfComponents(colors_np.shape[1])
             self._poly.GetPointData().SetScalars(vtk_colors)
 
             self._mapper_fine.SetScalarModeToUsePointData()
@@ -474,6 +503,7 @@ class PointCloudLayer(BaseLayer[PointCloudData]):
         return float(p[0]), float(p[1]), float(p[2]) # FIXME: potential errors if the actor has a transform applied
         
     def detach(self) -> None:
+        self._temporary_point_opacity = None
         sel_actor = self._selection_overlay.selection_actor
         if self.renderer is not None and sel_actor is not None:
             self.renderer.RemoveActor(sel_actor)

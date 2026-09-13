@@ -402,6 +402,56 @@ MergeConfig parse_merge_config(const py::dict& d){
     return cfg;
 }
 
+py::tuple connected_components_impl(
+    const py::array_t<float, py::array::c_style | py::array::forcecast>& coords,
+    float epsilon
+){
+    if (!std::isfinite(epsilon) || epsilon <= 0.0f){
+        throw std::runtime_error("epsilon must be finite and greater than zero");
+    }
+
+    PointCloud pcd;
+    load_coords_from_numpy(coords, pcd);
+    const size_t n_points = pcd.coords.size();
+    std::vector<std::unordered_set<size_t>> components;
+    const auto started = std::chrono::steady_clock::now();
+    if (n_points > 0){
+        std::unordered_set<size_t> indices;
+        indices.reserve(n_points);
+        for (size_t index = 0; index < n_points; ++index){
+            indices.insert(index);
+        }
+        py::gil_scoped_release release;
+        components = unionFindCCA(pcd, std::move(indices), epsilon);
+    }
+
+    // unordered_set/map iteration is intentionally hidden from callers: order
+    // components by their lowest point index so labels are reproducible.
+    std::sort(components.begin(), components.end(), [](const auto& lhs, const auto& rhs){
+        return *std::min_element(lhs.begin(), lhs.end()) < *std::min_element(rhs.begin(), rhs.end());
+    });
+    py::array_t<int32_t> labels({static_cast<py::ssize_t>(n_points)});
+    auto labels_buf = labels.mutable_unchecked<1>();
+    for (py::ssize_t index = 0; index < static_cast<py::ssize_t>(n_points); ++index){
+        labels_buf(index) = -1;
+    }
+    for (size_t component_id = 0; component_id < components.size(); ++component_id){
+        for (const size_t point_index : components[component_id]){
+            labels_buf(static_cast<py::ssize_t>(point_index)) = static_cast<int32_t>(component_id);
+        }
+    }
+
+    const double elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(
+        std::chrono::steady_clock::now() - started
+    ).count();
+    py::dict stats;
+    stats["num_points"] = n_points;
+    stats["num_components"] = components.size();
+    stats["epsilon"] = epsilon;
+    stats["elapsed_seconds"] = elapsed_seconds;
+    return py::make_tuple(labels, stats);
+}
+
 std::array<size_t, 3> auto_chunk_dims(size_t n_points, size_t target_points, const Eigen::Vector3f& aabb_size){
     const size_t desired_chunks = std::max<size_t>(1, static_cast<size_t>(
         std::ceil(static_cast<double>(n_points) / static_cast<double>(target_points))
@@ -1263,6 +1313,14 @@ PYBIND11_MODULE(region_growing, m){
         py::kw_only(),
         py::arg("sample_size") = 50000,
         py::arg("seed") = 0
+    );
+
+    m.def(
+        "connected_components",
+        &connected_components_impl,
+        py::arg("coords"),
+        py::kw_only(),
+        py::arg("epsilon")
     );
 
     m.def(

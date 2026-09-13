@@ -24,6 +24,7 @@ class ToolController(QObject):
     # emitted on changes in the internal selection state of a layer 
     # e.g. for UI updates
     layer_internal_sel_changed  = pyqtSignal(BaseLayer)
+    layer_data_modified         = pyqtSignal(BaseLayer)
     
     scene_tree_request_change = pyqtSignal()
     

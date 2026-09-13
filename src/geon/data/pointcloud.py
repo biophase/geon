@@ -1,3 +1,4 @@
+import copy
 import json
 import pickle
 from dataclasses import dataclass, field
@@ -256,6 +257,76 @@ class PointCloudData(BaseData):
             if field_type is not None:
                 return [f for f in self._fields if f.field_type == field_type]
             return [f for f in self._fields]
+
+    def extract_subcloud(
+        self,
+        selection: np.ndarray,
+        field_names: Optional[Union[str, List[str]]] = None,
+    ) -> Tuple["PointCloudData", NDArray[np.int64]]:
+        """Copy selected points and requested fields into a temporary point cloud.
+
+        The returned index array maps rows in the subcloud back to rows in this
+        point cloud: ``source_indices[subcloud_index] == original_index``.
+        """
+        selected = np.asarray(selection)
+        if selected.ndim != 1:
+            raise ValueError(f"Selection must be one-dimensional, got {selected.shape}.")
+
+        point_count = self.points.shape[0]
+        if np.issubdtype(selected.dtype, np.bool_):
+            if selected.shape[0] != point_count:
+                raise ValueError(
+                    "Boolean selection length does not match point count: "
+                    f"{selected.shape[0]} vs {point_count}."
+                )
+            source_indices = np.flatnonzero(selected).astype(np.int64, copy=False)
+        elif np.issubdtype(selected.dtype, np.integer):
+            source_indices = selected.astype(np.int64, copy=False)
+            if source_indices.size:
+                if int(source_indices.min()) < 0 or int(source_indices.max()) >= point_count:
+                    raise IndexError("Selection contains an out-of-range point index.")
+                if np.unique(source_indices).size != source_indices.size:
+                    raise ValueError("Selection must not contain duplicate point indices.")
+        else:
+            raise TypeError("Selection must contain boolean or integer values.")
+
+        if field_names is None:
+            requested_names: List[str] = []
+        elif isinstance(field_names, str):
+            requested_names = [field_names]
+        else:
+            requested_names = list(field_names)
+        if len(set(requested_names)) != len(requested_names):
+            raise ValueError("field_names must not contain duplicates.")
+
+        fields_by_name = {field.name: field for field in self._fields}
+        missing = [name for name in requested_names if name not in fields_by_name]
+        if missing:
+            raise KeyError(f"Point-cloud fields not found: {', '.join(missing)}")
+
+        subcloud = PointCloudData(np.asarray(self.points[source_indices]).copy())
+        for name in requested_names:
+            source_field = fields_by_name[name]
+            selected_data = np.asarray(source_field.data[source_indices]).copy()
+            if isinstance(source_field, SemanticSegmentation):
+                cloned_field: FieldBase = SemanticSegmentation(
+                    source_field.name,
+                    selected_data,
+                    schema=copy.deepcopy(source_field.schema),
+                )
+            elif isinstance(source_field, InstanceSegmentation):
+                cloned_field = InstanceSegmentation(source_field.name, selected_data)
+            else:
+                cloned_field = FieldBase(
+                    source_field.name,
+                    selected_data,
+                    source_field.field_type,
+                    copy.deepcopy(source_field.color_map),
+                )
+            cloned_field.color_map = copy.deepcopy(source_field.color_map)
+            subcloud._fields.append(cloned_field)
+
+        return subcloud, source_indices.copy()
         
     
     def __getitem__(self, name: str) -> np.ndarray:
@@ -787,6 +858,86 @@ class InstanceSegmentation(FieldBase):
     
     def get_next_instance_id(self) -> int:
         return mex(self.data)
+
+    def map_to_free(self, unique_new_indices: List[int]) -> Dict[int, int]:
+        """Map new instance IDs to distinct, currently unused nonnegative IDs."""
+        if any(
+            not isinstance(value, (int, np.integer)) or isinstance(value, (bool, np.bool_))
+            for value in unique_new_indices
+        ):
+            raise TypeError("Instance IDs must be integers.")
+        source_ids = [int(value) for value in unique_new_indices]
+        if len(set(source_ids)) != len(source_ids):
+            raise ValueError("unique_new_indices must not contain duplicates.")
+        if any(value < 0 for value in source_ids):
+            raise ValueError("Instance IDs must be nonnegative.")
+
+        # Reserve each allocation in a scratch segmentation so every call to
+        # get_next_instance_id observes allocations made earlier in this call.
+        occupied_ids = np.unique(np.asarray(self.data, dtype=np.int32).reshape(-1))
+        occupied_ids = occupied_ids[occupied_ids >= 0]
+        allocation_data = np.full(
+            occupied_ids.size + len(source_ids),
+            -1,
+            dtype=np.int32,
+        )
+        allocation_data[:occupied_ids.size] = occupied_ids
+        allocation_state = InstanceSegmentation(
+            f"{self.name}_allocation_state",
+            allocation_data,
+        )
+        mapping: Dict[int, int] = {}
+        for offset, source_id in enumerate(source_ids):
+            target_id = allocation_state.get_next_instance_id()
+            mapping[source_id] = target_id
+            allocation_state.data[occupied_ids.size + offset, 0] = target_id
+        return mapping
+
+    def merge_with_segmentation(
+        self,
+        labels: np.ndarray,
+        inverse_mapping: Optional[np.ndarray] = None,
+    ) -> Dict[int, int]:
+        """Merge nonnegative labels, assigning fresh IDs before overwriting data."""
+        label_array = np.asarray(labels)
+        if not np.issubdtype(label_array.dtype, np.integer):
+            raise TypeError("Segmentation labels must be integers.")
+        if label_array.ndim == 2 and 1 in label_array.shape:
+            label_array = label_array.reshape(-1)
+        elif label_array.ndim != 1:
+            raise ValueError(f"Segmentation labels must be flat, got {label_array.shape}.")
+        label_array = label_array.astype(np.int32, copy=False)
+
+        target_size = self.data.shape[0]
+        if inverse_mapping is None:
+            if label_array.size != target_size:
+                raise ValueError(
+                    "Segmentation label count must match the target field when no "
+                    "inverse mapping is supplied."
+                )
+            target_indices = np.arange(target_size, dtype=np.int64)
+        else:
+            target_indices_raw = np.asarray(inverse_mapping)
+            if not np.issubdtype(target_indices_raw.dtype, np.integer):
+                raise TypeError("Inverse mapping must contain integer indices.")
+            if target_indices_raw.ndim != 1:
+                raise ValueError("Inverse mapping must be one-dimensional.")
+            target_indices = target_indices_raw.astype(np.int64, copy=False)
+            if target_indices.size != label_array.size:
+                raise ValueError("Inverse mapping length must match segmentation labels.")
+            if target_indices.size:
+                if int(target_indices.min()) < 0 or int(target_indices.max()) >= target_size:
+                    raise IndexError("Inverse mapping contains an out-of-range target index.")
+                if np.unique(target_indices).size != target_indices.size:
+                    raise ValueError("Inverse mapping must not contain duplicate indices.")
+
+        new_ids = np.unique(label_array[label_array >= 0]).astype(int).tolist()
+        id_mapping = self.map_to_free(new_ids)
+        target_data = self.data.reshape(-1)
+        for source_id, target_id in id_mapping.items():
+            source_mask = label_array == source_id
+            target_data[target_indices[source_mask]] = target_id
+        return id_mapping
 
     @classmethod
     def from_hdf5_fieldgroup(cls, field_group: h5py.Group) -> "InstanceSegmentation":

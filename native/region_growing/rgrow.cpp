@@ -180,9 +180,9 @@ subdividePointCloudFixedChunkSize_returnType subdividePointCloudFixedChunkSize(
     std::unordered_map<size_t, std::unordered_set<size_t>> chunks;
     Eigen::Vector3f aabb_size = aabb_max_values - aabb_min_values;
 
-    const size_t num_chunks_x = static_cast<size_t>(std::ceil(aabb_size[0] / chunk_size_x));
-    const size_t num_chunks_y = static_cast<size_t>(std::ceil(aabb_size[1] / chunk_size_y));
-    const size_t num_chunks_z = static_cast<size_t>(std::ceil(aabb_size[2] / chunk_size_z));
+    const size_t num_chunks_x = std::max<size_t>(1, static_cast<size_t>(std::ceil(aabb_size[0] / chunk_size_x)));
+    const size_t num_chunks_y = std::max<size_t>(1, static_cast<size_t>(std::ceil(aabb_size[1] / chunk_size_y)));
+    const size_t num_chunks_z = std::max<size_t>(1, static_cast<size_t>(std::ceil(aabb_size[2] / chunk_size_z)));
     const Eigen::Vector3f chunk_size = {chunk_size_x, chunk_size_y, chunk_size_z};
 
     for (size_t i : task_inds){

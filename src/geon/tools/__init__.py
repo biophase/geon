@@ -10,6 +10,7 @@ from .visibility import HideTool, IsolateTool, ShowTool
 from .annotate import AnnotateTool
 from .wand import WandTool
 from .seeded_region_growing import SeededRegionGrowingTool
+from .split_between import SplitBetweenTool
 from .inspect import InspectTool
 from .cellcomplex import (
     CellComplexAddEdgeTool,
@@ -34,6 +35,7 @@ TOOL_REGISTRY.register(InspectTool)
 TOOL_REGISTRY.register(LassoTool)
 TOOL_REGISTRY.register(WandTool)
 TOOL_REGISTRY.register(SeededRegionGrowingTool)
+TOOL_REGISTRY.register(SplitBetweenTool)
 TOOL_REGISTRY.register(DeselectTool)
 TOOL_REGISTRY.register(HideTool)
 TOOL_REGISTRY.register(IsolateTool)

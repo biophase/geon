@@ -11,6 +11,8 @@ from .region_growing_dialog import RegionGrowingDialog
 from .plane_ransac_dialog import PlaneRansacDialog
 from .superpoint_segmentation_dialog import SuperpointSegmentationDialog
 from .region_merge_dialog import RegionMergeDialog
+from .corner_cleanup_dialog import CornerCleanupDialog
+from .connected_components_dialog import ConnectedComponentsDialog
 from .export_ply_dialog import PlyExportDialog
 
 
@@ -23,12 +25,19 @@ from ..algorithms.region_growing import (
 from ..algorithms.plane_ransac import segment_planes as segment_ransac_planes
 from ..algorithms.superpoints import segment_superpoints
 from ..algorithms.region_merge import merge_planar_regions
+from ..algorithms.corner_cleanup import cleanup_corner_regions
+from ..algorithms.connected_components import segment_connected_components
 from ..tools.controller import ToolController
 from ..ui.layers import LAYER_UI
 from ..rendering.pointcloud import PointCloudLayer
 from ..rendering.cellcomplex import CellComplexLayer
 from ..rendering.boundingbox import BoundingBoxLayer
-from ..data.pointcloud import FieldType, SemanticSegmentation, SemanticSchema
+from ..data.pointcloud import (
+    FieldType,
+    InstanceSegmentation,
+    SemanticSegmentation,
+    SemanticSchema,
+)
 from ..data.cellcomplex import CellComplexData
 from ..data.camera import CameraData
 from ..data.boundingbox import BoundingBoxData
@@ -67,6 +76,7 @@ from geon._native import region_growing as _native_region_growing
 from geon._native import plane_ransac as _native_plane_ransac
 from geon._native import superpoints as _native_superpoints
 from geon._native import region_merge as _native_region_merge
+from geon._native import corner_cleanup as _native_corner_cleanup
 import numpy as np
 import time
 
@@ -156,6 +166,12 @@ class MainWindow(QMainWindow):
         act_superpoints.triggered.connect(self._on_superpoint_segmentation)
         act_region_merge = cast(QAction, seg_menu.addAction("Merge planar regions"))
         act_region_merge.triggered.connect(self._on_region_merge)
+        act_corner_cleanup = cast(QAction, seg_menu.addAction("Clean up corner regions"))
+        act_corner_cleanup.triggered.connect(self._on_corner_cleanup)
+        act_connected_components = cast(
+            QAction, seg_menu.addAction("Connected components instance segmentation")
+        )
+        act_connected_components.triggered.connect(self._on_connected_components)
         self.setMenuBar(self.menu_bar)
 
         ###########
@@ -223,6 +239,7 @@ class MainWindow(QMainWindow):
             
         self.tool_controller.layer_internal_sel_changed\
             .connect(self._on_layer_internal_sel_changed)
+        self.tool_controller.layer_data_modified.connect(self._on_layer_data_modified)
         # self.tool_controller.tool_activated\
         #     .connect(lambda _: self.viewer.tool_active_frame.show())
         # self.tool_controller.tool_deactivated\
@@ -269,6 +286,16 @@ class MainWindow(QMainWindow):
         title = "Active selection"
         widget = hooks.ribbon_sel_widget(layer, self.ribbon, self.tool_controller)
         self.ribbon.set_group(title, widget, 'selection')
+
+    def _on_layer_data_modified(self, _layer) -> None:
+        scene = self.scene_manager._scene
+        dataset = self.dataset_manager._dataset
+        if scene is None or dataset is None:
+            return
+        for ref in dataset.doc_refs:
+            if ref.name == scene.doc.name:
+                ref.modState = RefModState.MODIFIED
+                break
 
     def _get_active_pointcloud_layer(self) -> PointCloudLayer | None:
         scene = self.scene_manager._scene
@@ -644,6 +671,18 @@ class MainWindow(QMainWindow):
             layer = dlg.selected_layer()
             if layer is None:
                 return
+            estimate_data = layer.data
+            if dlg.on_selection_only():
+                selection = layer.active_selection
+                if selection is None or selection.size == 0:
+                    QMessageBox.warning(
+                        self,
+                        "Planar region growing",
+                        "The selected point cloud no longer has an active selection.",
+                    )
+                    return
+                estimate_data, _ = layer.data.extract_subcloud(selection.copy())
+            estimate_kwargs = dlg.estimate_kwargs()
 
             class _EstimateWorker(QThread):
                 estimated = pyqtSignal(float, int, float)
@@ -652,8 +691,8 @@ class MainWindow(QMainWindow):
                 def run(self) -> None:
                     try:
                         estimated = estimate_region_growing_parameters(
-                            layer.data,
-                            **dlg.estimate_kwargs(),
+                            estimate_data,
+                            **estimate_kwargs,
                         )
                         self.estimated.emit(
                             float(estimated["epsilon"]),
@@ -706,16 +745,70 @@ class MainWindow(QMainWindow):
         normal_mode = dlg.normal_mode()
         if normal_mode is None:
             return
+        selection_only = dlg.on_selection_only()
+        output_mode = dlg.output_mode()
+        output_field_name: str
+        target_instance_field: InstanceSegmentation | None = None
+        if output_mode == "write_existing":
+            existing_field_name = dlg.existing_field_name()
+            if existing_field_name is None:
+                QMessageBox.warning(
+                    self,
+                    "Planar region growing",
+                    "No output instance field was selected.",
+                )
+                return
+            existing_fields = layer.data.get_fields(
+                names=existing_field_name,
+                field_type=FieldType.INSTANCE,
+            )
+            if not existing_fields or not isinstance(existing_fields[0], InstanceSegmentation):
+                QMessageBox.warning(
+                    self,
+                    "Planar region growing",
+                    "The selected output instance field was not found.",
+                )
+                return
+            target_instance_field = existing_fields[0]
+            output_field_name = target_instance_field.name
+        else:
+            base_name = dlg.output_field_base() or "planar_regions"
+            output_field_name = self._unique_field_name(layer.data.field_names, base_name)
+
         self.preferences.set_region_growing_settings(dlg.settings())
         self.preferences.save()
 
+        segmentation_data = layer.data
+        inverse_mapping: np.ndarray | None = None
+        normal_field_name = dlg.normal_field_name() if normal_mode == "use_provided" else None
+        if selection_only:
+            selection = layer.active_selection
+            if selection is None or selection.size == 0:
+                QMessageBox.warning(
+                    self,
+                    "Planar region growing",
+                    "The selected point cloud no longer has an active selection.",
+                )
+                return
+            requested_fields = [normal_field_name] if normal_field_name is not None else []
+            try:
+                segmentation_data, inverse_mapping = layer.data.extract_subcloud(
+                    selection.copy(),
+                    field_names=requested_fields,
+                )
+            except (IndexError, KeyError, TypeError, ValueError) as exc:
+                QMessageBox.warning(self, "Planar region growing", str(exc))
+                return
+
         normals: np.ndarray | None = None
         if normal_mode == "use_provided":
-            normal_field_name = dlg.normal_field_name()
             if normal_field_name is None:
                 QMessageBox.warning(self, "Planar region growing", "No normals field selected.")
                 return
-            normal_fields = layer.data.get_fields(names=normal_field_name, field_type=FieldType.NORMAL)
+            normal_fields = segmentation_data.get_fields(
+                names=normal_field_name,
+                field_type=FieldType.NORMAL,
+            )
             if not normal_fields:
                 QMessageBox.warning(self, "Planar region growing", "Selected normals field was not found.")
                 return
@@ -729,8 +822,10 @@ class MainWindow(QMainWindow):
                 return
 
         progress = _native_region_growing.Progress()
-        base_name = dlg.output_field_base() or "planar_regions"
-        output_field_name = self._unique_field_name(layer.data.field_names, base_name)
+        region_params = dlg.params()
+        chunking_params = dlg.chunking()
+        merge_params = dlg.merge()
+        result_labels: dict[str, np.ndarray | None] = {"value": None}
 
         class _RegionGrowingWorker(QThread):
             errored = pyqtSignal(str)
@@ -739,22 +834,18 @@ class MainWindow(QMainWindow):
             def run(self) -> None:
                 try:
                     labels, stats = segment_planar_regions(
-                        layer.data,
+                        segmentation_data,
                         normals=normals,
                         normal_mode=normal_mode,
-                        params=dlg.params(),
-                        chunking=dlg.chunking(),
-                        merge=dlg.merge(),
+                        params=region_params,
+                        chunking=chunking_params,
+                        merge=merge_params,
                         progress=progress,
                     )
                     labels = np.asarray(labels, dtype=np.int32).reshape(-1)
-                    if labels.shape[0] != layer.data.points.shape[0]:
+                    if labels.shape[0] != segmentation_data.points.shape[0]:
                         raise RuntimeError("Native output label length does not match point count.")
-                    layer.data.add_field(
-                        name=output_field_name,
-                        data=labels[:, None],
-                        field_type=FieldType.INSTANCE,
-                    )
+                    result_labels["value"] = labels
                     self.completed.emit()
                 except Exception as exc:  # pragma: no cover - GUI path
                     self.errored.emit(str(exc))
@@ -920,6 +1011,39 @@ class MainWindow(QMainWindow):
         if progress.cancelled():
             return
 
+        labels = result_labels["value"]
+        if labels is None:
+            QMessageBox.critical(
+                self,
+                "Planar region growing failed",
+                "Region growing completed without producing labels.",
+            )
+            return
+
+        try:
+            if target_instance_field is not None:
+                target_instance_field.merge_with_segmentation(labels, inverse_mapping)
+                output_action = "Updated"
+            else:
+                if inverse_mapping is None:
+                    output_labels = labels
+                else:
+                    output_labels = np.full(layer.data.points.shape[0], -1, dtype=np.int32)
+                    output_labels[inverse_mapping] = labels
+                layer.data.add_field(
+                    name=output_field_name,
+                    data=output_labels[:, None],
+                    field_type=FieldType.INSTANCE,
+                )
+                output_action = "Added"
+        except Exception as exc:  # pragma: no cover - defensive GUI path
+            QMessageBox.critical(
+                self,
+                "Planar region growing failed",
+                f"Could not write segmentation output: {exc}",
+            )
+            return
+
         scene_after = self.scene_manager._scene
         target_layer = layer
         if scene_after is not None:
@@ -933,7 +1057,7 @@ class MainWindow(QMainWindow):
         self.scene_manager.broadcastActivatedLayer.emit(target_layer)
         self.scene_manager.broadcastActivatedPcdField.emit(target_layer)
         print(
-            f"[region_growing] Added field '{output_field_name}' "
+            f"[region_growing] {output_action} field '{output_field_name}' "
             f"(type=INSTANCE, points={target_layer.data.points.shape[0]}) on layer '{target_layer.browser_name}'"
         )
         dataset = self.dataset_manager._dataset
@@ -1024,7 +1148,10 @@ class MainWindow(QMainWindow):
         progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
         progress_dialog.setMinimumDuration(0)
 
+        cancel_requested = {"value": False}
+
         def _on_cancel() -> None:
+            cancel_requested["value"] = True
             progress.request_cancel()
             progress_dialog.setLabelText("Cancelling...")
 
@@ -1059,6 +1186,10 @@ class MainWindow(QMainWindow):
 
         def _on_finished() -> None:
             timer.stop()
+            try:
+                progress_dialog.canceled.disconnect(_on_cancel)
+            except TypeError:
+                pass
             progress_dialog.close()
             loop.quit()
 
@@ -1081,7 +1212,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Plane RANSAC failed", error_msg["value"])
             return
 
-        if progress.cancelled():
+        if cancel_requested["value"]:
             return
 
         scene_after = self.scene_manager._scene
@@ -1165,7 +1296,10 @@ class MainWindow(QMainWindow):
         progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
         progress_dialog.setMinimumDuration(0)
 
+        cancel_requested = {"value": False}
+
         def _on_cancel() -> None:
+            cancel_requested["value"] = True
             progress.request_cancel()
             progress_dialog.setLabelText("Cancelling...")
 
@@ -1198,6 +1332,10 @@ class MainWindow(QMainWindow):
 
         def _on_finished() -> None:
             timer.stop()
+            try:
+                progress_dialog.canceled.disconnect(_on_cancel)
+            except TypeError:
+                pass
             progress_dialog.close()
             loop.quit()
 
@@ -1219,7 +1357,7 @@ class MainWindow(QMainWindow):
         if error_msg["value"] is not None:
             QMessageBox.critical(self, "Superpoint segmentation failed", error_msg["value"])
             return
-        if progress.cancelled():
+        if cancel_requested["value"]:
             return
 
         scene_after = self.scene_manager._scene
@@ -1408,6 +1546,452 @@ class MainWindow(QMainWindow):
         print(
             f"[region_merge] Added field '{output_field_name}' from source '{source_field_name}' "
             f"(type=INSTANCE, points={target_layer.data.points.shape[0]}) on layer '{target_layer.browser_name}'"
+        )
+        dataset = self.dataset_manager._dataset
+        if dataset is not None and scene_after is not None:
+            for ref in dataset.doc_refs:
+                if ref.name == scene_after.doc.name:
+                    ref.modState = RefModState.MODIFIED
+                    break
+        self.scene_manager.populate_tree()
+        self.viewer.rerender()
+
+    def _on_connected_components(self) -> None:
+        scene = self.scene_manager._scene
+        if scene is None:
+            return
+        active_layer = self._get_active_pointcloud_layer()
+        dialog = ConnectedComponentsDialog(
+            scene,
+            active_layer,
+            settings=self.preferences.get_connected_components_settings(),
+            parent=self,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        layer = dialog.selected_layer()
+        if layer is None:
+            return
+        self.preferences.set_connected_components_settings(dialog.settings())
+        self.preferences.save()
+        epsilon = dialog.epsilon()
+
+        inverse_mapping: np.ndarray | None = None
+        processing_data = layer.data
+        if dialog.on_selection_only():
+            selection = layer.active_selection
+            if selection is None or selection.size == 0:
+                QMessageBox.warning(
+                    self,
+                    "Connected components",
+                    "The selected point cloud no longer has an active selection.",
+                )
+                return
+            try:
+                processing_data, inverse_mapping = layer.data.extract_subcloud(selection.copy())
+            except (IndexError, KeyError, TypeError, ValueError) as exc:
+                QMessageBox.warning(self, "Connected components", str(exc))
+                return
+
+        output_mode = dialog.output_mode()
+        target_field: InstanceSegmentation | None = None
+        if output_mode == "write_existing":
+            field_name = dialog.existing_field_name()
+            if field_name is None:
+                return
+            fields = layer.data.get_fields(names=field_name, field_type=FieldType.INSTANCE)
+            if not fields or not isinstance(fields[0], InstanceSegmentation):
+                QMessageBox.warning(
+                    self,
+                    "Connected components",
+                    "The selected output instance field was not found.",
+                )
+                return
+            target_field = fields[0]
+            output_field_name = target_field.name
+        else:
+            output_field_name = self._unique_field_name(
+                layer.data.field_names,
+                dialog.output_field_base() or "connected_components",
+            )
+
+        result: dict[str, object | None] = {"labels": None, "stats": None}
+
+        class _ConnectedComponentsWorker(QThread):
+            errored = pyqtSignal(str)
+            completed = pyqtSignal()
+
+            def run(self) -> None:
+                try:
+                    labels, stats = segment_connected_components(
+                        processing_data,
+                        epsilon=epsilon,
+                    )
+                    result["labels"] = labels
+                    result["stats"] = stats
+                    self.completed.emit()
+                except Exception as exc:  # pragma: no cover - GUI path
+                    self.errored.emit(str(exc))
+
+        progress_dialog = QProgressDialog(
+            "Computing connected components...",
+            "Cancel",
+            0,
+            0,
+            self,
+        )
+        progress_dialog.setWindowTitle("Connected components instance segmentation")
+        progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        progress_dialog.setMinimumDuration(0)
+        cancelled = {"value": False}
+
+        def _on_cancel() -> None:
+            cancelled["value"] = True
+            progress_dialog.setLabelText("Finishing cancelled computation...")
+
+        progress_dialog.canceled.connect(_on_cancel)
+        loop = QEventLoop(self)
+        error_message: dict[str, str | None] = {"value": None}
+
+        def _finish() -> None:
+            try:
+                progress_dialog.canceled.disconnect(_on_cancel)
+            except TypeError:
+                pass
+            progress_dialog.close()
+            loop.quit()
+
+        def _error(message: str) -> None:
+            error_message["value"] = message
+            _finish()
+
+        worker = _ConnectedComponentsWorker()
+        worker.errored.connect(_error)
+        worker.completed.connect(_finish)
+        progress_dialog.show()
+        QApplication.processEvents()
+        worker.start()
+        loop.exec()
+        worker.wait()
+
+        if error_message["value"] is not None:
+            QMessageBox.critical(
+                self,
+                "Connected components failed",
+                error_message["value"],
+            )
+            return
+        if cancelled["value"]:
+            return
+        labels = result["labels"]
+        if not isinstance(labels, np.ndarray):
+            QMessageBox.critical(
+                self,
+                "Connected components failed",
+                "The computation completed without producing labels.",
+            )
+            return
+
+        try:
+            if target_field is not None:
+                target_field.merge_with_segmentation(labels, inverse_mapping)
+                output_action = "Updated"
+            else:
+                if inverse_mapping is None:
+                    output_labels = labels
+                else:
+                    output_labels = np.full(layer.data.points.shape[0], -1, dtype=np.int32)
+                    output_labels[inverse_mapping] = labels
+                layer.data.add_field(
+                    name=output_field_name,
+                    data=output_labels[:, None],
+                    field_type=FieldType.INSTANCE,
+                )
+                output_action = "Added"
+        except Exception as exc:
+            QMessageBox.critical(self, "Connected components failed", str(exc))
+            return
+
+        layer_id = layer.id
+        scene_after = self.scene_manager._scene
+        target_layer = layer
+        if scene_after is not None:
+            current_layer = scene_after.layers.get(layer_id)
+            if isinstance(current_layer, PointCloudLayer):
+                target_layer = current_layer
+                scene_after.active_layer_id = target_layer.id
+        target_layer.set_active_field_name(output_field_name)
+        target_layer.update()
+        self.scene_manager.broadcastActivatedLayer.emit(target_layer)
+        self.scene_manager.broadcastActivatedPcdField.emit(target_layer)
+        stats = result["stats"] if isinstance(result["stats"], dict) else {}
+        component_count = int(stats.get("num_components", 0))
+        print(
+            f"[connected_components] {output_action} field '{output_field_name}' | "
+            f"components={component_count} points={labels.size} epsilon={epsilon:g}"
+        )
+        self.statusBar().showMessage(
+            f"Created {component_count:,} connected component instance(s).",
+            8000,
+        )
+        dataset = self.dataset_manager._dataset
+        if dataset is not None and scene_after is not None:
+            for ref in dataset.doc_refs:
+                if ref.name == scene_after.doc.name:
+                    ref.modState = RefModState.MODIFIED
+                    break
+        self.scene_manager.populate_tree()
+        self.viewer.rerender()
+
+    def _on_corner_cleanup(self) -> None:
+        scene = self.scene_manager._scene
+        if scene is None:
+            return
+        active_layer = self._get_active_pointcloud_layer()
+        dlg = CornerCleanupDialog(
+            scene,
+            active_layer,
+            settings=self.preferences.get_corner_cleanup_settings(),
+            parent=self,
+        )
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        layer = dlg.selected_layer()
+        source_field_name = dlg.source_field_name()
+        if layer is None or source_field_name is None:
+            return
+        source_fields = layer.data.get_fields(
+            names=source_field_name,
+            field_type=FieldType.INSTANCE,
+        )
+        if not source_fields or not isinstance(source_fields[0], InstanceSegmentation):
+            QMessageBox.warning(
+                self,
+                "Clean up corner regions",
+                "The selected source instance field was not found.",
+            )
+            return
+        source_field = source_fields[0]
+        source_labels = np.asarray(source_field.data, dtype=np.int32).reshape(-1).copy()
+        if source_labels.shape[0] != layer.data.points.shape[0]:
+            QMessageBox.warning(
+                self,
+                "Clean up corner regions",
+                "Source field length does not match the point count.",
+            )
+            return
+
+        self.preferences.set_corner_cleanup_settings(dlg.settings())
+        self.preferences.save()
+        output_mode = dlg.output_mode()
+        output_field_name = (
+            source_field_name
+            if output_mode == "update_source"
+            else self._unique_field_name(
+                layer.data.field_names,
+                dlg.output_field_base() or "corner_cleaned_regions",
+            )
+        )
+        params = dlg.params()
+        processing_data = layer.data
+        processing_labels = source_labels
+        inverse_mapping: np.ndarray | None = None
+        if dlg.on_selection_only():
+            selection = layer.active_selection
+            if selection is None or selection.size == 0:
+                QMessageBox.warning(
+                    self,
+                    "Clean up corner regions",
+                    "The selected point cloud no longer has an active selection.",
+                )
+                return
+            try:
+                processing_data, inverse_mapping = layer.data.extract_subcloud(
+                    selection.copy(),
+                    field_names=[source_field_name],
+                )
+            except (IndexError, KeyError, TypeError, ValueError) as exc:
+                QMessageBox.warning(self, "Clean up corner regions", str(exc))
+                return
+            processing_labels = np.asarray(
+                processing_data.get_fields(names=source_field_name)[0].data,
+                dtype=np.int32,
+            ).reshape(-1)
+
+        progress = _native_corner_cleanup.Progress()
+        result: dict[str, object | None] = {"labels": None, "stats": None}
+
+        class _CornerCleanupWorker(QThread):
+            errored = pyqtSignal(str)
+            completed = pyqtSignal()
+
+            def run(self) -> None:
+                try:
+                    labels, stats = cleanup_corner_regions(
+                        processing_data,
+                        processing_labels,
+                        params=params,
+                        progress=progress,
+                    )
+                    labels = np.asarray(labels, dtype=np.int32).reshape(-1)
+                    if labels.shape[0] != processing_data.points.shape[0]:
+                        raise RuntimeError("Native output label length does not match point count.")
+                    result["labels"] = labels
+                    result["stats"] = stats
+                    self.completed.emit()
+                except Exception as exc:  # pragma: no cover - GUI path
+                    self.errored.emit(str(exc))
+
+        progress_dialog = QProgressDialog(
+            "Preparing corner cleanup...",
+            "Cancel",
+            0,
+            0,
+            self,
+        )
+        progress_dialog.setWindowTitle("Clean up corner regions")
+        progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        progress_dialog.setMinimumDuration(0)
+
+        cancel_requested = {"value": False}
+
+        def _on_cancel() -> None:
+            cancel_requested["value"] = True
+            progress.request_cancel()
+            progress_dialog.setLabelText("Cancelling...")
+
+        progress_dialog.canceled.connect(_on_cancel)
+        timer = QTimer(self)
+        timer.setInterval(100)
+        started = time.perf_counter()
+
+        def _on_tick() -> None:
+            try:
+                total = progress.total()
+                done = progress.done()
+                if total > 0:
+                    progress_dialog.setMaximum(int(total))
+                    progress_dialog.setValue(min(int(done), int(total)))
+                else:
+                    progress_dialog.setMaximum(0)
+                progress_dialog.setLabelText(
+                    f"{progress.stage()} | {time.perf_counter() - started:.1f}s"
+                )
+            except Exception as exc:  # pragma: no cover - GUI path
+                print(f"[corner_cleanup/ui] progress polling failed: {exc}")
+
+        timer.timeout.connect(_on_tick)
+        loop = QEventLoop(self)
+        error_message: dict[str, str | None] = {"value": None}
+
+        def _on_finished() -> None:
+            timer.stop()
+            try:
+                progress_dialog.canceled.disconnect(_on_cancel)
+            except TypeError:
+                pass
+            progress_dialog.close()
+            loop.quit()
+
+        def _on_error(message: str) -> None:
+            error_message["value"] = message
+            _on_finished()
+
+        worker = _CornerCleanupWorker()
+        worker.errored.connect(_on_error)
+        worker.completed.connect(_on_finished)
+        worker.finished.connect(lambda: None)
+        progress_dialog.show()
+        QApplication.processEvents()
+        worker.start()
+        timer.start()
+        loop.exec()
+        worker.wait()
+
+        if error_message["value"] is not None:
+            QMessageBox.critical(
+                self,
+                "Corner cleanup failed",
+                error_message["value"],
+            )
+            return
+        if cancel_requested["value"]:
+            return
+        cleaned_labels = result["labels"]
+        if not isinstance(cleaned_labels, np.ndarray):
+            QMessageBox.critical(
+                self,
+                "Corner cleanup failed",
+                "Corner cleanup completed without producing labels.",
+            )
+            return
+        stats = result["stats"] if isinstance(result["stats"], dict) else {}
+        cleaned_region_count = int(stats.get("num_corner_regions_cleaned", 0))
+        cleaned_point_count = int(stats.get("num_corner_points_reassigned", 0))
+        if cleaned_region_count == 0:
+            candidate_count = int(stats.get("num_corner_candidates", 0))
+            destination_count = int(stats.get("num_destination_regions", 0))
+            rejected_slenderness = int(stats.get("num_rejected_slenderness", 0))
+            rejected_absolute = int(stats.get("num_rejected_absolute_width", 0))
+            rejected_relative = int(stats.get("num_rejected_relative_width", 0))
+            missing_neighbors = int(stats.get("num_rejected_planar_neighbors", 0))
+            insufficient_support = int(stats.get("num_rejected_dual_support", 0))
+            radius = float(stats.get("neighbor_radius", 0.0))
+            message = (
+                "No corner regions met all cleanup criteria.\n\n"
+                f"Corner candidates: {candidate_count}\n"
+                f"Destination regions: {destination_count}\n"
+                f"Rejected by slenderness: {rejected_slenderness}\n"
+                f"Rejected by absolute width: {rejected_absolute}\n"
+                f"Rejected by relative width: {rejected_relative}\n"
+                f"Rejected without two jointly bordering planes: {missing_neighbors}\n"
+                f"Rejected by dual-neighbor support: {insufficient_support}\n"
+                f"Effective neighbor radius: {radius:g}"
+            )
+            self.statusBar().showMessage("Corner cleanup made no changes.", 8000)
+            QMessageBox.information(self, "Clean up corner regions", message)
+            return
+
+        output_labels = source_labels.copy()
+        if inverse_mapping is None:
+            output_labels = cleaned_labels
+        else:
+            output_labels[inverse_mapping] = cleaned_labels
+        if output_mode == "update_source":
+            source_field.data = output_labels.reshape(-1, 1)
+            output_action = "Updated"
+        else:
+            layer.data.add_field(
+                name=output_field_name,
+                data=output_labels[:, None],
+                field_type=FieldType.INSTANCE,
+            )
+            output_action = "Added"
+
+        layer_id = layer.id
+        scene_after = self.scene_manager._scene
+        target_layer = layer
+        if scene_after is not None:
+            target_layer_object = scene_after.layers.get(layer_id)
+            if isinstance(target_layer_object, PointCloudLayer):
+                target_layer = target_layer_object
+                scene_after.active_layer_id = target_layer.id
+        target_layer.set_active_field_name(output_field_name)
+        target_layer.update()
+        self.scene_manager.broadcastActivatedLayer.emit(target_layer)
+        self.scene_manager.broadcastActivatedPcdField.emit(target_layer)
+        print(
+            f"[corner_cleanup] {output_action} field '{output_field_name}' from "
+            f"'{source_field_name}' | corners={cleaned_region_count} "
+            f"points={cleaned_point_count} candidates={stats.get('num_corner_candidates', 0)} "
+            f"destination_regions={stats.get('num_destination_regions', 0)}"
+        )
+        self.statusBar().showMessage(
+            f"Cleaned {cleaned_region_count} corner region(s), "
+            f"reassigning {cleaned_point_count:,} point(s).",
+            8000,
         )
         dataset = self.dataset_manager._dataset
         if dataset is not None and scene_after is not None:

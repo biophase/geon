@@ -78,6 +78,9 @@ std::vector<size_t> getChunkNeighborsFull (size_t query_hash, size_t X, size_t Y
 
 
 std::vector<std::unordered_set<size_t>> unionFindCCA (PointCloud& pcd, std::unordered_set<size_t> task_inds, float epsilon){
+    if (task_inds.empty()){
+        return {};
+    }
     
     float edge_length = epsilon *1.1547; // given a cube edge length inscribed in a sphere with radius epsilon
     auto subdiv = subdividePointCloudFixedChunkSize(pcd, task_inds, edge_length, edge_length, edge_length);
