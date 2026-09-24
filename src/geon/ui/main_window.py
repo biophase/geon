@@ -219,6 +219,7 @@ class MainWindow(QMainWindow):
             .connect(self._on_layer_activated)
         self.scene_manager.broadcastActivatedPcdField\
             .connect(self._on_layer_activated)
+        self.scene_manager.broadcastLayerDisplayChanged.connect(self._on_layer_display_changed)
 
             
         self.tool_controller.layer_internal_sel_changed\
@@ -252,6 +253,7 @@ class MainWindow(QMainWindow):
         
         
     def _on_layer_activated(self, layer) -> None:
+        self._ribbon_layer = layer
         hooks = LAYER_UI.resolve(layer)
         if hooks.ribbon_widget is None:
             self.ribbon.clear_group("layer")
@@ -261,6 +263,10 @@ class MainWindow(QMainWindow):
             self.ribbon.set_group(title, widget, "layer")
         self._on_layer_internal_sel_changed(layer)
         
+    def _on_layer_display_changed(self, layer) -> None:
+        if getattr(self, "_ribbon_layer", None) is layer:
+            self._on_layer_activated(layer)
+
     def _on_layer_internal_sel_changed(self, layer) -> None:
         hooks = LAYER_UI.resolve(layer)
         if hooks.ribbon_sel_widget is None:
@@ -614,6 +620,7 @@ class MainWindow(QMainWindow):
         if dlg.point_cloud is None:
             return
         layer.update()
+        self._on_layer_display_changed(layer)
         self.scene_manager.populate_tree()
         self.viewer.rerender()
 

@@ -18,9 +18,10 @@ from ..semantic_schema_dialog import SemanticSchemaEditDialog
 from PyQt6.QtWidgets import (QWidget, QMenu, QHBoxLayout, QVBoxLayout, QLabel,
                              QPushButton, QToolButton, QGridLayout, QDialog,
                              QMessageBox, QSpacerItem, QSizePolicy, QFileDialog,
-                             QSpinBox)
+                             QSpinBox, QSlider)
 from PyQt6.QtGui import QIcon
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
+from ..common import ElidedLabel
 from geon.config.theme import UIStyle
 from geon.util.resources import resource_path
 
@@ -121,6 +122,82 @@ def _set_vector_component(
         spinbox.blockSignals(False)
     ctx.viewer.rerender()
         
+def _background_column(layer: PointCloudLayer, parent: QWidget,
+                       controller: ToolController) -> QWidget:
+    column = QWidget(parent)
+    column.setObjectName("pointcloudBackground")
+    column.setFixedWidth(140)
+    layout = QVBoxLayout(column)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setSpacing(2)
+    row = QHBoxLayout()
+    name = ElidedLabel(layer.background_field_name or "", column)
+    name.setToolTip(layer.background_field_name or "")
+    row.addWidget(name, 1)
+    dropdown = QToolButton(column)
+    dropdown.setArrowType(Qt.ArrowType.DownArrow)
+    dropdown.setAccessibleName("Background field")
+    dropdown.setFixedSize(18, 18)
+    dropdown.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+    menu = QMenu(dropdown)
+    dropdown.setMenu(menu)
+    row.addWidget(dropdown)
+    layout.addLayout(row)
+
+    timer = QTimer(column)
+    timer.setSingleShot(True)
+    timer.setInterval(0)
+
+    def render():
+        if controller.ctx is not None:
+            controller.ctx.viewer.rerender()
+
+    timer.timeout.connect(render)
+
+    def choose(field_name):
+        timer.stop()
+        layer.set_background_field_name(field_name)
+        name.setText(field_name or "")
+        name.setToolTip(field_name or "")
+        column.setVisible(field_name is not None)
+        render()
+
+    def populate():
+        menu.clear()
+        for field_name in [None, *layer.data.field_names]:
+            action = menu.addAction("None" if field_name is None else field_name)
+            action.setCheckable(True)
+            action.setChecked(field_name == layer.background_field_name)
+            action.triggered.connect(lambda checked=False, n=field_name: choose(n))
+
+    menu.aboutToShow.connect(populate)
+    slider = QSlider(Qt.Orientation.Horizontal, column)
+    slider.setObjectName("foregroundMix")
+    slider.setRange(0, 100)
+    slider.setValue(round(layer.foreground_mix * 100))
+
+    def describe(value):
+        text = f"Background ← → Active field ({value}% active field)"
+        slider.setToolTip(text)
+        slider.setAccessibleName(text)
+
+    def changed(value):
+        layer.set_foreground_mix(value / 100)
+        describe(value)
+        if not timer.isActive():
+            timer.start()
+
+    def released():
+        timer.stop()
+        render()
+
+    describe(slider.value())
+    slider.valueChanged.connect(changed)
+    slider.sliderReleased.connect(released)
+    layout.addWidget(slider)
+    return column
+
+
 def _ribbon(
     layer:PointCloudLayer, 
     parent: QWidget, 
@@ -352,7 +429,8 @@ def _ribbon(
         outer.addSpacing(12)
         outer.addLayout(col_2)
     
-    layer.active_field_name
+    if layer.background_field_name is not None:
+        outer.addWidget(_background_column(layer, w, controller))
     
     return w
 

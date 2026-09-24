@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass, field
 from typing import ClassVar, Optional
 import weakref
@@ -7,7 +8,16 @@ import weakref
 import numpy as np
 
 from PyQt6.QtCore import Qt, QSize
-from PyQt6.QtGui import QColor, QCursor, QIcon, QPixmap, QStandardItem, QStandardItemModel
+from PyQt6.QtGui import (
+    QColor,
+    QCursor,
+    QIcon,
+    QKeySequence,
+    QPixmap,
+    QShortcut,
+    QStandardItem,
+    QStandardItemModel,
+)
 from PyQt6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -21,7 +31,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from geon.data.cellcomplex import EdgeCell, PointCloudRef
+from geon.data.cellcomplex import EdgeCell, PointCloudRef, VertexCell
 from geon.data.pointcloud import FieldType, InstanceSegmentation, SemanticClass, SemanticSchema
 from geon.rendering.cellcomplex import CellComplexLayer
 from geon.rendering.pointcloud import PointCloudLayer
@@ -266,6 +276,56 @@ class TranslateCellComplexVerticesCmd(Command):
 
 
 @dataclass
+class CloneCellComplexVerticesCmd(Command):
+    layer_ref: weakref.ReferenceType[CellComplexLayer]
+    ctx_ref: weakref.ReferenceType[ToolContext]
+    source_vertex_ids: list[str]
+    positions_new: dict[str, tuple[float, float, float]]
+    _cloned_vertices: list[VertexCell] = field(default_factory=list, init=False)
+    _selection_old: set[str] = field(default_factory=set, init=False)
+
+    def execute(self) -> None:
+        layer = self.layer_ref()
+        ctx = self.ctx_ref()
+        if layer is None or ctx is None:
+            return
+        if not self._cloned_vertices:
+            for vertex_id in self.source_vertex_ids:
+                source = layer.data.get_vertex_by_id(vertex_id)
+                position = self.positions_new.get(vertex_id)
+                if source is None or position is None:
+                    continue
+                self._cloned_vertices.append(
+                    VertexCell(
+                        position=position,
+                        semantic_attributes=dict(source.semantic_attributes),
+                        attributes=copy.deepcopy(source.attributes),
+                        geometry_refs=copy.deepcopy(source.geometry_refs),
+                    )
+                )
+        if not self._cloned_vertices:
+            return
+        self._selection_old = set(layer.active_selection or ())
+        existing_ids = {vertex.id for vertex in layer.data.vertices}
+        for vertex in self._cloned_vertices:
+            if vertex.id not in existing_ids:
+                layer.data.vertices.append(vertex)
+                existing_ids.add(vertex.id)
+        layer.active_selection = {vertex.id for vertex in self._cloned_vertices}
+        _refresh_context(ctx, layer)
+
+    def undo(self) -> None:
+        layer = self.layer_ref()
+        ctx = self.ctx_ref()
+        if layer is None or ctx is None:
+            return
+        clone_ids = {vertex.id for vertex in self._cloned_vertices}
+        layer.data.remove_vertices(clone_ids)
+        layer.active_selection = set(self._selection_old)
+        _refresh_context(ctx, layer)
+
+
+@dataclass
 class CellPickVertexTool(ModeTool):
     label: ClassVar = "cell_pick_vertex"
     tooltip: ClassVar = "Pick cell vertices"
@@ -360,7 +420,7 @@ class CellComplexAddEdgeTool(ModeTool):
 @dataclass
 class CellComplexMoveNodesTool(ModeTool):
     label: ClassVar = "cell_complex_move_nodes"
-    tooltip: ClassVar = "Move CellComplex nodes"
+    tooltip: ClassVar = "Move Cell Complex nodes"
     icon_path: ClassVar = resource_path("inspect_tool.png")
     shortcut: ClassVar = None
     ui_zones: ClassVar = set()
@@ -373,6 +433,7 @@ class CellComplexMoveNodesTool(ModeTool):
     _drag_origin: tuple[float, float, float] | None = field(default=None, init=False)
     _drag_start_point: np.ndarray | None = field(default=None, init=False)
     _positions_old: dict[str, tuple[float, float, float]] = field(default_factory=dict, init=False)
+    _clone_drag: bool = field(default=False, init=False)
 
     def _layer(self) -> CellComplexLayer | None:
         layer = self.ctx.scene.active_layer
@@ -477,14 +538,23 @@ class CellComplexMoveNodesTool(ModeTool):
         layer = self._layer()
         if layer is not None:
             layer.set_node_gizmo_enabled(True)
-        self.ctx.viewer.set_camera_enabled(False)
+            self.ctx.controller.layer_internal_sel_changed.emit(layer)
+        # self.ctx.viewer.set_camera_enabled(False)
         self.ctx.viewer.rerender()
 
     def deactivate(self) -> None:
         layer = self._layer()
         if layer is not None:
+            if self._positions_old:
+                layer.data.set_vertex_positions(self._positions_old)
             layer.set_node_gizmo_enabled(False)
             layer.set_gizmo_hover_handle(None)
+            self.ctx.controller.layer_internal_sel_changed.emit(layer)
+        self._drag_handle = None
+        self._drag_origin = None
+        self._drag_start_point = None
+        self._positions_old = {}
+        self._clone_drag = False
         self.ctx.viewer.set_camera_enabled(True)
         self.ctx.viewer.rerender()
         return super().deactivate()
@@ -503,6 +573,8 @@ class CellComplexMoveNodesTool(ModeTool):
         self._drag_origin = layer.node_gizmo_origin
         self._drag_start_point = start_point
         self._positions_old = positions
+        self._clone_drag = bool(event.ctrl)
+        self.ctx.viewer.set_camera_enabled(False)
 
     def mouse_move_event_hook(self, event: Event) -> None:
         layer = self._layer()
@@ -515,6 +587,7 @@ class CellComplexMoveNodesTool(ModeTool):
             return
         if self._drag_origin is None or self._drag_start_point is None:
             return
+        self._clone_drag = self._clone_drag or bool(event.ctrl)
         current = self._constraint_point(event, self._drag_handle, self._drag_origin)
         if current is None:
             return
@@ -538,26 +611,42 @@ class CellComplexMoveNodesTool(ModeTool):
         if self._drag_handle is None:
             layer.handle_viewport_left_click(self.ctx, event, self.ctx.viewer.pick(prefer_cells=True))
             return
-        positions_new = self._selected_vertex_positions(layer)
-        positions_old = dict(self._positions_old)
-        layer.data.set_vertex_positions(positions_old)
-        layer.update()
-        self._drag_handle = None
-        self._drag_origin = None
-        self._drag_start_point = None
-        self._positions_old = {}
+        try:
+            self._clone_drag = self._clone_drag or bool(event.ctrl)
+            positions_new = self._selected_vertex_positions(layer)
+            positions_old = dict(self._positions_old)
+            layer.data.set_vertex_positions(positions_old)
+            layer.update()
+            clone_drag = self._clone_drag
+            self._drag_handle = None
+            self._drag_origin = None
+            self._drag_start_point = None
+            self._positions_old = {}
+            self._clone_drag = False
 
-        if positions_new == positions_old:
-            self.ctx.viewer.rerender()
-            return
-        cmd = TranslateCellComplexVerticesCmd(
-            title="Translate cell complex nodes",
-            layer_ref=weakref.ref(layer),
-            ctx_ref=weakref.ref(self.ctx),
-            positions_old=positions_old,
-            positions_new=positions_new,
-        )
-        self.command_manager.do(cmd)
+            if positions_new == positions_old:
+                self.ctx.viewer.rerender()
+                return
+            if clone_drag:
+                cmd = CloneCellComplexVerticesCmd(
+                    title="Clone cell complex nodes",
+                    layer_ref=weakref.ref(layer),
+                    ctx_ref=weakref.ref(self.ctx),
+                    source_vertex_ids=list(positions_old),
+                    positions_new=positions_new,
+                )
+                self.command_manager.do(cmd)
+                return
+            cmd = TranslateCellComplexVerticesCmd(
+                title="Translate cell complex nodes",
+                layer_ref=weakref.ref(layer),
+                ctx_ref=weakref.ref(self.ctx),
+                positions_old=positions_old,
+                positions_new=positions_new,
+            )
+            self.command_manager.do(cmd)
+        finally:
+            self.ctx.viewer.set_camera_enabled(True)
 
     def create_context_widget(self, parent: QWidget) -> QWidget:
         w = QWidget(parent)
@@ -572,7 +661,7 @@ class CellComplexAssociateTool(ModeTool):
     label: ClassVar = "cell_complex_associate"
     tooltip: ClassVar = "Associate CellComplex cell"
     icon_path: ClassVar = resource_path("inspect_tool.png")
-    shortcut: ClassVar = None
+    shortcut: ClassVar = "Shift+A"
     ui_zones: ClassVar = set()
     use_local_cm: ClassVar[bool] = False
     show_in_toolbar: ClassVar[bool] = False
@@ -712,6 +801,21 @@ class CellComplexAssociateTool(ModeTool):
         self.command_manager.do(cmd)
         self.ctx.controller.deactivate_tool()
 
+    def _toggle_pick_instance(self) -> None:
+        if self._pick_btn is None or not self._pick_btn.isEnabled():
+            return
+        self._set_picking(not self.point_picking_active)
+
+    def _install_context_shortcuts(self, widget: QWidget) -> None:
+        pick_shortcut = QShortcut(QKeySequence("P"), widget)
+        pick_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        pick_shortcut.activated.connect(self._toggle_pick_instance)
+
+        for sequence in ("Return", "Enter"):
+            accept_shortcut = QShortcut(QKeySequence(sequence), widget)
+            accept_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+            accept_shortcut.activated.connect(self._accept)
+
     def left_button_release_hook(self, event: Event) -> None:
         if self.point_picking_active:
             self._pick_instance(event)
@@ -767,6 +871,7 @@ class CellComplexAssociateTool(ModeTool):
         row2.addWidget(self._field_status)
         outer.addLayout(row2)
 
+        self._install_context_shortcuts(w)
         self._populate_fields()
         return w
 

@@ -5,7 +5,7 @@ from ..rendering.scene import Scene
 from ..rendering.pointcloud import PointCloudLayer
 from ..rendering.cellcomplex import CellComplexLayer
 from ..rendering.base import BaseLayer
-from ..data.pointcloud import PointCloudData, FieldType, SemanticSegmentation, SemanticClass
+from ..data.pointcloud import PointCloudData, FieldType, SemanticSegmentation, SemanticClass, FieldBase
 from ..tools.tool_context import ToolContext
 from ..tools.selection import SelectPointsCmd
 from ..util.resources import resource_path
@@ -63,6 +63,7 @@ class SceneManager(Dock):
     broadcastDeleteScene = pyqtSignal(Scene)
     broadcastActivatedLayer = pyqtSignal(BaseLayer)
     broadcastActivatedPcdField = pyqtSignal(PointCloudLayer)
+    broadcastLayerDisplayChanged = pyqtSignal(BaseLayer)
 
     def __init__(self, 
                  viewer: VTKViewer, 
@@ -373,8 +374,11 @@ class SceneManager(Dock):
     
     def _on_tree_context_menu(self, pos):
         items = self.tree.selectedItems()
-        if not items or self._scene is None:
+        clicked = self.tree.itemAt(pos)
+        if clicked is None or self._scene is None:
             return
+        if clicked not in items:
+            items = [clicked]
         
         objs = [item.data(0, Qt.ItemDataRole.UserRole) for item in items]
         ctx = self.tool_controller.ctx
@@ -388,6 +392,14 @@ class SceneManager(Dock):
         layers = [o for o in objs if isinstance(o, BaseLayer)]
         
         menu = QMenu(self.tree)
+        field = clicked.data(0, Qt.ItemDataRole.UserRole)
+        parent = clicked.parent()
+        owner = parent.data(0, Qt.ItemDataRole.UserRole) if parent is not None else None
+        if isinstance(field, FieldBase) and isinstance(owner, PointCloudLayer):
+            action = menu.addAction("Set as background field")
+            action.triggered.connect(
+                lambda checked=False, l=owner, n=field.name: self._set_background_field(l, n)
+            )
             
         if sem_cls_handles:
             act = None
@@ -433,6 +445,11 @@ class SceneManager(Dock):
         if menu.isEmpty():
             return
         menu.exec(viewport.mapToGlobal(pos))
+
+    def _set_background_field(self, layer: PointCloudLayer, name: str) -> None:
+        layer.set_background_field_name(name)
+        self.broadcastLayerDisplayChanged.emit(layer)
+        self.viewer.rerender()
 
     def _confirm_delete_layer(self, layer: BaseLayer) -> bool:
         msg = QMessageBox(self.tree)

@@ -16,6 +16,8 @@ from geon.config import theme
 from ..data.definitions import ColorMap
 from ..util.common import blend_colors
 from .base import BaseLayer
+from .pointcloud_blend import PointCloudBlend
+from .pointcloud_lod import PointCloudLOD
 from .util import build_vtk_color_transfer_function
 from .layer_registry import layer_for
 
@@ -106,6 +108,11 @@ class PointCloudLayer(BaseLayer[PointCloudData]):
         self._poly_coarse:  Optional[vtk.vtkPolyData] = None
 
         self._active_field_name:    Optional[str] = None
+        self.background_field_name: str | None = None
+        self.foreground_mix: float = 0.5
+        self._blend: PointCloudBlend | None = None
+        self._lod: PointCloudLOD | None = None
+        self._coarse_stride = 100
         self._visibility_mask:      Optional[NDArray[np.bool_]] = None
         self._active_selection:     Optional[NDArray[np.int32]] = None
         self._selection_overlay:    SelectionOverlay = SelectionOverlay(self)
@@ -114,7 +121,7 @@ class PointCloudLayer(BaseLayer[PointCloudData]):
         self._mapper_coarse:    Optional[vtk.vtkMapper] = None
         self._clipping_planes: list[vtk.vtkPlane] = []
 
-        self._main_actor: Optional[vtk.vtkLODActor] = None
+        self._main_actor: Optional[vtk.vtkActor] = None
 
         
         self.browser_name = browser_name
@@ -182,6 +189,20 @@ class PointCloudLayer(BaseLayer[PointCloudData]):
     def set_active_field_name(self, name:str):
         self.active_field_name = name
         self.update()
+
+    def set_background_field_name(self, name: str | None) -> None:
+        if name is not None and name not in self.data.field_names:
+            raise KeyError(f"Field '{name}' not found.")
+        self.background_field_name = name
+        self.update()
+
+    def set_foreground_mix(self, amount: float) -> None:
+        amount = float(amount)
+        if not math.isfinite(amount):
+            raise ValueError("Blend amount must be finite.")
+        self.foreground_mix = max(0.0, min(1.0, amount))
+        if self._blend is not None:
+            self._blend.set_mix(self.foreground_mix)
 
     def set_vector_field_active_index(self, field_name: str, index: int) -> int:
         fields = self.data.get_fields(names=field_name)
@@ -256,20 +277,27 @@ class PointCloudLayer(BaseLayer[PointCloudData]):
             return poly, mapper
         
         # build mappers
+        self._coarse_stride = max(1, int(1 / coarse_ratio))
         self._poly, self._mapper_fine = _build_points(points_np)
-        self._poly_coarse, self._mapper_coarse = _build_points(points_np[::int(1/coarse_ratio)])
+        self._poly_coarse, self._mapper_coarse = _build_points(points_np[::self._coarse_stride])
         self._apply_clipping_planes()
 
         
 
         # actor
-        actor = vtk.vtkLODActor()
+        # vtkLODActor renders through an internal actor that does not forward
+        # shader properties. Select mappers on a regular actor instead.
+        actor = vtk.vtkActor()
         actor.SetMapper(self._mapper_fine)
-        actor.AddLODMapper(self._mapper_coarse)
+        self._lod = PointCloudLOD(renderer, actor, self._mapper_fine, self._mapper_coarse)
         actor.GetProperty().SetPointSize(self.point_size)
         
         out_actors.append(actor)
         self._main_actor = actor
+        self._blend = PointCloudBlend(actor, [
+            (self._poly, self._mapper_fine, 1),
+            (self._poly_coarse, self._mapper_coarse, self._coarse_stride),
+        ])
 
         self._init_visibility_mask()
 
@@ -299,51 +327,24 @@ class PointCloudLayer(BaseLayer[PointCloudData]):
             return inds[self._visibility_mask]
         
     def data_index_from_picked_id(self, sub_id: int) -> int:
-        return self.visible_inds[sub_id]
+        coarse = self._main_actor is not None and self._main_actor.GetMapper() is self._mapper_coarse
+        stride = self._coarse_stride if coarse else 1
+        return self.visible_inds[::stride][sub_id]
 
-    def update(self) -> None:
-        ctf = None
-        scalar_range = None
-
-        if self._poly is None or self._mapper_fine is None:
-            return
-
-        # Active field can become invalid after edits (e.g., deleted fields).
-        # Keep it in sync so downstream access is safe.
-        if self._active_field_name is not None:
-            if self._active_field_name not in self.data.field_names:
-                self._active_field_name = None
-        if self._active_field_name is None and self.data.field_num:
-            self._active_field_name = self.data.field_names[0]
-
-        # get displayed field
-        if self._active_field_name is not None:
-            field = self.data.get_fields(self._active_field_name)[0]
-        elif self.data.field_num:
-            field = self.data.get_fields(field_index=0)[0]
-        else:
-            field = None
-        
+    def _field_display(self, field: FieldBase | None):
+        """Resolve a field using the same rules for foreground and background."""
+        ctf = scalar_range = None
         colors_np : Optional[NDArray[np.uint8]] = None # (N,3) colors
         scalars_np : Optional[NDArray[np.float32]] = None # (N,) scalar
 
         def construct_default_cmap(scalars_np: np.ndarray, cmap_type:Optional[str] = None):
 
-            smin, smax = scalars_np.min(), scalars_np.max()
+            smin, smax = (scalars_np.min(), scalars_np.max()) if scalars_np.size else (0.0, 1.0)
             c_pos = np.array([smin, smax])
             cmap = ColorMap.get_cmap(cmap_type,tuple(c_pos.tolist()))
             return cmap
         
-        # get colors/scalars for active field
-        # TODO: implement for coarse_mapper without code duplication
-        if field is None:
-            self._mapper_fine.ScalarVisibilityOff()
-            if self._main_actor is not None:
-                r,g,b, = theme.DEFAULT_OBJ_COLOR
-                self._main_actor.GetProperty().SetColor(r,g,b)
-
-        else:
-            
+        if field is not None:
             data_visible = field.data[self._visibility_mask] \
                 if self._visibility_mask is not None else field.data
             
@@ -382,47 +383,60 @@ class PointCloudLayer(BaseLayer[PointCloudData]):
                 if self._visibility_mask is not None:
                     colors_np = colors_np[self._visibility_mask] 
 
-        # geometry
-        if self._visibility_mask is not None:
-            visible_inds = np.nonzero(self._visibility_mask)[0]
-            visible_points_np = self.data.points[visible_inds]
+        return colors_np, scalars_np, ctf, scalar_range
 
+    @staticmethod
+    def _display_rgb(display, count):
+        colors, scalars, ctf, _ = display
+        if colors is not None:
+            return colors
+        if scalars is not None and ctf is not None:
+            if not scalars.size:
+                return np.empty((0, 3), dtype=np.uint8)
+            values = ns.numpy_to_vtk(np.ascontiguousarray(scalars), deep=False)
+            return ns.vtk_to_numpy(ctf.MapScalars(values, vtk.VTK_COLOR_MODE_MAP_SCALARS, 0))[:, :3].copy()
+        return np.tile((np.asarray(theme.DEFAULT_OBJ_COLOR) * 255).astype(np.uint8), (count, 1))
+
+    def update(self) -> None:
+        names = self.data.field_names
+        if self._active_field_name not in names:
+            self._active_field_name = names[0] if names else None
+        if self.background_field_name not in names:
+            self.background_field_name = None
+        if self._poly is None or self._mapper_fine is None:
+            return
+        assert self._blend is not None and self._main_actor is not None
+
+        points = self.data.points[self._visibility_mask] if self._visibility_mask is not None else self.data.points
+        display = self._field_display(self.active_field)
+        colors, scalars, ctf, scalar_range = display
+        if self.background_field_name is not None:
+            colors = self._display_rgb(display, len(points))
+            background = self._field_display(self.data.get_fields(self.background_field_name)[0])
+            self._blend.enable(self._display_rgb(background, len(points)), self.foreground_mix)
         else:
-            visible_points_np = self.data.points
+            self._blend.disable()
 
-        vtk_points = self._poly.GetPoints()
-        vtk_points.SetData(ns.numpy_to_vtk(visible_points_np, deep=False))
-        
-        # push scalars/colors to vtk
-        if colors_np is not None:
-            vtk_colors = ns.numpy_to_vtk(colors_np, deep=False)
-            vtk_colors.SetNumberOfComponents(3)
-            self._poly.GetPointData().SetScalars(vtk_colors)
-
-            self._mapper_fine.SetScalarModeToUsePointData()
-            self._mapper_fine.ScalarVisibilityOn()
-            self._mapper_fine.SetLookupTable(None)
-        elif scalars_np is not None:
-            vtk_scalars = ns.numpy_to_vtk(scalars_np, deep=False)
-            vtk_scalars.SetNumberOfComponents(1)
-            self._poly.GetPointData().SetScalars(vtk_scalars)
-            
-            self._mapper_fine.SetScalarModeToUsePointData()
-            self._mapper_fine.ScalarVisibilityOn()
-
-            if ctf is not None and scalar_range is not None:
-                # print(ctf)
-                # print(scalar_range)
-                # raise Exception
-                self._mapper_fine.SetLookupTable(ctf)
-                self._mapper_fine.SetUseLookupTableScalarRange(True)
-                self._mapper_fine.SetScalarRange(*scalar_range)
-
-        else:
-            self._mapper_fine.ScalarVisibilityOff()
-        self._poly.Modified()
-
-
+        for poly, mapper, stride in self._blend.pipelines:
+            poly.GetPoints().SetData(ns.numpy_to_vtk(np.ascontiguousarray(points[::stride]), deep=False))
+            mapper.SetScalarModeToUsePointData()
+            if colors is not None:
+                poly.GetPointData().SetScalars(ns.numpy_to_vtk(np.ascontiguousarray(colors[::stride]), deep=False))
+                mapper.SetColorModeToDirectScalars()
+                mapper.ScalarVisibilityOn()
+                mapper.SetLookupTable(None)
+            elif scalars is not None:
+                poly.GetPointData().SetScalars(ns.numpy_to_vtk(np.ascontiguousarray(scalars[::stride]), deep=False))
+                mapper.SetColorModeToMapScalars()
+                mapper.ScalarVisibilityOn()
+                mapper.SetLookupTable(ctf)
+                mapper.SetUseLookupTableScalarRange(True)
+                mapper.SetScalarRange(*scalar_range)
+            else:
+                poly.GetPointData().SetScalars(None)
+                mapper.ScalarVisibilityOff()
+                self._main_actor.GetProperty().SetColor(*theme.DEFAULT_OBJ_COLOR)
+            poly.Modified()
 
     def set_point_size(self, size: int) -> None:
         size = int(max(1, min(size, 50)))  # clamp
@@ -430,7 +444,6 @@ class PointCloudLayer(BaseLayer[PointCloudData]):
         if self._main_actor is not None:
             self._main_actor.GetProperty().SetPointSize(size)
         self._selection_overlay.set_point_size(size)
-        # TODO:  also apply to any LOD actors that might be created internally
         self.update()
 
     def increase_point_size(self, step: int = 1) -> int:
@@ -470,10 +483,15 @@ class PointCloudLayer(BaseLayer[PointCloudData]):
         if self._poly is None:
             raise RuntimeError(f"Build the {self.__class__.__name__} first.")
         
-        p = self._poly.GetPoint(int(sub_id))
+        poly = self._poly_coarse if self._main_actor.GetMapper() is self._mapper_coarse else self._poly
+        p = poly.GetPoint(int(sub_id))
         return float(p[0]), float(p[1]), float(p[2]) # FIXME: potential errors if the actor has a transform applied
         
     def detach(self) -> None:
+        if self._lod is not None:
+            self._lod.close()
+            self._lod = None
+        self._selection_overlay.selection_timer.stop()
         sel_actor = self._selection_overlay.selection_actor
         if self.renderer is not None and sel_actor is not None:
             self.renderer.RemoveActor(sel_actor)
