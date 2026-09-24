@@ -1,4 +1,7 @@
 main/*
+.venv/
+.venv-*/
+venv/
 _temp/*
 _*.txt
 _change-log.txt

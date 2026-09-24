@@ -93,6 +93,12 @@ class MenuBar(QMenuBar):
         export_menu = cast(QMenu, self.doc_menu.addMenu("Export active layer to ..."))
         act_export_ply = cast(QAction, export_menu.addAction(".PLY PointCloud"))
         act_export_ply.triggered.connect(self.exportPointCloudPlyRequested)
+        self.doc_menu.addSeparator()
+        self.point_cloud_menu = cast(QMenu, self.doc_menu.addMenu("Point cloud"))
+        self.bounding_box_menu = cast(QMenu, self.doc_menu.addMenu("Bounding box"))
+        self.cell_complex_menu = cast(QMenu, self.doc_menu.addMenu("Cell Complex"))
+        self.bounding_box_menu.setEnabled(False)
+        self.cell_complex_menu.setEnabled(False)
         self.addMenu(self.doc_menu)
 
         # about menu

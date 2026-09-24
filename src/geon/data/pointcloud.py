@@ -831,7 +831,7 @@ class InstanceSegmentation(FieldBase):
             data_arr = np.asarray(data, np.int32).reshape(-1, 1)
             super().__init__(name, data_arr, FieldType.INSTANCE)
         elif size is not None:
-            super().__init__(name, np.zeros((size, 1), dtype=np.int32), FieldType.INSTANCE)
+            super().__init__(name, np.full((size, 1), -1, dtype=np.int32), FieldType.INSTANCE)
         
         else:
             raise ValueError("Either size or data should be provided.")

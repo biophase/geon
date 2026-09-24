@@ -21,7 +21,7 @@ from ..tools.controller import ToolController
 
 from PyQt6.QtWidgets import (QStackedWidget, QLabel, QWidget, QVBoxLayout, QHBoxLayout, QTreeWidget,
                              QTreeWidgetItem, QCheckBox, QButtonGroup, QRadioButton, QHeaderView, QMenu,
-                             QDialog, QMessageBox)
+                             QDialog, QMessageBox, QToolButton)
 from PyQt6.QtCore import Qt, pyqtSignal, QSize
 from PyQt6.QtGui import QIcon, QAction
 
@@ -92,7 +92,22 @@ class SceneManager(Dock):
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._on_tree_context_menu)
 
-        self.tree_layout.addWidget(self.scene_label)
+        scene_header = QHBoxLayout()
+        scene_header.addWidget(self.scene_label, 1)
+        self.collapse_button = QToolButton(page)
+        self.collapse_button.setIcon(QIcon(resource_path("collapse_tree.png")))
+        self.collapse_button.setToolTip("Collapse all trees")
+        self.collapse_button.setAccessibleName("Collapse all trees")
+        self.collapse_button.setAutoRaise(True)
+        self.collapse_button.setStyleSheet(
+            "QToolButton { border: none; background: transparent; padding: 0px; }"
+        )
+        icon_height = self.collapse_button.fontMetrics().height()
+        self.collapse_button.setIconSize(QSize(icon_height, icon_height))
+        self.collapse_button.setFixedSize(icon_height, icon_height)
+        self.collapse_button.clicked.connect(self.tree.collapseAll)
+        scene_header.addWidget(self.collapse_button)
+        self.tree_layout.addLayout(scene_header)
         self.tree_layout.addWidget(self.tree)
         
         self.stack.addWidget(self.overlay_label)    # index 0
@@ -115,11 +130,26 @@ class SceneManager(Dock):
         self.tree.setTextElideMode(Qt.TextElideMode.ElideMiddle)
         self.preferences: Optional[Preferences] = None
 
+    @property
+    def preferences(self) -> Optional[Preferences]:
+        return self._preferences
+
+    @preferences.setter
+    def preferences(self, preferences: Optional[Preferences]) -> None:
+        self._preferences = preferences
+        if preferences is not None and self._scene is not None:
+            self._scene.set_unassigned_point_color(preferences.unassigned_point_color)
+
     def on_document_loaded(self, doc: Document):
         if self._scene is not None:
             self.broadcastDeleteScene.emit(self._scene) 
             self._scene.clear(delete_data=False)
-        self._scene = Scene(self.viewer._renderer)
+        self._scene = Scene(
+            self.viewer._renderer,
+            unassigned_point_color=(
+                self.preferences.unassigned_point_color if self.preferences else None
+            ),
+        )
         self._scene.set_document(doc)
         
         # reference scene into viewer

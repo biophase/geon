@@ -1,6 +1,6 @@
 from PyQt6.QtWidgets import(
     QWidget, QHBoxLayout, QGridLayout, QCheckBox, QLabel, QComboBox, QLineEdit,
-    QPushButton, QCompleter, QStyle, QListView
+    QPushButton, QCompleter, QStyle, QListView, QRadioButton, QButtonGroup
 )
 from PyQt6.QtCore import (
     Qt, QSignalBlocker, QObject, pyqtSignal, QSize
@@ -21,7 +21,7 @@ from .command_manager import Command
 from geon.util.resources import resource_path
 
 from dataclasses import dataclass, field
-from typing import ClassVar, Optional, cast
+from typing import ClassVar, Optional, Literal, cast
 import weakref
 
 import numpy as np
@@ -35,6 +35,7 @@ class _AnnotateSignals(QObject):
 class _AnnotateRibbonSessionState:
     add_semantic: bool = True
     add_instance: bool = False
+    instance_mode: Literal["new", "unassigned"] = "new"
     semantic_field_name: Optional[str] = None
     instance_field_name: Optional[str] = None
 
@@ -55,6 +56,8 @@ class AnnotatePointsCmd(Command):
     
     layer_ref: weakref.ReferenceType[PointCloudLayer]
     ctx_ref: weakref.ReferenceType[ToolContext]
+    instance_mode: Literal["new", "unassigned"] = "new"
+    inst_ind_new: Optional[int] = field(default=None, init=False)
     
     
     def execute(self) -> None:
@@ -62,25 +65,29 @@ class AnnotatePointsCmd(Command):
         ctx = self.ctx_ref()
         if layer is None or ctx is None:
             return
-        sel = layer.active_selection
-        if sel is None:
-            return
-        self.selection_old = sel.copy()
+        if not hasattr(self, "selection_old"):
+            sel = layer.active_selection
+            if sel is None or sel.size == 0:
+                return
+            self.selection_old = sel.copy()
         if self.sem_field_name:
             field = layer.data.get_fields(names=self.sem_field_name)[0]
             if field is not None:
-                self.sem_inds_old = field.data[self.selection_old].copy()
-                field.data[self.selection_old] = np.full(
-                    self.selection_old.shape[0], self.sem_ind_new, dtype = np.int32)
+                if self.sem_inds_old is None:
+                    self.sem_inds_old = field.data[self.selection_old].copy()
+                field.data[self.selection_old] = self.sem_ind_new
         if self.inst_field_name:
             field = layer.data.get_fields(names=self.inst_field_name)[0]
             if field is not None:
-                self.inst_inds_old = field.data[self.selection_old].copy()
+                if self.inst_inds_old is None:
+                    self.inst_inds_old = field.data[self.selection_old].copy()
                 field = cast(InstanceSegmentation, field)
-                inst_ind_new = field.get_next_instance_id()
-                target_shape = field.data[self.selection_old].shape
-                inst_inds_new = np.full(target_shape, inst_ind_new, dtype=np.int32)
-                field.data[self.selection_old] = inst_inds_new
+                if self.inst_ind_new is None:
+                    self.inst_ind_new = (
+                        -1 if self.instance_mode == "unassigned"
+                        else int(field.get_next_instance_id())
+                    )
+                field.data[self.selection_old] = self.inst_ind_new
         layer.update()
         ctx.viewer.rerender()
                 
@@ -133,6 +140,7 @@ class AnnotateTool(ModeTool):
     
     choice_add_semantic: bool = True
     choice_add_instance: bool = False
+    choice_instance_mode: Literal["new", "unassigned"] = "new"
     
     copy_from_active:bool = False
     accept_possible: bool = False
@@ -173,6 +181,7 @@ class AnnotateTool(ModeTool):
         state = _ANNOTATE_RIBBON_SESSION
         self.choice_add_semantic = state.add_semantic
         self.choice_add_instance = state.add_instance
+        self.choice_instance_mode = state.instance_mode
         self.choice_sem_field = cast(
             Optional[SemanticSegmentation],
             self._select_available_field(
@@ -370,7 +379,7 @@ class AnnotateTool(ModeTool):
         # grid pos 0,3: class input with completer
         sem_class_row = QHBoxLayout()
         sem_class_label = QLabel("class: ")
-        sem_class_row.addWidget(sem_class_label)
+        outer.addWidget(sem_class_label, 0, 3)
         sem_class_input = QLineEdit(w)
         if self.choice_sem_class is not None:
             sem_class_input.setPlaceholderText(self.choice_sem_class.name)
@@ -455,19 +464,35 @@ class AnnotateTool(ModeTool):
 
         sem_class_dropdown.clicked.connect(show_sem_class_popup)
         sem_class_row.addWidget(sem_class_dropdown)
-        outer.addLayout(sem_class_row, 0, 3)
+        outer.addLayout(sem_class_row, 0, 4)
 
-        # grid pos 1,3: buttons
-        inst_row = QHBoxLayout()
-        copy_btn = QPushButton("Copy from ...")
+        new_radio = QRadioButton("new", w)
+        unassigned_radio = QRadioButton("unassigned", w)
+        instance_group = QButtonGroup(w)
+        instance_group.addButton(new_radio)
+        instance_group.addButton(unassigned_radio)
+        new_radio.setChecked(self.choice_instance_mode == "new")
+        unassigned_radio.setChecked(self.choice_instance_mode == "unassigned")
+        instance_row = QHBoxLayout()
+        instance_row.addWidget(new_radio)
+        instance_row.addWidget(unassigned_radio)
+        instance_row.addStretch()
+        outer.addLayout(instance_row, 1, 3, 1, 2)
+
+        def on_instance_mode_changed() -> None:
+            self.choice_instance_mode = "unassigned" if unassigned_radio.isChecked() else "new"
+            _ANNOTATE_RIBBON_SESSION.instance_mode = self.choice_instance_mode
+
+        new_radio.toggled.connect(on_instance_mode_changed)
+        unassigned_radio.toggled.connect(on_instance_mode_changed)
+        accept_btn = QPushButton("Accept", w)
+        accept_btn.clicked.connect(self._Accept)
+        outer.addWidget(accept_btn, 0, 5)
+        copy_btn = QPushButton("Copy from ...", w)
         copy_btn.setCheckable(True)
         copy_btn.setChecked(self.copy_from_active)
         copy_btn.toggled.connect(lambda checked: setattr(self, "copy_from_active", checked))
-        inst_row.addWidget(copy_btn)
-        accept_btn = QPushButton("Accept")
-        accept_btn.clicked.connect(self._Accept)
-        inst_row.addWidget(accept_btn)
-        outer.addLayout(inst_row, 1, 3)
+        outer.addWidget(copy_btn, 1, 5)
 
         def update_enabled_states() -> None:
             sem_enabled = sem_checkbox.isChecked()
@@ -482,6 +507,8 @@ class AnnotateTool(ModeTool):
             sem_class_input.setEnabled(sem_enabled)
             inst_label.setEnabled(inst_enabled)
             inst_combo.setEnabled(inst_enabled)
+            new_radio.setEnabled(inst_enabled)
+            unassigned_radio.setEnabled(inst_enabled)
             any_enabled = sem_enabled or inst_enabled
             copy_btn.setEnabled(any_enabled)
             accept_btn.setEnabled(any_enabled and self.accept_possible)
@@ -528,6 +555,7 @@ class AnnotateTool(ModeTool):
             sem_inds_old=None,
             inst_inds_old=None,
             sem_ind_new=sem_ind_new,
+            instance_mode=self.choice_instance_mode,
             layer_ref=weakref.ref(layer),
             ctx_ref=weakref.ref(self.ctx),
         )

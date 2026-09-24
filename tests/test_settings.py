@@ -122,3 +122,25 @@ def test_preferences_other_segmentation_round_trip(tmp_path: Path):
     assert connected["on_selection_only"] is True
     assert connected["output_mode"] == "write_existing"
     assert connected["output_existing_field_name"] == "regions"
+
+
+def test_unassigned_color_round_trip(tmp_path):
+    prefs = Preferences(path=tmp_path / "prefs.toml")
+    prefs.unassigned_point_color = [12, 34, 56, 78]
+    prefs.save()
+    assert Preferences.load(prefs.path).unassigned_point_color == [12, 34, 56, 78]
+
+
+def test_unassigned_color_legacy_and_invalid_values(tmp_path):
+    path = tmp_path / "prefs.toml"
+    cases = [
+        ('user_name = "Legacy"', [204, 204, 204, 192]),
+        ('unassigned_point_color = [1, 2, 3]', [204, 204, 204, 192]),
+        ('unassigned_point_color = "bad"', [204, 204, 204, 192]),
+        ('unassigned_point_color = [1, 2, "bad", 4]', [204, 204, 204, 192]),
+        ('unassigned_point_color = [1, 2, inf, 4]', [204, 204, 204, 192]),
+        ('unassigned_point_color = [-10, 300, 12, 999]', [0, 255, 12, 255]),
+    ]
+    for text, expected in cases:
+        path.write_text(text, encoding="utf-8")
+        assert Preferences.load(path).unassigned_point_color == expected

@@ -53,7 +53,18 @@ def test_instance_segmentation_size_uses_column_vector() -> None:
     field = InstanceSegmentation("instances", size=3)
 
     assert field.data.shape == (3, 1)
-    assert field.data[:, 0].tolist() == [0, 0, 0]
+    assert field.data[:, 0].tolist() == [-1, -1, -1]
+    assert field.get_next_instance_id() == 0
+
+
+def test_pointcloud_add_instance_field_defaults_to_unassigned() -> None:
+    pcd = PointCloudData(np.zeros((3, 3), dtype=np.float32))
+    pcd.add_field(name="instances", field_type=FieldType.INSTANCE)
+
+    field = pcd.get_fields(names="instances")[0]
+    assert field.data.dtype == np.int32
+    assert field.data.shape == (3, 1)
+    assert field.data[:, 0].tolist() == [-1, -1, -1]
 
 
 def test_pointcloud_add_instance_field_accepts_flat_data() -> None:

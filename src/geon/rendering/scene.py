@@ -1,4 +1,6 @@
 from .base import BaseLayer
+from .pointcloud import PointCloudLayer
+from geon.settings import DEFAULT_PREFS
 from .layer_registry import LAYER_REGISTRY
 
 from geon.data.document import Document
@@ -20,9 +22,16 @@ class Scene:
     Represents the currently visible physical objects.
     Only one scene can be active at any given point
     """
-    def __init__(self, renderer: vtk.vtkRenderer) -> None:
+    def __init__(
+        self, renderer: vtk.vtkRenderer,
+        unassigned_point_color: tuple[int, ...] | list[int] | None = None,
+    ) -> None:
         self._layers : OrderedDict[str, BaseLayer] = OrderedDict()
         self._renderer: vtk.vtkRenderer = renderer
+        self._unassigned_point_color = tuple(
+            unassigned_point_color if unassigned_point_color is not None
+            else DEFAULT_PREFS["unassigned_point_color"]
+        )
         self._doc: Document = Document()
         
 
@@ -30,11 +39,19 @@ class Scene:
         self._active_layer_id : Optional[str] = None
         
     
+    def set_unassigned_point_color(self, color: tuple[int, ...] | list[int]) -> None:
+        self._unassigned_point_color = tuple(color)
+        for layer in self._layers.values():
+            if isinstance(layer, PointCloudLayer):
+                layer.set_unassigned_point_color(self._unassigned_point_color)
+
     def add_data(self, data: BaseData) -> BaseLayer:
         layer = LAYER_REGISTRY.create_layer_for(data)
         if layer.id in self._layers.keys():
             raise DuplicateLayerNameError(f"Can't create duplicate layer names: {layer.id}")
         self._layers[layer.id] = layer
+        if isinstance(layer, PointCloudLayer):
+            layer.set_unassigned_point_color(self._unassigned_point_color)
         layer.attach(self._renderer)
         self._register_layer_actors(layer)
         return layer

@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (
 from ..data.pointcloud import FieldType
 from ..rendering.pointcloud import PointCloudLayer
 from ..rendering.scene import Scene
+from .segmentation_confirmation import confirm_global_field_overwrite
 
 
 CONNECTED_COMPONENTS_DEFAULTS: dict[str, object] = {
@@ -175,6 +176,16 @@ class ConnectedComponentsDialog(QDialog):
             valid = valid and self.existing_field_combo.count() > 0
         if self._ok_button is not None:
             self._ok_button.setEnabled(valid)
+
+    def accept(self) -> None:
+        self._validate()
+        if self._ok_button is not None and not self._ok_button.isEnabled():
+            return
+        if self.output_mode() == "write_existing" and not self.on_selection_only():
+            field_name = self.existing_field_name()
+            if field_name is None or not confirm_global_field_overwrite(self, field_name):
+                return
+        super().accept()
 
     def selected_layer(self) -> Optional[PointCloudLayer]:
         layer = self.layer_combo.currentData()

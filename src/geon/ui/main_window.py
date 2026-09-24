@@ -3,6 +3,7 @@ from .scene_manager import SceneManager
 from .viewer import VTKViewer
 from .toolbar import CommonToolsDock
 from .menu_bar import MenuBar
+from .layer_checks import require_active_layer
 from .context_ribbon import ContextRibbon
 from .imports import FieldEditorDialog
 from .preferences_dialog import PreferencesDialog
@@ -152,30 +153,7 @@ class MainWindow(QMainWindow):
         act_toggle_edl.setCheckable(True)
         act_toggle_edl.toggled.connect(lambda checked: self.viewer.enable_edl() if checked else self.viewer.disable_edl())
         
-        doc_menu = self.menu_bar.doc_menu
-        doc_menu.addSeparator()
-        import_field_menu = cast(QMenu, doc_menu.addMenu("Import field from ..."))
-        act_import_npy = cast(QAction, import_field_menu.addAction(".NPY"))
-        act_import_npy.triggered.connect(self._on_import_field_from_npy)
-        act_edit_fields = cast(QAction, doc_menu.addAction("Edit fields"))
-        act_edit_fields.triggered.connect(self._on_edit_fields)
-        act_compute_features = cast(QAction, doc_menu.addAction("Compute geometric features"))
-        act_compute_features.triggered.connect(self._on_compute_geometric_features)
-        seg_menu = cast(QMenu, doc_menu.addMenu("Segmentation"))
-        act_planar_region_growing = cast(QAction, seg_menu.addAction("Planar region growing"))
-        act_planar_region_growing.triggered.connect(self._on_planar_region_growing)
-        act_plane_ransac = cast(QAction, seg_menu.addAction("Plane RANSAC"))
-        act_plane_ransac.triggered.connect(self._on_plane_ransac)
-        act_superpoints = cast(QAction, seg_menu.addAction("Superpoint segmentation"))
-        act_superpoints.triggered.connect(self._on_superpoint_segmentation)
-        act_region_merge = cast(QAction, seg_menu.addAction("Merge planar regions"))
-        act_region_merge.triggered.connect(self._on_region_merge)
-        act_corner_cleanup = cast(QAction, seg_menu.addAction("Clean up corner regions"))
-        act_corner_cleanup.triggered.connect(self._on_corner_cleanup)
-        act_connected_components = cast(
-            QAction, seg_menu.addAction("Connected components instance segmentation")
-        )
-        act_connected_components.triggered.connect(self._on_connected_components)
+        self._populate_point_cloud_menu()
         self.setMenuBar(self.menu_bar)
 
         ###########
@@ -303,6 +281,31 @@ class MainWindow(QMainWindow):
                 ref.modState = RefModState.MODIFIED
                 break
 
+    def _populate_point_cloud_menu(self) -> None:
+        point_cloud_menu = self.menu_bar.point_cloud_menu
+        import_field_menu = cast(QMenu, point_cloud_menu.addMenu("Import field from ..."))
+        act_import_npy = cast(QAction, import_field_menu.addAction(".NPY"))
+        act_import_npy.triggered.connect(self._on_import_field_from_npy)
+        act_edit_fields = cast(QAction, point_cloud_menu.addAction("Edit fields"))
+        act_edit_fields.triggered.connect(self._on_edit_fields)
+        act_compute_features = cast(QAction, point_cloud_menu.addAction("Compute geometric features"))
+        act_compute_features.triggered.connect(self._on_compute_geometric_features)
+        seg_menu = cast(QMenu, point_cloud_menu.addMenu("Segmentation"))
+        act_planar_region_growing = cast(QAction, seg_menu.addAction("Planar region growing"))
+        act_planar_region_growing.triggered.connect(self._on_planar_region_growing)
+        act_plane_ransac = cast(QAction, seg_menu.addAction("Plane RANSAC"))
+        act_plane_ransac.triggered.connect(self._on_plane_ransac)
+        act_superpoints = cast(QAction, seg_menu.addAction("Superpoint segmentation"))
+        act_superpoints.triggered.connect(self._on_superpoint_segmentation)
+        act_region_merge = cast(QAction, seg_menu.addAction("Merge planar regions"))
+        act_region_merge.triggered.connect(self._on_region_merge)
+        act_corner_cleanup = cast(QAction, seg_menu.addAction("Clean up corner regions"))
+        act_corner_cleanup.triggered.connect(self._on_corner_cleanup)
+        act_connected_components = cast(
+            QAction, seg_menu.addAction("Connected components instance segmentation")
+        )
+        act_connected_components.triggered.connect(self._on_connected_components)
+
     def _get_active_pointcloud_layer(self) -> PointCloudLayer | None:
         scene = self.scene_manager._scene
         if scene is None:
@@ -326,7 +329,7 @@ class MainWindow(QMainWindow):
         return schemas
 
     def _on_import_field_from_npy(self) -> None:
-        layer = self._get_active_pointcloud_layer()
+        layer = require_active_layer(self, self.scene_manager._scene, PointCloudLayer)
         if layer is None:
             return
         dlg = FieldEditorDialog.from_npy_picker(
@@ -750,7 +753,7 @@ class MainWindow(QMainWindow):
         dlg.exec()
 
     def _on_edit_fields(self) -> None:
-        layer = self._get_active_pointcloud_layer()
+        layer = require_active_layer(self, self.scene_manager._scene, PointCloudLayer)
         if layer is None:
             return
         dlg = FieldEditorDialog(
@@ -781,9 +784,9 @@ class MainWindow(QMainWindow):
 
     def _on_planar_region_growing(self) -> None:
         scene = self.scene_manager._scene
-        if scene is None:
+        active_layer = require_active_layer(self, scene, PointCloudLayer)
+        if active_layer is None:
             return
-        active_layer = self._get_active_pointcloud_layer()
         dlg = RegionGrowingDialog(
             scene,
             active_layer,
@@ -1195,9 +1198,9 @@ class MainWindow(QMainWindow):
 
     def _on_plane_ransac(self) -> None:
         scene = self.scene_manager._scene
-        if scene is None:
+        active_layer = require_active_layer(self, scene, PointCloudLayer)
+        if active_layer is None:
             return
-        active_layer = self._get_active_pointcloud_layer()
         dlg = PlaneRansacDialog(
             scene,
             active_layer,
@@ -1366,9 +1369,9 @@ class MainWindow(QMainWindow):
 
     def _on_superpoint_segmentation(self) -> None:
         scene = self.scene_manager._scene
-        if scene is None:
+        active_layer = require_active_layer(self, scene, PointCloudLayer)
+        if active_layer is None:
             return
-        active_layer = self._get_active_pointcloud_layer()
         dlg = SuperpointSegmentationDialog(
             scene,
             active_layer,
@@ -1511,9 +1514,9 @@ class MainWindow(QMainWindow):
 
     def _on_region_merge(self) -> None:
         scene = self.scene_manager._scene
-        if scene is None:
+        active_layer = require_active_layer(self, scene, PointCloudLayer)
+        if active_layer is None:
             return
-        active_layer = self._get_active_pointcloud_layer()
         dlg = RegionMergeDialog(
             scene,
             active_layer,
@@ -1682,9 +1685,9 @@ class MainWindow(QMainWindow):
 
     def _on_connected_components(self) -> None:
         scene = self.scene_manager._scene
-        if scene is None:
+        active_layer = require_active_layer(self, scene, PointCloudLayer)
+        if active_layer is None:
             return
-        active_layer = self._get_active_pointcloud_layer()
         dialog = ConnectedComponentsDialog(
             scene,
             active_layer,
@@ -1870,9 +1873,9 @@ class MainWindow(QMainWindow):
 
     def _on_corner_cleanup(self) -> None:
         scene = self.scene_manager._scene
-        if scene is None:
+        active_layer = require_active_layer(self, scene, PointCloudLayer)
+        if active_layer is None:
             return
-        active_layer = self._get_active_pointcloud_layer()
         dlg = CornerCleanupDialog(
             scene,
             active_layer,
@@ -2128,9 +2131,9 @@ class MainWindow(QMainWindow):
 
     def _on_compute_geometric_features(self) -> None:
         scene = self.scene_manager._scene
-        if scene is None:
+        active_layer = require_active_layer(self, scene, PointCloudLayer)
+        if active_layer is None:
             return
-        active_layer = self._get_active_pointcloud_layer()
         dlg = FeaturesDialog(scene, active_layer, parent=self)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return

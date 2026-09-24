@@ -22,6 +22,7 @@ DEFAULT_PREFS: Dict[str, Any] = {
     "cell_complex_default_color": [204, 204, 204],
     "selection_color": [255, 128, 0],
     "viewport_text_color": [255, 255, 255],
+    "unassigned_point_color": [204, 204, 204, 255],
 }
 
 REGION_GROWING_PREFIX = "region_growing__"
@@ -155,6 +156,9 @@ class Preferences:
     viewport_text_color: list[int] = field(
         default_factory=lambda: list(DEFAULT_PREFS["viewport_text_color"])
     )
+    unassigned_point_color: list[int] = field(
+        default_factory=lambda: list(DEFAULT_PREFS["unassigned_point_color"])
+    )
     region_growing_settings: Dict[str, Any] = field(default_factory=dict)
     plane_ransac_settings: Dict[str, Any] = field(default_factory=dict)
     superpoints_settings: Dict[str, Any] = field(default_factory=dict)
@@ -210,14 +214,17 @@ class Preferences:
                     setattr(prefs, attr, float(data.get(attr, getattr(prefs, attr))))
                 except (TypeError, ValueError):
                     setattr(prefs, attr, DEFAULT_PREFS[attr])
-            for attr in ("cell_complex_default_color", "selection_color", "viewport_text_color"):
+            for attr in (
+                "cell_complex_default_color", "selection_color",
+                "viewport_text_color", "unassigned_point_color",
+            ):
                 color = data.get(attr, getattr(prefs, attr))
-                if isinstance(color, list) and len(color) == 3:
+                if isinstance(color, list) and len(color) == len(DEFAULT_PREFS[attr]):
                     try:
                         setattr(prefs, attr, [
                             int(max(0, min(255, int(c)))) for c in color
                         ])
-                    except (TypeError, ValueError):
+                    except (TypeError, ValueError, OverflowError):
                         setattr(prefs, attr, list(DEFAULT_PREFS[attr]))
             prefs.region_growing_settings = _tool_settings_from_data(data, REGION_GROWING_PREFIX)
             prefs.plane_ransac_settings = _tool_settings_from_data(data, PLANE_RANSAC_PREFIX)
@@ -278,6 +285,7 @@ class Preferences:
             f'cell_complex_default_color = {_toml_scalar(self.cell_complex_default_color)}',
             f'selection_color = {_toml_scalar(self.selection_color)}',
             f'viewport_text_color = {_toml_scalar(self.viewport_text_color)}',
+            f'unassigned_point_color = {_toml_scalar(self.unassigned_point_color)}',
         ]
         tool_settings: Iterable[tuple[str, Dict[str, Any]]] = (
             (REGION_GROWING_PREFIX, self.region_growing_settings),

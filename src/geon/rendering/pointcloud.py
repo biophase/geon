@@ -12,6 +12,7 @@ from geon.data.pointcloud import (PointCloudData, FieldType,
                                   )
 
 from geon.config import theme
+from geon.settings import DEFAULT_PREFS
 
 from ..data.definitions import ColorMap
 from ..util.common import blend_colors
@@ -120,6 +121,7 @@ class PointCloudLayer(BaseLayer[PointCloudData]):
         
         self.browser_name = browser_name
         self.point_size: int = 2
+        self.unassigned_point_color = tuple(DEFAULT_PREFS["unassigned_point_color"])
         
         
 
@@ -130,6 +132,14 @@ class PointCloudLayer(BaseLayer[PointCloudData]):
         # index of currently displayed scalar in each vector field
         self._vf_active_index: dict[str, int] = {}
     
+    def set_unassigned_point_color(self, color: tuple[int, ...] | list[int]) -> None:
+        rgba = tuple(int(max(0, min(255, c))) for c in color)
+        if len(rgba) != 4:
+            raise ValueError("Unassigned point color requires four RGBA channels")
+        if rgba != self.unassigned_point_color:
+            self.unassigned_point_color = rgba
+            self.update()
+
     @property
     def active_field(self) -> FieldBase | None:
         name = self.active_field_name
@@ -404,6 +414,15 @@ class PointCloudLayer(BaseLayer[PointCloudData]):
                 if self._visibility_mask is not None:
                     colors_np = colors_np[self._visibility_mask] 
 
+        if colors_np is not None and field is not None and field.field_type in (
+            FieldType.SEMANTIC, FieldType.INSTANCE
+        ):
+            colors_np = np.column_stack((
+                colors_np, np.full(len(colors_np), 255, dtype=np.uint8)
+            ))
+            unassigned = data_visible.reshape(-1) == -1
+            colors_np[unassigned] = self.unassigned_point_color
+
         # geometry
         if self._visibility_mask is not None:
             visible_inds = np.nonzero(self._visibility_mask)[0]
@@ -416,8 +435,15 @@ class PointCloudLayer(BaseLayer[PointCloudData]):
             opacity = self._temporary_point_opacity
             if self._visibility_mask is not None:
                 opacity = opacity[self._visibility_mask]
-            alpha = np.rint(np.clip(opacity, 0.0, 1.0) * 255.0).astype(np.uint8)
-            colors_np = np.column_stack((colors_np, alpha))
+            if colors_np.shape[1] == 3:
+                colors_np = np.column_stack((
+                    colors_np, np.full(len(colors_np), 255, dtype=np.uint8)
+                ))
+            else:
+                colors_np = colors_np.copy()
+            colors_np[:, 3] = np.rint(
+                colors_np[:, 3].astype(np.float32) * np.clip(opacity, 0.0, 1.0)
+            ).astype(np.uint8)
 
         vtk_points = self._poly.GetPoints()
         vtk_points.SetData(ns.numpy_to_vtk(visible_points_np, deep=False))
