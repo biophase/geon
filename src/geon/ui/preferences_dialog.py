@@ -143,7 +143,7 @@ class PreferencesDialog(QDialog):
         viewport_form.addRow("Viewport text RGB", viewport_text_color_row)
         self.viewport_text_color_text = viewport_text_color_row
 
-        self._unassigned_color = QColor(*self._prefs.unassigned_point_color)
+        self._unassigned_color = QColor(*self._prefs.unassigned_point_color[:3])
         self.unassigned_color_button = QPushButton("Choose color...", self)
         self.unassigned_color_preview = QLabel(self)
         self.unassigned_color_preview.setMinimumWidth(150)
@@ -151,7 +151,7 @@ class PreferencesDialog(QDialog):
         color_layout = QHBoxLayout()
         color_layout.addWidget(self.unassigned_color_preview)
         color_layout.addWidget(self.unassigned_color_button)
-        point_form.addRow("Unassigned RGBA", color_layout)
+        point_form.addRow("Unassigned RGB", color_layout)
         self.unassigned_color_button.clicked.connect(self._choose_unassigned_color)
         self._update_unassigned_color_preview()
 
@@ -166,15 +166,15 @@ class PreferencesDialog(QDialog):
     def _choose_unassigned_color(self) -> None:
         color = QColorDialog.getColor(
             self._unassigned_color, self, "Unassigned point color",
-            QColorDialog.ColorDialogOption.ShowAlphaChannel,
         )
         if color.isValid():
+            color.setAlpha(255)
             self._unassigned_color = color
             self._update_unassigned_color_preview()
 
     def _update_unassigned_color_preview(self) -> None:
         r, g, b, a = self._unassigned_color.getRgb()
-        self.unassigned_color_preview.setText(f"{r}, {g}, {b}, {a}")
+        self.unassigned_color_preview.setText(f"{r}, {g}, {b}")
         foreground = "black" if self._unassigned_color.lightness() > 127 else "white"
         self.unassigned_color_preview.setStyleSheet(
             f"background-color: rgba({r}, {g}, {b}, {a}); color: {foreground};"

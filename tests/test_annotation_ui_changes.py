@@ -120,24 +120,27 @@ def test_ribbon_modes_and_height(qt_app, monkeypatch):
 
 
 @pytest.mark.parametrize("field_name", ["instances", "semantics"])
-def test_unassigned_rgba_visibility_and_opacity(qt_app, field_name):
+def test_unassigned_rgb_visibility(qt_app, field_name):
     layer = PointCloudLayer(make_data())
     layer.active_field_name = field_name
     layer.attach(vtk.vtkRenderer())
     layer.update()
     colors = vtk_to_numpy(layer._poly.GetPointData().GetScalars()).copy()
-    assert colors.shape == (4, 4)
-    np.testing.assert_array_equal(colors[0], [204, 204, 204, 192])
-    np.testing.assert_array_equal(colors[1:, 3], [255, 255, 255])
+    assert colors.shape == (4, 3)
+    np.testing.assert_array_equal(colors[0], [204, 204, 204])
     layer.set_unassigned_point_color([10, 20, 30, 100])
     layer._visibility_mask = np.array([True, False, True, True])
-    layer._temporary_point_opacity = np.array([0.5, 1, 0.5, 1], dtype=np.float32)
     layer.update()
     visible = vtk_to_numpy(layer._poly.GetPointData().GetScalars())
-    assert visible.shape == (3, 4)
-    np.testing.assert_array_equal(visible[0], [10, 20, 30, 50])
+    assert visible.shape == (3, 3)
+    np.testing.assert_array_equal(visible[0], [10, 20, 30])
     np.testing.assert_array_equal(visible[1:, :3], colors[2:, :3])
-    np.testing.assert_array_equal(visible[1:, 3], [128, 255])
+    layer.set_background_field_name(field_name)
+    for poly, _mapper, stride in layer._blend.pipelines:
+        foreground = vtk_to_numpy(poly.GetPointData().GetScalars())
+        background = vtk_to_numpy(poly.GetPointData().GetArray(layer._blend.ARRAY))
+        np.testing.assert_array_equal(foreground, visible[::stride])
+        np.testing.assert_allclose(background, visible[::stride] / 255.0)
     layer.detach()
 
 
@@ -145,12 +148,12 @@ def test_scene_preferences_apply_to_existing_and_new_layers(qt_app):
     scene = Scene(vtk.vtkRenderer(), unassigned_point_color=[1, 2, 3, 4])
     first = scene.add_data(make_data())
     first.update()
-    np.testing.assert_array_equal(vtk_to_numpy(first._poly.GetPointData().GetScalars())[0], [1, 2, 3, 4])
+    np.testing.assert_array_equal(vtk_to_numpy(first._poly.GetPointData().GetScalars())[0], [1, 2, 3])
     scene.set_unassigned_point_color([5, 6, 7, 8])
     second = scene.add_data(make_data())
     for layer in (first, second):
         layer.update()
-        np.testing.assert_array_equal(vtk_to_numpy(layer._poly.GetPointData().GetScalars())[0], [5, 6, 7, 8])
+        np.testing.assert_array_equal(vtk_to_numpy(layer._poly.GetPointData().GetScalars())[0], [5, 6, 7])
     scene.clear(delete_data=False)
 
 
@@ -167,11 +170,11 @@ def test_preferences_sections_color_picker_and_cancel(qt_app, monkeypatch):
     picked = QColor(10, 20, 30, 40)
     monkeypatch.setattr("geon.ui.preferences_dialog.QColorDialog.getColor", lambda *args: picked)
     dialog.unassigned_color_button.click()
-    assert dialog.unassigned_color_preview.text() == "10, 20, 30, 40"
+    assert dialog.unassigned_color_preview.text() == "10, 20, 30"
     dialog.reject()
-    assert prefs.unassigned_point_color == [204, 204, 204, 192]
+    assert prefs.unassigned_point_color == [204, 204, 204, 255]
     dialog.apply()
-    assert prefs.unassigned_point_color == [10, 20, 30, 40]
+    assert prefs.unassigned_point_color == [10, 20, 30, 255]
 
 
 def test_scene_tree_collapse_button(qt_app):
@@ -203,7 +206,7 @@ def test_rgb_view_keeps_colors_and_handles_empty_visibility(qt_app):
     layer._visibility_mask = np.zeros(4, dtype=bool)
     layer.update()
     assert layer._poly.GetNumberOfPoints() == 0
-    assert layer._poly.GetPointData().GetScalars().GetNumberOfComponents() == 4
+    assert layer._poly.GetPointData().GetScalars().GetNumberOfComponents() == 3
     layer.detach()
 
 
@@ -223,7 +226,7 @@ def test_scene_manager_applies_preferences_on_load_and_change(qt_app):
     prefs.unassigned_point_color = [50, 60, 70, 80]
     manager.preferences = prefs
     np.testing.assert_array_equal(
-        vtk_to_numpy(layer._poly.GetPointData().GetScalars())[0], [50, 60, 70, 80]
+        vtk_to_numpy(layer._poly.GetPointData().GetScalars())[0], [50, 60, 70]
     )
     manager._scene.clear(delete_data=False)
     manager.close()

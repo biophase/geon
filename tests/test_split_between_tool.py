@@ -64,7 +64,6 @@ def test_tool_defaults_to_active_instance_field_and_collects_visible_instances(q
     assert tool.field_name == "instances"
     assert tool.point_sets["work"] == {0}
     assert tool.active_set == "work"
-    assert layer._temporary_point_opacity[0] == pytest.approx(0.5)
 
 
 def test_picking_toggles_and_moves_instances_between_sets(qt_app):
@@ -105,10 +104,11 @@ def test_commit_command_is_atomic_and_undoable(qt_app):
     assert controller.layer_data_modified.calls == 2
 
 
-def test_deactivate_clears_preview(qt_app):
+def test_deactivate_restores_initial_field(qt_app):
     layer, _controller, _viewer, tool = _fixture()
-    layer.set_temporary_point_opacity(np.asarray([0, 1]), 0.5)
+    layer.data.add_field("other", np.zeros(8, dtype=np.int32), FieldType.INSTANCE)
+    layer.set_active_field_name("other")
 
     tool.deactivate()
 
-    assert layer._temporary_point_opacity is None
+    assert layer.active_field_name == "instances"

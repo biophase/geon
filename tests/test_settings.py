@@ -134,11 +134,11 @@ def test_unassigned_color_round_trip(tmp_path):
 def test_unassigned_color_legacy_and_invalid_values(tmp_path):
     path = tmp_path / "prefs.toml"
     cases = [
-        ('user_name = "Legacy"', [204, 204, 204, 192]),
-        ('unassigned_point_color = [1, 2, 3]', [204, 204, 204, 192]),
-        ('unassigned_point_color = "bad"', [204, 204, 204, 192]),
-        ('unassigned_point_color = [1, 2, "bad", 4]', [204, 204, 204, 192]),
-        ('unassigned_point_color = [1, 2, inf, 4]', [204, 204, 204, 192]),
+        ('user_name = "Legacy"', [204, 204, 204, 255]),
+        ('unassigned_point_color = [1, 2, 3]', [204, 204, 204, 255]),
+        ('unassigned_point_color = "bad"', [204, 204, 204, 255]),
+        ('unassigned_point_color = [1, 2, "bad", 4]', [204, 204, 204, 255]),
+        ('unassigned_point_color = [1, 2, inf, 4]', [204, 204, 204, 255]),
         ('unassigned_point_color = [-10, 300, 12, 999]', [0, 255, 12, 255]),
     ]
     for text, expected in cases:

@@ -111,15 +111,6 @@ class SplitBetweenTool(ModeTool):
         self.active_set = None
         self._refresh_ui()
 
-    def _refresh_preview(self) -> None:
-        combined = set().union(*self.point_sets.values())
-        if combined:
-            self.layer.set_temporary_point_opacity(
-                np.fromiter(sorted(combined), dtype=np.int64), 0.5)
-        else:
-            self.layer.clear_temporary_point_opacity()
-        self.ctx.viewer.rerender()
-
     def _refresh_ui(self) -> None:
         names = {"work": "Work", "a": "A", "b": "B"}
         for key, button in self._buttons.items():
@@ -130,7 +121,7 @@ class SplitBetweenTool(ModeTool):
         if self._ok_button is not None:
             self._ok_button.setEnabled(
                 self._field() is not None and all(bool(values) for values in self.point_sets.values()))
-        self._refresh_preview()
+        self.ctx.viewer.rerender()
 
     def _toggle_edit(self, key: str) -> None:
         self.active_set = None if self.active_set == key else key
@@ -311,7 +302,6 @@ class SplitBetweenTool(ModeTool):
         return super().activate()
 
     def deactivate(self) -> None:
-        self.layer.clear_temporary_point_opacity()
         if not self._committed and self.initial_field_name in self.layer.data.field_names:
             self.layer.set_active_field_name(self.initial_field_name)
         self.ctx.viewer.rerender()
