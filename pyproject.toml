@@ -30,6 +30,8 @@ dependencies = [
   "PyQt6>=6.6",
   "vtk>=9.2",
   "plyfile>=0.8.1",
+  "pye57",
+  "laspy[lazrs]",
 ]
 
 [project.optional-dependencies]

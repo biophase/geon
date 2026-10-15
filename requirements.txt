@@ -2,3 +2,5 @@ vtk
 pyqt6
 plyfile
 h5py
+pye57
+laspy[lazrs]
