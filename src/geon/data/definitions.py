@@ -15,21 +15,29 @@ class ColorMap:
     color_type: Literal['rgb', 'hsv'] = 'rgb'
     color_positions:    NDArray[np.float32] = field(default_factory=lambda: np.array([0., 1.], dtype=np.float32))
     color_definitions:  NDArray[np.float32] = field(default_factory=lambda: np.array([[1.,0.,0.],[0.,1.,0.]], dtype=np.float32))
+    positions_type: Literal['normalized', 'absolute'] = 'normalized'
 
     
     
     def save_h5py(self, field_group: h5py.Group) -> None:
-        """
-        write a dataset describing the cmap to a h5py group
-        """
+        """Save or update only the color map in an existing field group."""
         data = np.concat([
             self.color_positions[:,None],
             self.color_definitions
         ], axis=1)
-        dataset = field_group.create_dataset('ColorMap', data=data)
+        dataset = field_group.get('color_map')
+        if isinstance(dataset, h5py.Dataset) and dataset.shape == data.shape and dataset.dtype == data.dtype:
+            dataset[...] = data
+        else:
+            if dataset is not None:
+                del field_group['color_map']
+            dataset = field_group.create_dataset('color_map', data=data)
         dataset.attrs['name'] = self.name
         dataset.attrs['color_type'] = self.color_type
         dataset.attrs['columns'] = ' '.join(['pos'] + list(self.color_type))
+        # Older versions saved this spelling, but did not load it correctly.
+        if 'ColorMap' in field_group:
+            del field_group['ColorMap']
 
 
     @classmethod
@@ -91,7 +99,7 @@ PARAM_MAP: Dict[str, ColorMap] = {
                 color_type='rgb',
                 color_positions=npa([0.0, 1.0]),
                 color_definitions=npa([
-                    [0., 0., 0.],
+                    [0.3, 0.3, 0.3],
                     [1., 1., 1.],
                 ])
             ),

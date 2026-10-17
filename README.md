@@ -41,6 +41,16 @@ Then run the GUI with
 python -m geon.app
 ```
 
+### Experimental native Wayland rendering
+
+On a Wayland desktop, run with the Qt-owned OpenGL surface:
+
+```bash
+GEON_QT_RENDERER=opengl QT_QPA_PLATFORM=wayland python -m geon.app
+```
+
+
+
 ## Development build
 For development clone and install with
 ```
@@ -64,7 +74,7 @@ Building native modules:
     -DCMAKE_LIBRARY_OUTPUT_DIRECTORY_RELEASE="%CD%\\src\\geon\\_native"
   cmake --build build --config Release
   ```
-- OpenMP is used for some kernels when available.
+- OpenMP is used for some methods when available.
 
 
 

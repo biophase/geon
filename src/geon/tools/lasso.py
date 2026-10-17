@@ -1,9 +1,11 @@
+from geon.util.operation_timing import timed, timing, timing_note  # TEMP_VISIBILITY_PROFILE
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,)
 from PyQt6.QtCore import QSize
 from PyQt6.QtCore import Qt
 
 
 import geon.core
+from geon._native.lasso import select_polygon
 from ..util.common import bool_op_index_mask
 from .base import Event
 from .base import ModeTool, ToolZone
@@ -48,8 +50,9 @@ class LassoApplyPolyCmd(Command):
         # set state & layer visibility
         tool.poly_points = []
         tool.cand_inds = self.cand_inds_new
-        full_mask = np.zeros(tool.points.shape[0], dtype=bool)
-        full_mask[self.cand_inds_new] = True
+        with timing('Build full visibility mask'):  # TEMP_VISIBILITY_PROFILE
+            full_mask = np.zeros(tool.points.shape[0], dtype=bool)
+            full_mask[self.cand_inds_new] = True
         tool.layer.set_visibility_mask(full_mask)
         tool.selection_dirty = self.sd_new
         tool.ctx.viewer.rerender()
@@ -113,6 +116,7 @@ class LassoTool(ModeTool):
     POLYGON_LINEWIDTH = 1
     
     
+    @timed('Lasso initialize', root=True)  # TEMP_VISIBILITY_PROFILE
     def __post_init__(self):
         super().__post_init__()
         
@@ -211,6 +215,7 @@ class LassoTool(ModeTool):
         print(f"called _sActivate")
         pass
     
+    @timed('Lasso In', root=True)  # TEMP_VISIBILITY_PROFILE
     def _sIn(self) -> None:
         print(f"called _sIn")
         self._sApply(mode='in')
@@ -219,6 +224,7 @@ class LassoTool(ModeTool):
         self.ctx.viewer.rerender()
         
     
+    @timed('Lasso Out', root=True)  # TEMP_VISIBILITY_PROFILE
     def _sOut(self) -> None:
         print(f"called _sOut")
         self._sApply(mode='out')
@@ -226,12 +232,14 @@ class LassoTool(ModeTool):
         self._toggle_select_pause()
         self.ctx.viewer.rerender()
     
+    @timed('Lasso Accept (includes any dialog wait)', root=True)  # TEMP_VISIBILITY_PROFILE
     def _sAccept(self) -> None:
         """
         Accept with conflict resolution
         """
         self.request_deactivate()
     
+    @timed('Lasso Cancel', root=True)  # TEMP_VISIBILITY_PROFILE
     def _sCancel(self) -> None:
         """
         Throw away mask
@@ -247,6 +255,7 @@ class LassoTool(ModeTool):
             self._update_polygon_actor(self.ghost_point)
         self.ctx.viewer.rerender()
 
+    @timed("Lasso polygon evaluation and command")  # TEMP_VISIBILITY_PROFILE
     def _sApply (self, mode:Literal['in','out'])-> None:
         """
         points in current polygone are set to be candidates
@@ -260,31 +269,16 @@ class LassoTool(ModeTool):
             return
         poly = np.asarray(poly_)
         cand_inds = self.cand_inds
-        cand_pts = self.points[cand_inds]
+        timing_note(f"Input: {len(cand_inds):,} candidates / {len(self.points):,} total; dtype={self.points.dtype}")  # TEMP_VISIBILITY_PROFILE
         m, width, height = LassoTool._get_cptm(self.ctx.viewer._renderer)
-        
-        display_coords = self._compute_display_coordinates(cand_pts, m, width, height)
-        min_x, max_x = poly[:, 0].min(), poly[:, 0].max()
-        min_y, max_y = poly[:, 1].min(), poly[:, 1].max()
-        bbox_mask = (
-            (display_coords[:, 0] >= min_x) & (display_coords[:, 0] <= max_x) &
-            (display_coords[:, 1] >= min_y) & (display_coords[:, 1] <= max_y)
-        )
-        inds_in_bbox = np.nonzero(bbox_mask)[0]
-        filtered_display_coords = display_coords[inds_in_bbox]
-        inside_mask = self.points_in_poly_(
-            filtered_display_coords, self.poly_points)
-        if mode == 'in':
-            keep_mask = np.zeros(cand_inds.shape[0], dtype=bool)
-            keep_mask[inds_in_bbox] = inside_mask
-        elif mode == 'out':
-            keep_mask = np.ones(cand_inds.shape[0], dtype=bool)
-            keep_mask[inds_in_bbox] = ~inside_mask
-        else:
+        if mode not in ('in', 'out'):
             raise ValueError(f"Unsupported selection mode: {mode}")
-        new_cands = cand_inds[keep_mask]
+        with timing('Fused C++ projection, bounds and polygon selection'):  # TEMP_VISIBILITY_PROFILE
+            new_cands = select_polygon(
+                self.points, cand_inds, m, width, height, poly, mode == 'in')
         
         
+        timing_note(f"Output: {len(new_cands):,} candidates")  # TEMP_VISIBILITY_PROFILE
         cmd = LassoApplyPolyCmd(
             title=f'Lasso {mode}',
             cand_inds_new=new_cands,
@@ -322,6 +316,7 @@ class LassoTool(ModeTool):
 
 
     @staticmethod
+    @timed("Projection intermediates")  # TEMP_VISIBILITY_PROFILE
     def _compute_display_coordinates( 
                                      points: np.ndarray,
                                      proj_matrix: np.ndarray,
@@ -330,15 +325,19 @@ class LassoTool(ModeTool):
                                      ) -> np.ndarray:
 
         N = points.shape[0]
-        pts_hom = np.hstack([points, np.ones((N,1))])
-        pts_clip = pts_hom @ proj_matrix.T
-        w = pts_clip[:, 3]
-        pts_ndc = np.full((N, 3), np.nan, dtype=float)
-        valid = w > 0
-        pts_ndc[valid] = pts_clip[valid, :3] / w[valid, None]
-        display_x = (pts_ndc[:,0] + 1) /2 * window_width
-        display_y = (pts_ndc[:,1] + 1) /2 * window_height
-        return np.column_stack([display_x, display_y])
+        with timing('Allocate homogeneous coordinates'):  # TEMP_VISIBILITY_PROFILE
+            pts_hom = np.hstack([points, np.ones((N,1))])
+        with timing('Matrix multiplication'):  # TEMP_VISIBILITY_PROFILE
+            pts_clip = pts_hom @ proj_matrix.T
+        with timing('Perspective division and screen coordinates'):  # TEMP_VISIBILITY_PROFILE
+            w = pts_clip[:, 3]
+            pts_ndc = np.full((N, 3), np.nan, dtype=float)
+            valid = w > 0
+            pts_ndc[valid] = pts_clip[valid, :3] / w[valid, None]
+            display_x = (pts_ndc[:,0] + 1) /2 * window_width
+            display_y = (pts_ndc[:,1] + 1) /2 * window_height
+        with timing("Stack screen XY"):  # TEMP_VISIBILITY_PROFILE
+            return np.column_stack([display_x, display_y])
 
     @staticmethod
     def points_in_poly(points:np.ndarray, poly: list[tuple[int,int]]):
@@ -455,6 +454,7 @@ class LassoTool(ModeTool):
                 self.selection_conflict_flag = dlg.choice
                 self.ctx.controller.deactivate_tool()
             
+    @timed('Lasso deactivate', root=True)  # TEMP_VISIBILITY_PROFILE
     def deactivate(self) -> None:
 
         self._remove_polygon_actor()

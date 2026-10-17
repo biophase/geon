@@ -13,6 +13,7 @@ from ..util.common import bool_op_index_mask
 from ..ui.boolean_dialog import BooleanChoiceDialog
 from ..ui.layers import LAYER_UI
 from ..ui.semantic_schema_dialog import SemanticSchemaEditDialog
+from .semantic_export import export_semantic_schema
 
 from geon.settings import Preferences
 import json
@@ -430,6 +431,11 @@ class SceneManager(Dock):
             action.triggered.connect(
                 lambda checked=False, l=owner, n=field.name: self._set_background_field(l, n)
             )
+            if isinstance(field, SemanticSegmentation):
+                export_action = menu.addAction("Export to JSON")
+                export_action.triggered.connect(
+                    lambda checked=False, f=field: export_semantic_schema(f, self.tree)
+                )
             
         if sem_cls_handles:
             act = None

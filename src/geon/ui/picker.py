@@ -56,7 +56,17 @@ class PointPicker:
         
         
         selector.SetArea(x0,y0,x1,y1)
-        selection = selector.Select()
+        # Custom display passes (including EDL and RenderStepsPass) bypass
+        # VTK's default hardware-selection render path. Keep actor shaders,
+        # including visibility, but temporarily use the default renderer.
+        display_pass = self.renderer.GetPass()
+        try:
+            if display_pass is not None:
+                self.renderer.SetPass(None)
+            selection = selector.Select()
+        finally:
+            if display_pass is not None:
+                self.renderer.SetPass(display_pass)
         if selection is None or selection.GetNumberOfNodes() == 0:
             return None
         

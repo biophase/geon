@@ -49,7 +49,9 @@ def test_mix_only_changes_uniform_and_preserves_state():
 
 
 @pytest.mark.parametrize("kind", [FieldType.SCALAR, FieldType.INTENSITY, FieldType.VECTOR, FieldType.NORMAL, FieldType.INSTANCE])
-def test_field_conversion_visibility_and_lod(kind):
+@pytest.mark.parametrize('shader_visibility', [False, True])
+def test_field_conversion_visibility_and_lod(kind, monkeypatch, shader_visibility):
+    monkeypatch.setenv('GEON_SHADER_VISIBILITY', '1' if shader_visibility else '0')
     layer, _ = make_layer()
     values = np.arange(201, dtype=np.float32).reshape(-1, 1)
     if kind in (FieldType.VECTOR, FieldType.NORMAL):
@@ -60,13 +62,13 @@ def test_field_conversion_visibility_and_lod(kind):
     layer.set_background_field_name("field")
     mask = np.arange(201) % 2 == 0
     layer.set_visibility_mask(mask)
-    assert layer._poly.GetNumberOfPoints() == 101
-    assert layer._poly_coarse.GetNumberOfPoints() == 2
+    assert layer._poly.GetNumberOfPoints() == (201 if shader_visibility else 101)
+    assert layer._poly_coarse.GetNumberOfPoints() == (3 if shader_visibility else 2)
     fine = ns.vtk_to_numpy(layer._poly.GetPointData().GetArray(layer._blend.ARRAY))
     coarse = ns.vtk_to_numpy(layer._poly_coarse.GetPointData().GetArray(layer._blend.ARRAY))
     np.testing.assert_equal(coarse, fine[::100])
     layer.set_visibility_mask(np.zeros(201, dtype=bool))
-    assert layer._poly.GetNumberOfPoints() == 0
+    assert layer._poly.GetNumberOfPoints() == (201 if shader_visibility else 0)
     layer.set_background_field_name(None)
     layer.set_active_field_name("field")
 
@@ -142,7 +144,9 @@ def test_live_background_edits_components_and_colormap():
     np.testing.assert_equal(background(), [[1, 0, 0], [1, 0, 0]])
 
 
-def test_lod_picking_clipping_and_detach():
+@pytest.mark.parametrize('shader_visibility', [False, True])
+def test_lod_picking_clipping_and_detach(monkeypatch, shader_visibility):
+    monkeypatch.setenv('GEON_SHADER_VISIBILITY', '1' if shader_visibility else '0')
     layer, renderer = make_layer()
     layer.set_background_field_name("blue")
     mask = np.arange(201) % 2 == 0
@@ -152,8 +156,8 @@ def test_lod_picking_clipping_and_detach():
     for _, mapper, _ in layer._blend.pipelines:
         assert mapper.GetNumberOfClippingPlanes() == 1
     layer._main_actor.SetMapper(layer._mapper_coarse)
-    assert layer.data_index_from_picked_id(1) == 200
-    assert layer.world_xyz_from_picked_id(1) == (200., 0., 0.)
+    assert layer.data_index_from_picked_id(1) == (100 if shader_visibility else 200)
+    assert layer.world_xyz_from_picked_id(1) == ((100. if shader_visibility else 200.), 0., 0.)
     layer.detach()
     assert not renderer.HasObserver(vtk.vtkCommand.StartEvent)
     layer.attach(renderer)

@@ -14,15 +14,15 @@ from ...tools.split_between import SplitBetweenTool
 from ...tools.base import BaseTool
 from ..dataset_manager import DatasetManager
 from ..semantic_schema_dialog import SemanticSchemaEditDialog
+from ..semantic_export import export_semantic_schema
 
 
 from PyQt6.QtWidgets import (QWidget, QMenu, QHBoxLayout, QVBoxLayout, QLabel,
                              QPushButton, QToolButton, QGridLayout, QDialog,
-                             QMessageBox, QSpacerItem, QSizePolicy, QFileDialog,
-                             QSpinBox, QSlider)
+                             QMessageBox, QSpacerItem, QSizePolicy,
+                             QSpinBox, QSlider, QComboBox)
 from PyQt6.QtGui import QIcon
 from PyQt6.QtCore import Qt, QTimer
-from ..common import ElidedLabel
 from geon.config.theme import UIStyle
 from geon.util.resources import resource_path
 
@@ -32,7 +32,11 @@ def get_more_btn(parent: QWidget) -> tuple[QToolButton, QMenu]:
     more_btn = QToolButton(parent)
     more_btn.setFixedHeight(18)
     more_btn.setText("")
-    more_btn.setStyleSheet("QToolButton { border: none; background: transparent; }")
+    more_btn.setArrowType(Qt.ArrowType.DownArrow)
+    more_btn.setStyleSheet(
+        "QToolButton { border: none; background: transparent; }"
+        "QToolButton::menu-indicator { image: none; }"
+    )
     more_menu = QMenu(more_btn)
     more_btn.setMenu(more_menu)
     more_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
@@ -88,10 +92,11 @@ def _increase_point_size(
         ctx = controller.ctx
         if ctx is None:
             return
+        previous_size = layer.point_size
         size = layer.increase_point_size()
         label.setText(str(size))
-        layer.update()
-        ctx.viewer.rerender()
+        if size != previous_size:
+            ctx.viewer.rerender()
         
 def _decrease_point_size(
     layer: PointCloudLayer, controller: ToolController, label:QLabel) -> None:  
@@ -99,11 +104,11 @@ def _decrease_point_size(
         ctx = controller.ctx
         if ctx is None:
             return
+        previous_size = layer.point_size
         size = layer.decrease_point_size()
         label.setText(str(size))
-        layer.update()
-        
-        ctx.viewer.rerender()
+        if size != previous_size:
+            ctx.viewer.rerender()
 
 
 def _set_vector_component(
@@ -127,22 +132,23 @@ def _background_column(layer: PointCloudLayer, parent: QWidget,
                        controller: ToolController) -> QWidget:
     column = QWidget(parent)
     column.setObjectName("pointcloudBackground")
-    column.setFixedWidth(140)
+    column.setFixedWidth(220)
     layout = QVBoxLayout(column)
     layout.setContentsMargins(0, 0, 0, 0)
     layout.setSpacing(2)
+    layout.setAlignment(Qt.AlignmentFlag.AlignTop)
     row = QHBoxLayout()
-    name = ElidedLabel(layer.background_field_name or "", column)
-    name.setToolTip(layer.background_field_name or "")
-    row.addWidget(name, 1)
-    dropdown = QToolButton(column)
-    dropdown.setArrowType(Qt.ArrowType.DownArrow)
+    label = QLabel("Background: ", column)
+    label.setStyleSheet(UIStyle.TYPE_LABEL.value)
+    row.addWidget(label)
+    dropdown = QComboBox(column)
+    for field_name in [None, *layer.data.field_names]:
+        dropdown.addItem("None" if field_name is None else field_name, field_name)
+    dropdown.setCurrentIndex(dropdown.findData(layer.background_field_name))
+    dropdown.setToolTip(layer.background_field_name or "")
     dropdown.setAccessibleName("Background field")
-    dropdown.setFixedSize(18, 18)
-    dropdown.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-    menu = QMenu(dropdown)
-    dropdown.setMenu(menu)
-    row.addWidget(dropdown)
+    dropdown.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+    row.addWidget(dropdown, 1)
     layout.addLayout(row)
 
     timer = QTimer(column)
@@ -155,23 +161,15 @@ def _background_column(layer: PointCloudLayer, parent: QWidget,
 
     timer.timeout.connect(render)
 
-    def choose(field_name):
+    def choose(index):
+        field_name = dropdown.itemData(index)
         timer.stop()
         layer.set_background_field_name(field_name)
-        name.setText(field_name or "")
-        name.setToolTip(field_name or "")
+        dropdown.setToolTip(field_name or "")
         column.setVisible(field_name is not None)
         render()
 
-    def populate():
-        menu.clear()
-        for field_name in [None, *layer.data.field_names]:
-            action = menu.addAction("None" if field_name is None else field_name)
-            action.setCheckable(True)
-            action.setChecked(field_name == layer.background_field_name)
-            action.triggered.connect(lambda checked=False, n=field_name: choose(n))
-
-    menu.aboutToShow.connect(populate)
+    dropdown.currentIndexChanged.connect(choose)
     slider = QSlider(Qt.Orientation.Horizontal, column)
     slider.setObjectName("foregroundMix")
     slider.setRange(0, 100)
@@ -195,7 +193,12 @@ def _background_column(layer: PointCloudLayer, parent: QWidget,
     describe(slider.value())
     slider.valueChanged.connect(changed)
     slider.sliderReleased.connect(released)
-    layout.addWidget(slider)
+    blend_row = QHBoxLayout()
+    blend_label = QLabel("Blend: ", column)
+    blend_label.setStyleSheet(UIStyle.TYPE_LABEL.value)
+    blend_row.addWidget(blend_label)
+    blend_row.addWidget(slider, 1)
+    layout.addLayout(blend_row)
     return column
 
 
@@ -206,11 +209,11 @@ def _ribbon(
     
     w = QWidget(parent)
     outer = QHBoxLayout(w)
-    outer.setAlignment(Qt.AlignmentFlag.AlignTop)
     outer.setContentsMargins(2, 1, 2, 1)
     outer.setSpacing(2)
     
     af = layer.active_field
+    more_btn = None
     
     
     
@@ -305,6 +308,7 @@ def _ribbon(
             edit_btn = QToolButton (w)
             edit_btn.setFixedHeight(18)
             edit_btn.setText("Edit Schema")
+            edit_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
             def _on_edit_schema_clicked() -> None:
                 if not isinstance(af, SemanticSegmentation):
@@ -356,29 +360,12 @@ def _ribbon(
 
             
             more_btn, more_menu = get_more_btn(w)
+            more_btn.setObjectName("pointcloudMore")
+            more_btn.setAccessibleName("More field actions")
             export_action = more_menu.addAction("Export to JSON")
-
-            def _on_export_schema() -> None:
-                if not isinstance(af, SemanticSegmentation):
-                    return
-                default_name = f"{af.schema.name}.json" if af.schema.name else "schema.json"
-                json_path, _ = QFileDialog.getSaveFileName(
-                    parent,
-                    "Export schema to JSON",
-                    default_name,
-                    "JSON Files (*.json)",
-                )
-                if not json_path:
-                    return
-                try:
-                    af.schema.to_json(json_path)
-                except Exception as exc:
-                    QMessageBox.critical(parent, "Export failed", str(exc))
-
-            export_action.triggered.connect(_on_export_schema)
+            export_action.triggered.connect(lambda: export_semantic_schema(af, parent))
             
             row_22.addWidget(edit_btn)
-            row_22.addWidget(more_btn, alignment= Qt.AlignmentFlag.AlignRight)
             col_2.addLayout(row_21)
             col_2.addLayout(row_22)
             
@@ -437,6 +424,9 @@ def _ribbon(
     
     if layer.background_field_name is not None:
         outer.addWidget(_background_column(layer, w, controller))
+    if more_btn is not None:
+        outer.addStretch(1)
+        outer.addWidget(more_btn, alignment=Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignRight)
     
     return w
 
@@ -449,7 +439,6 @@ def _ribbon_selection(layer: PointCloudLayer,
         layer.active_selection.size == 0:
             return None
     outer = QGridLayout(w)
-    outer.setAlignment(Qt.AlignmentFlag.AlignTop)
     outer.setContentsMargins(2, 1, 2, 1)
     outer.setSpacing(2)
     
@@ -515,7 +504,7 @@ def _ribbon_selection(layer: PointCloudLayer,
     
     
     more_btn, more_menu = get_more_btn(w)
-    outer.addWidget(more_btn, 1, 2, Qt.AlignmentFlag.AlignRight)
+    outer.addWidget(more_btn, 0, 3, 2, 1, Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignRight)
     
     
     print(f'called ribbon selection')

@@ -129,8 +129,10 @@ endif()
 
 set(GEON_NATIVE_INSTALL_DIR "geon/_native")
 
+pybind11_add_module(lasso MODULE native/lasso.cpp)
+
 install(
-  TARGETS features region_growing plane_ransac superpoints region_merge corner_cleanup split_between subsampling
+  TARGETS features region_growing plane_ransac superpoints region_merge corner_cleanup split_between subsampling lasso
   LIBRARY DESTINATION ${GEON_NATIVE_INSTALL_DIR}
   RUNTIME DESTINATION ${GEON_NATIVE_INSTALL_DIR}
   ARCHIVE DESTINATION ${GEON_NATIVE_INSTALL_DIR}

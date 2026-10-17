@@ -430,6 +430,8 @@ class FieldBase:
         name = name.split("/")[-1]
 
         color_map_ds = field_group.get('color_map')
+        if color_map_ds is None:
+            color_map_ds = field_group.get('ColorMap')
         if color_map_ds is not None:
             assert isinstance(color_map_ds, h5py.Dataset)
             color_map = ColorMap.load_h5py(color_map_ds)

@@ -1,3 +1,4 @@
+from geon.util.operation_timing import timed, profile_render  # TEMP_VISIBILITY_PROFILE
 from PyQt6.QtGui import QMouseEvent, QResizeEvent
 from PyQt6.QtWidgets import (QWidget, QDockWidget, QLabel, QToolButton,QHBoxLayout,
                              QTreeWidget,QVBoxLayout, QGridLayout,QPushButton,
@@ -262,7 +263,12 @@ class VTKViewer(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         layout = QVBoxLayout(self)
-        self.vtkWidget = QVTKRenderWindowInteractor(self)
+        import os
+        if os.environ.get("GEON_QT_RENDERER") == "opengl":
+            from .qt_opengl_vtk import QtOpenGLVTKWidget
+            self.vtkWidget = QtOpenGLVTKWidget(self)
+        else:
+            self.vtkWidget = QVTKRenderWindowInteractor(self)
         self.scene: Optional[Scene] = None
         layout.addWidget(self.vtkWidget)
         
@@ -319,9 +325,10 @@ class VTKViewer(QWidget):
         
         
         
+    @timed("Viewer rerender (VTK pipeline + render submission/wait)")  # TEMP_VISIBILITY_PROFILE
     def rerender(self):
         self._update_viewport_text_position()
-        self.vtkWidget.GetRenderWindow().Render()
+        profile_render(self.vtkWidget.GetRenderWindow(), self._renderer, self.scene)  # TEMP_VISIBILITY_PROFILE: restore direct Render()
 
     def show_viewport_text(
         self,
@@ -477,6 +484,8 @@ class VTKViewer(QWidget):
         
 
     def enable_edl(self) -> None:
+        if self._edl_pass is not None:
+            return
         basic_passes = vtk.vtkRenderStepsPass()
         edl_pass = vtk.vtkEDLShading()
         edl_pass.SetDelegatePass(basic_passes)
@@ -494,8 +503,12 @@ class VTKViewer(QWidget):
         gl_renderer = vtk.vtkOpenGLRenderer.SafeDownCast(self._renderer)
         if gl_renderer is None:
             return
-        basic_passes = vtk.vtkRenderStepsPass()
-        gl_renderer.SetPass(basic_passes)
+        # None restores VTK's default renderer, including its selection path.
+        gl_renderer.SetPass(None)
+        if self._edl_pass is not None:
+            window = self.vtkWidget.GetRenderWindow()
+            window.MakeCurrent()
+            self._edl_pass.ReleaseGraphicsResources(window)
         gl_renderer.Modified()
         self._edl_pass = None
         self.rerender()

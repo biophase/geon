@@ -1,3 +1,4 @@
+from geon.util.operation_timing import timed  # TEMP_VISIBILITY_PROFILE
 
 from .base import CommandTool
 from .command_manager import Command
@@ -89,6 +90,7 @@ class HideTool(CommandTool):
     use_local_cm:    ClassVar = False
     show_in_toolbar: ClassVar = True
     
+    @timed("Hide", root=True)  # TEMP_VISIBILITY_PROFILE
     def trigger(self) -> None:
         layer = self.ctx.scene.active_layer
         if layer is None:
@@ -133,6 +135,7 @@ class IsolateTool(CommandTool):
     use_local_cm:    ClassVar = False
     show_in_toolbar: ClassVar = True
     
+    @timed("Isolate", root=True)  # TEMP_VISIBILITY_PROFILE
     def trigger(self) -> None:
         layer = self.ctx.scene.active_layer
         if layer is None:
@@ -173,6 +176,7 @@ class ShowTool(CommandTool):
     use_local_cm:    ClassVar = False
     show_in_toolbar: ClassVar = True
     
+    @timed("Show all", root=True)  # TEMP_VISIBILITY_PROFILE
     def trigger(self) -> None:
         layer = self.ctx.scene.active_layer
         if layer is None:

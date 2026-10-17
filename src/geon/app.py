@@ -1,3 +1,4 @@
+import os
 import sys
 
 from geon.util.runtime_logging import configure_runtime_logging
@@ -23,6 +24,14 @@ if sys.platform == 'darwin':
     _prev_msg_handler = QtCore.qInstallMessageHandler(_qt_msg_filter)
 
 def main() -> int:
+    # QVTKRenderWindowInteractor passes Qt's native window ID to VTK's
+    # X11 renderer. A Wayland handle is not an X11 window and causes BadWindow.
+    # Keep explicit overrides available for testing and other platforms.
+    if os.environ.get("GEON_QT_RENDERER") == "opengl":
+        from geon.ui.qt_opengl_vtk import configure_surface_format
+        configure_surface_format()
+    elif sys.platform.startswith("linux"):
+        os.environ.setdefault("QT_QPA_PLATFORM", "xcb")
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
     shints = app.styleHints()
