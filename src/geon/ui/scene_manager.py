@@ -143,6 +143,9 @@ class SceneManager(Dock):
             self._scene.set_unassigned_point_color(preferences.unassigned_point_color)
 
     def on_document_loaded(self, doc: Document):
+        panel = getattr(self.window(), 'color_channels', None)
+        if panel is not None and not panel.activate(None):
+            return
         if self._scene is not None:
             self.broadcastDeleteScene.emit(self._scene) 
             self._scene.clear(delete_data=False)
@@ -304,6 +307,10 @@ class SceneManager(Dock):
                                     layer_root: QTreeWidgetItem):
 
         def set_layer_active_field(scene_manager: SceneManager, layer:PointCloudLayer, field_name: str):
+            panel = getattr(scene_manager.window(), 'color_channels', None)
+            if panel is not None and not panel.allow_switch():
+                scene_manager.populate_tree()
+                return
             layer.set_active_field_name(field_name)
             self.broadcastActivatedPcdField.emit(layer)
             scene_manager.viewer.rerender()
@@ -508,6 +515,9 @@ class SceneManager(Dock):
         if layer.id not in self._scene.layers:
             return
         if not self._confirm_delete_layer(layer):
+            return
+        panel = getattr(self.window(), 'color_channels', None)
+        if panel is not None and panel.layer is layer and not panel.activate(None):
             return
 
         self._scene.remove_layer(layer.id, delete_data=True)

@@ -11,7 +11,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from .base import BaseData
-from .definitions import ColorMap
+from .definitions import ColorMap, VectorColorMap
 from .registry import register_data
 
 from geon.util.common import decode_utf8, generate_vibrant_color
@@ -38,6 +38,16 @@ class FieldType(Enum):
             cls.INTENSITY   : "Intensity",
             cls.SEMANTIC    : "Semantic Segmentation",
             cls.INSTANCE    : "Instance Segmentation",
+            
+        }
+        return map[field_type]
+    
+    @classmethod
+    def get_channel_names(cls, field_type: "FieldType"):
+        map = {
+
+            cls.COLOR   : ("red", "green", "blue"),
+            cls.NORMAL  : ("X", "Y", "Z"),
             
         }
         return map[field_type]
@@ -324,6 +334,8 @@ class PointCloudData(BaseData):
                     copy.deepcopy(source_field.color_map),
                 )
             cloned_field.color_map = copy.deepcopy(source_field.color_map)
+            cloned_field.scalar_component = source_field.scalar_component
+            cloned_field.rgb_components = source_field.rgb_components
             subcloud._fields.append(cloned_field)
 
         return subcloud, source_indices.copy()
@@ -397,7 +409,15 @@ class FieldBase:
     name: str
     data: np.ndarray
     field_type: FieldType
-    color_map: Optional[ColorMap] = None
+    color_map: Optional[Union[ColorMap, VectorColorMap]] = None
+    scalar_component: int = 0
+    rgb_components: tuple[int, int, int] = (0, 1, 2)
+
+    def save_color_metadata(self, field_group):
+        if self.color_map is not None:
+            self.color_map.save_h5py(field_group)
+        field_group.attrs['scalar_component'] = self.scalar_component
+        field_group.attrs['rgb_components'] = self.rgb_components
     
     def save_hdf5(self, fields_group: h5py.Group) -> h5py.Group:
         field_group = fields_group.create_group(self.name)
@@ -406,8 +426,7 @@ class FieldBase:
         field_dataset = field_group.create_dataset('data', self.data.shape,data=self.data)
 
         # save cmap
-        if self.color_map is not None:
-            self.color_map.save_h5py(field_group)
+        self.save_color_metadata(field_group)
         return field_group
     
     @staticmethod
@@ -433,8 +452,10 @@ class FieldBase:
         if color_map_ds is None:
             color_map_ds = field_group.get('ColorMap')
         if color_map_ds is not None:
-            assert isinstance(color_map_ds, h5py.Dataset)
             color_map = ColorMap.load_h5py(color_map_ds)
+            if field_type == FieldType.COLOR and 'mapping_type' not in color_map_ds.attrs:
+                # Legacy COLOR fields ignored scalar maps and rendered RGB directly.
+                color_map = None
         else:
             color_map = None
         
@@ -443,7 +464,9 @@ class FieldBase:
     @classmethod
     def from_hdf5_fieldgroup(cls, field_group: h5py.Group) -> "FieldBase":
         name, data, field_type, color_map = cls._read_hdf5_fieldgroup(field_group)
-        return cls(name, data, field_type, color_map)
+        return cls(name, data, field_type, color_map,
+                   int(field_group.attrs.get('scalar_component', 0)),
+                   tuple(int(v) for v in field_group.attrs.get('rgb_components', (0, 1, 2))))
     
 
 

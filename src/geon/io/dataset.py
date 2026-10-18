@@ -94,9 +94,20 @@ class Dataset:
         self._doc_refs:         list[DocumentReference] = []
         self._loaded_docs:      dict[str, Document] = {}
         self._max_loaded_docs:  int = 5
-
-
+        self.color_map_report = []
         self.use_intermid_dirs: bool = True
+
+    @property
+    def unique_color_maps(self):
+        from .color_maps import unique_maps
+        return unique_maps(self)
+
+    def resolve_color_map_conflicts(self):
+        from .color_maps import resolve_conflicts
+        self.color_map_report = resolve_conflicts(self)
+        return self.color_map_report
+
+
 
 
     @property
@@ -111,6 +122,7 @@ class Dataset:
         doc_ref = self.create_new_reference(doc)
         self._loaded_docs[doc.name] = doc
         self.pop_old_loaded()
+        self.resolve_color_map_conflicts()
         return doc_ref
         
         
@@ -187,9 +199,9 @@ class Dataset:
         for fp in file_paths:
 
             with h5py.File(fp, "r") as f:
-                version = f["document"].attrs["geon_format_version"]
+                version = f["document"].attrs.get("geon_format_version", 0)
                 assert not isinstance(version,  h5py.Empty)
-                if version.astype(int) > GEON_FORMAT_VERSION:
+                if int(version) > GEON_FORMAT_VERSION:
                     raise ValueError(
                         f"Unsupported GEON format version {version} in {fp}; "
                         f"current version is {GEON_FORMAT_VERSION}"
@@ -205,6 +217,7 @@ class Dataset:
                 )
             if doc_ref.name not in self.doc_ref_names:
                 self._doc_refs.append(doc_ref)
+        self.resolve_color_map_conflicts()
                 
     
     

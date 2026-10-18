@@ -129,12 +129,14 @@ def test_unassigned_rgb_visibility(qt_app, field_name):
     assert colors.shape == (4, 3)
     np.testing.assert_array_equal(colors[0], [204, 204, 204])
     layer.set_unassigned_point_color([10, 20, 30, 100])
-    layer._visibility_mask = np.array([True, False, True, True])
+    layer.set_visibility_mask(np.array([True, False, True, True]))
     layer.update()
     visible = vtk_to_numpy(layer._poly.GetPointData().GetScalars())
-    assert visible.shape == (3, 3)
+    assert visible.shape == (4, 3)
     np.testing.assert_array_equal(visible[0], [10, 20, 30])
-    np.testing.assert_array_equal(visible[1:, :3], colors[2:, :3])
+    np.testing.assert_array_equal(visible[1:, :3], colors[1:, :3])
+    np.testing.assert_array_equal(
+        vtk_to_numpy(layer._poly.GetPointData().GetArray('geonVisible')), [1, 0, 1, 1])
     layer.set_background_field_name(field_name)
     for poly, _mapper, stride in layer._blend.pipelines:
         foreground = vtk_to_numpy(poly.GetPointData().GetScalars())
@@ -203,9 +205,10 @@ def test_rgb_view_keeps_colors_and_handles_empty_visibility(qt_app):
     layer.set_unassigned_point_color([1, 2, 3, 0])
     np.testing.assert_array_equal(vtk_to_numpy(layer._poly.GetPointData().GetScalars()), rgb)
     layer.active_field_name = "instances"
-    layer._visibility_mask = np.zeros(4, dtype=bool)
+    layer.set_visibility_mask(np.zeros(4, dtype=bool))
     layer.update()
-    assert layer._poly.GetNumberOfPoints() == 0
+    assert layer._poly.GetNumberOfPoints() == 4
+    assert not vtk_to_numpy(layer._poly.GetPointData().GetArray('geonVisible')).any()
     assert layer._poly.GetPointData().GetScalars().GetNumberOfComponents() == 3
     layer.detach()
 

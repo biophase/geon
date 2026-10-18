@@ -60,8 +60,6 @@ class PointCloudSelection:
         if enabled:
             mask = np.zeros(len(layer.data.points), dtype=np.uint8)
             mask[selection] = 1
-            if not layer._shader_visibility and layer._visibility_mask is not None:
-                mask = mask[layer._visibility_mask]
         for poly, mapper, stride in layer._blend.pipelines:
             current = poly.GetPointData().GetArray(self.ARRAY)
             # Deselect uses only a uniform; allocate zero attributes only on setup/resize.

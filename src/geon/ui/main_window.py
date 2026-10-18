@@ -7,6 +7,7 @@ from .layer_checks import require_active_layer
 from .context_ribbon import ContextRibbon
 from .imports import FieldEditorDialog
 from .preferences_dialog import PreferencesDialog
+from .window_layout import WindowLayout
 from .features_dialog import FeaturesDialog
 from .region_growing_dialog import RegionGrowingDialog
 from .plane_ransac_dialog import PlaneRansacDialog
@@ -131,6 +132,7 @@ class MainWindow(QMainWindow):
         
         # widget initialization
         self.ribbon = ContextRibbon(self)
+        self.ribbon.setObjectName('ContextRibbon')
         self.addToolBar(Qt.ToolBarArea.TopToolBarArea, self.ribbon)
 
         self.viewer = VTKViewer(self)
@@ -142,12 +144,16 @@ class MainWindow(QMainWindow):
         self.scene_manager = SceneManager(self.viewer, self.tool_controller, self) 
         self.scene_manager.preferences = self.preferences
         self.dataset_manager = DatasetManager(self)
+        from .color_channels import ColorChannels
+        self.color_channels = ColorChannels(self)
+        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.color_channels)
         self.menu_bar = MenuBar(self)
         
         # menu bar
         view_menu = cast(QMenu, self.menu_bar.addMenu("&View"))
         view_menu.addAction(self.scene_manager.toggleViewAction())
         view_menu.addAction(self.dataset_manager.toggleViewAction())
+        view_menu.addAction(self.color_channels.toggleViewAction())
         view_menu.addSeparator()
         act_toggle_edl = cast(QAction, view_menu.addAction("Toggle EDL"))
         act_toggle_edl.setCheckable(True)
@@ -243,6 +249,11 @@ class MainWindow(QMainWindow):
         # initial float widget placement
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.scene_manager)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.dataset_manager)
+        self.scene_manager.setObjectName('SceneManager')
+        self.dataset_manager.setObjectName('DatasetManager')
+        self.tool_dock.setObjectName('CommonTools')
+        self.window_layout = WindowLayout(self)
+        self.window_layout.restore()
         # self.tabifyDockWidget(self.scene_widget, self.dataset_widget)
 
 
@@ -254,6 +265,12 @@ class MainWindow(QMainWindow):
         
         
     def _on_layer_activated(self, layer) -> None:
+        if not self.color_channels.activate(layer):
+            scene = self.scene_manager._scene
+            if scene is not None and self.color_channels.layer is not None:
+                scene.active_layer_id = self.color_channels.layer.id
+                self.scene_manager.populate_tree()
+            return
         self._ribbon_layer = layer
         hooks = LAYER_UI.resolve(layer)
         if hooks.ribbon_widget is None:
@@ -263,6 +280,14 @@ class MainWindow(QMainWindow):
             widget = hooks.ribbon_widget(layer, self.ribbon, self.tool_controller)
             self.ribbon.set_group(title, widget, "layer")
         self._on_layer_internal_sel_changed(layer)
+
+    def closeEvent(self, event):
+        if not self.color_channels.allow_switch():
+            event.ignore()
+            return
+        super().closeEvent(event)
+        if event.isAccepted():
+            self.window_layout.save()
         
     def _on_layer_display_changed(self, layer) -> None:
         if getattr(self, "_ribbon_layer", None) is layer:
@@ -278,6 +303,8 @@ class MainWindow(QMainWindow):
         self.ribbon.set_group(title, widget, 'selection')
 
     def _on_layer_data_modified(self, _layer) -> None:
+        if _layer is not None:
+            _layer.signals.fieldDataChanged.emit()
         scene = self.scene_manager._scene
         dataset = self.dataset_manager._dataset
         if scene is None or dataset is None:
@@ -394,6 +421,7 @@ class MainWindow(QMainWindow):
 
     def _on_edit_preferences(self) -> None:
         dlg = PreferencesDialog(self.preferences, parent=self)
+        dlg.resetWindowArrangementRequested.connect(self.window_layout.reset)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             dlg.apply()
             self.preferences.save()

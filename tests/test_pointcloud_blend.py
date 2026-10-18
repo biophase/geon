@@ -41,7 +41,10 @@ def test_mix_only_changes_uniform_and_preserves_state():
     assert layer.foreground_mix == .37
     assert not layer._blend.enabled
     for poly, mapper, _ in layer._blend.pipelines:
-        assert poly.GetPointData().GetArray(layer._blend.ARRAY) is None
+        # The unused background aliases foreground storage, without another copy.
+        foreground = ns.vtk_to_numpy(poly.GetPointData().GetArray('geonForegroundInput'))
+        background = ns.vtk_to_numpy(poly.GetPointData().GetArray(layer._blend.ARRAY))
+        assert np.shares_memory(foreground, background)
     layer.set_background_field_name("red")
     layer.data.remove_fields("red")
     layer.update()
@@ -49,9 +52,7 @@ def test_mix_only_changes_uniform_and_preserves_state():
 
 
 @pytest.mark.parametrize("kind", [FieldType.SCALAR, FieldType.INTENSITY, FieldType.VECTOR, FieldType.NORMAL, FieldType.INSTANCE])
-@pytest.mark.parametrize('shader_visibility', [False, True])
-def test_field_conversion_visibility_and_lod(kind, monkeypatch, shader_visibility):
-    monkeypatch.setenv('GEON_SHADER_VISIBILITY', '1' if shader_visibility else '0')
+def test_field_conversion_visibility_and_lod(kind):
     layer, _ = make_layer()
     values = np.arange(201, dtype=np.float32).reshape(-1, 1)
     if kind in (FieldType.VECTOR, FieldType.NORMAL):
@@ -62,13 +63,13 @@ def test_field_conversion_visibility_and_lod(kind, monkeypatch, shader_visibilit
     layer.set_background_field_name("field")
     mask = np.arange(201) % 2 == 0
     layer.set_visibility_mask(mask)
-    assert layer._poly.GetNumberOfPoints() == (201 if shader_visibility else 101)
-    assert layer._poly_coarse.GetNumberOfPoints() == (3 if shader_visibility else 2)
+    assert layer._poly.GetNumberOfPoints() == 201
+    assert layer._poly_coarse.GetNumberOfPoints() == 3
     fine = ns.vtk_to_numpy(layer._poly.GetPointData().GetArray(layer._blend.ARRAY))
     coarse = ns.vtk_to_numpy(layer._poly_coarse.GetPointData().GetArray(layer._blend.ARRAY))
     np.testing.assert_equal(coarse, fine[::100])
     layer.set_visibility_mask(np.zeros(201, dtype=bool))
-    assert layer._poly.GetNumberOfPoints() == (201 if shader_visibility else 0)
+    assert layer._poly.GetNumberOfPoints() == 201
     layer.set_background_field_name(None)
     layer.set_active_field_name("field")
 
@@ -134,7 +135,8 @@ def test_live_background_edits_components_and_colormap():
     np.testing.assert_allclose(background(), original[::-1])
     layer.data.get_fields("vector")[0].color_map = ColorMap("new")
     layer.update()
-    assert not np.array_equal(background(), original[::-1])
+    # A new map changes lookup uniforms, not the uploaded input values.
+    np.testing.assert_array_equal(background(), original[::-1])
     schema = SemanticSchema("test", [SemanticClass(0, "class", (0, 255, 0))])
     layer.data.add_field("semantic", np.zeros(2, dtype=np.int32), FieldType.SEMANTIC, schema=schema)
     layer.set_background_field_name("semantic")
@@ -144,9 +146,7 @@ def test_live_background_edits_components_and_colormap():
     np.testing.assert_equal(background(), [[1, 0, 0], [1, 0, 0]])
 
 
-@pytest.mark.parametrize('shader_visibility', [False, True])
-def test_lod_picking_clipping_and_detach(monkeypatch, shader_visibility):
-    monkeypatch.setenv('GEON_SHADER_VISIBILITY', '1' if shader_visibility else '0')
+def test_lod_picking_clipping_and_detach():
     layer, renderer = make_layer()
     layer.set_background_field_name("blue")
     mask = np.arange(201) % 2 == 0
@@ -156,8 +156,8 @@ def test_lod_picking_clipping_and_detach(monkeypatch, shader_visibility):
     for _, mapper, _ in layer._blend.pipelines:
         assert mapper.GetNumberOfClippingPlanes() == 1
     layer._main_actor.SetMapper(layer._mapper_coarse)
-    assert layer.data_index_from_picked_id(1) == (100 if shader_visibility else 200)
-    assert layer.world_xyz_from_picked_id(1) == ((100. if shader_visibility else 200.), 0., 0.)
+    assert layer.data_index_from_picked_id(1) == 100
+    assert layer.world_xyz_from_picked_id(1) == (100., 0., 0.)
     layer.detach()
     assert not renderer.HasObserver(vtk.vtkCommand.StartEvent)
     layer.attach(renderer)

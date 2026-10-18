@@ -68,6 +68,9 @@ class DatasetManager(Dock):
 
 
     def set_dataset(self, dataset: Optional[Dataset]):
+        panel = getattr(self.window(), 'color_channels', None)
+        if panel is not None and not panel.activate(None):
+            return
         self._dataset = dataset
         self.update_tree_visibility()
         self.populate_tree()
@@ -84,6 +87,9 @@ class DatasetManager(Dock):
             self.stack.setCurrentIndex(1)  # show tree
 
     def set_active_doc(self, doc_ref: DocumentReference) -> Optional[Document]:
+        panel = getattr(self.window(), 'color_channels', None)
+        if panel is not None and not panel.allow_switch():
+            return
         if self._dataset is None:
             return
         if doc_ref.loadedState == RefLoadedState.ACTIVE:
@@ -321,6 +327,8 @@ class DatasetManager(Dock):
             return
         
         self._dataset.populate_references()
+        if self._dataset.color_map_report:
+            QMessageBox.information(self, 'Color map names', '\n'.join(self._dataset.color_map_report))
 
         for doc_ref in self._dataset._doc_refs:
             item = QTreeWidgetItem([

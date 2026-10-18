@@ -20,7 +20,7 @@ from ..semantic_export import export_semantic_schema
 from PyQt6.QtWidgets import (QWidget, QMenu, QHBoxLayout, QVBoxLayout, QLabel,
                              QPushButton, QToolButton, QGridLayout, QDialog,
                              QMessageBox, QSpacerItem, QSizePolicy,
-                             QSpinBox, QSlider, QComboBox)
+                             QSlider, QComboBox)
 from PyQt6.QtGui import QIcon
 from PyQt6.QtCore import Qt, QTimer
 from geon.config.theme import UIStyle
@@ -111,23 +111,6 @@ def _decrease_point_size(
             ctx.viewer.rerender()
 
 
-def _set_vector_component(
-    layer: PointCloudLayer,
-    controller: ToolController,
-    field_name: str,
-    component_index: int,
-    spinbox: QSpinBox,
-) -> None:
-    ctx = controller.ctx
-    if ctx is None:
-        return
-    clamped = layer.set_vector_field_active_index(field_name, component_index)
-    if spinbox.value() != clamped:
-        spinbox.blockSignals(True)
-        spinbox.setValue(clamped)
-        spinbox.blockSignals(False)
-    ctx.viewer.rerender()
-        
 def _background_column(layer: PointCloudLayer, parent: QWidget,
                        controller: ToolController) -> QWidget:
     column = QWidget(parent)
@@ -371,51 +354,6 @@ def _ribbon(
             
             
             
-        if af.field_type == FieldType.VECTOR:
-            if af.data.ndim == 2 and af.data.shape[1] > 1:
-                col_2 = QVBoxLayout()
-                row = QHBoxLayout()
-                label = QLabel("Component: ")
-                label.setStyleSheet(UIStyle.TYPE_LABEL.value)
-                spinbox = QSpinBox(w)
-                spinbox.setRange(0, af.data.shape[1] - 1)
-                spinbox.setValue(layer.vf_active_index[af.name])
-                spinbox.setKeyboardTracking(False)
-                spinbox.setFixedWidth(spinbox.fontMetrics().horizontalAdvance("888") + 34)
-                spinbox.valueChanged.connect(
-                    lambda value, fn=af.name, sb=spinbox: _set_vector_component(
-                        layer, controller, fn, value, sb
-                    )
-                )
-                count_label = QLabel(f"/ {af.data.shape[1] - 1}")
-                count_label.setStyleSheet(UIStyle.TYPE_LABEL.value)
-                row.addWidget(label)
-                row.addWidget(spinbox)
-                row.addWidget(count_label)
-                col_2.addLayout(row)
-        
-        if af.field_type == FieldType.NORMAL:
-            if af.data.ndim == 2 and af.data.shape[1] > 1:
-                col_2 = QVBoxLayout()
-                row = QHBoxLayout()
-                label = QLabel("Component: ")
-                label.setStyleSheet(UIStyle.TYPE_LABEL.value)
-                spinbox = QSpinBox(w)
-                spinbox.setRange(0, af.data.shape[1] - 1)
-                spinbox.setValue(layer.vf_active_index[af.name])
-                spinbox.setKeyboardTracking(False)
-                spinbox.setFixedWidth(spinbox.fontMetrics().horizontalAdvance("888") + 34)
-                spinbox.valueChanged.connect(
-                    lambda value, fn=af.name, sb=spinbox: _set_vector_component(
-                        layer, controller, fn, value, sb
-                    )
-                )
-                count_label = QLabel(f"/ {af.data.shape[1] - 1}")
-                count_label.setStyleSheet(UIStyle.TYPE_LABEL.value)
-                row.addWidget(label)
-                row.addWidget(spinbox)
-                row.addWidget(count_label)
-                col_2.addLayout(row)
     
     
     if col_2 is not None:

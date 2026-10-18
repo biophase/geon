@@ -78,3 +78,25 @@ Building native modules:
 
 
 
+# Color channels
+
+Open **View → Color channels** to inspect visible-point histograms and edit a
+field's colors. The dock can float or be hidden; hidden docks defer histogram
+calculation. This feature uses the `pyqtgraph` dependency.
+
+Scalar maps use a color gradient; vector maps use three component-to-intensity
+curves. Normals default to **RGB (-1 to 1)**. Color fields default to **RGB (0 to
+1)** or **RGB (0 to 255)** according to their values. Empty range limits use the
+full field/component extrema, independently of point visibility.
+
+Drag interior stops, double-click the gradient to add a stop, or double-click a
+stop to edit its output. End stops cannot be removed. **Duplicate** creates an
+independent map. Edits preview on the active field; **Revert** restores its
+original settings. **Save** updates matching named map definitions throughout
+the dataset, writing only color-map metadata to existing HDF5 files. Component
+bindings belong to each field. Unsaved documents still require a document save.
+
+The file format is now version 4. Older absolute-stop maps are read with explicit
+limits that preserve their previous appearance. Map-name conflicts are resolved
+with numbered suffixes and reported when the dataset is populated.
+

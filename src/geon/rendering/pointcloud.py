@@ -1,4 +1,4 @@
-from geon.util.operation_timing import timed, timing, timing_note  # TEMP_VISIBILITY_PROFILE
+from geon.util.operation_timing import timed, timing  # TEMP_VISIBILITY_PROFILE
 import vtk 
 from vtk.util import numpy_support as ns # type: ignore
 
@@ -14,21 +14,18 @@ from geon.data.pointcloud import (PointCloudData, FieldType,
 from geon.config import theme
 from geon.settings import DEFAULT_PREFS
 
-from ..data.definitions import ColorMap
-from ..util.common import blend_colors
 from .base import BaseLayer
 from .pointcloud_blend import PointCloudBlend
 from .pointcloud_lod import PointCloudLOD
-from .util import build_vtk_color_transfer_function
 from .layer_registry import layer_for
 
 
-from dataclasses import dataclass, field
 from typing import Optional, Tuple
 import math
-import os
 from .pointcloud_visibility import PointCloudVisibility
 from .pointcloud_selection import PointCloudSelection
+from .color_mapping import GPUColorMapping, default_map, components
+from geon.data.definitions import VectorColorMap, finite_extrema, resolve_limits, sample_map
 
 
 
@@ -47,9 +44,9 @@ class PointCloudLayer(BaseLayer[PointCloudData]):
         self._blend: PointCloudBlend | None = None
         self._lod: PointCloudLOD | None = None
         self._coarse_stride = 100
-        # Prototype switch: set GEON_SHADER_VISIBILITY=0 for the previous pipeline.
-        self._shader_visibility = os.environ.get("GEON_SHADER_VISIBILITY", "1") != "0"
         self._visibility_shader = None
+        self._color_mapping = None
+        self._color_overrides = {}
         self._visibility_mask:      Optional[NDArray[np.bool_]] = None
         self._active_selection:     Optional[NDArray[np.int32]] = None
         self._selection_shader = PointCloudSelection(self)
@@ -71,8 +68,6 @@ class PointCloudLayer(BaseLayer[PointCloudData]):
 
     
 
-        # index of currently displayed scalar in each vector field
-        self._vf_active_index: dict[str, int] = {}
     
     def set_unassigned_point_color(self, color: tuple[int, ...] | list[int]) -> None:
         rgba = tuple(int(max(0, min(255, c))) for c in color)
@@ -92,18 +87,9 @@ class PointCloudLayer(BaseLayer[PointCloudData]):
             return None
         return f[0]
         
-    def _populate_vf_active_index(self) -> None:
-        for f_name in self.data.field_names:
-            if f_name in self._vf_active_index.keys():
-                self._vf_active_index[f_name] = \
-                    min(self._vf_active_index[f_name], 
-                        max(0, self.data[f_name].shape[-1] - 1))
-            else:
-                self._vf_active_index[f_name] = 0
     @property
     def vf_active_index (self) -> dict[str, int]:
-        self._populate_vf_active_index()
-        return self._vf_active_index
+        return {field.name: field.scalar_component for field in self.data.get_fields()}
 
     @property
     def active_field_name(self) -> Optional[str]:
@@ -114,6 +100,7 @@ class PointCloudLayer(BaseLayer[PointCloudData]):
     def active_field_name(self, field_name:str) -> None:
         assert field_name in self.data.field_names
         self._active_field_name = field_name
+        self.signals.activeFieldChanged.emit()
 
 
     @property
@@ -147,8 +134,8 @@ class PointCloudLayer(BaseLayer[PointCloudData]):
         if not math.isfinite(amount):
             raise ValueError("Blend amount must be finite.")
         self.foreground_mix = max(0.0, min(1.0, amount))
-        if self._blend is not None:
-            self._blend.set_mix(self.foreground_mix)
+        if self._color_mapping is not None:
+            self._color_mapping.set_mix(self.foreground_mix)
 
     def set_vector_field_active_index(self, field_name: str, index: int) -> int:
         fields = self.data.get_fields(names=field_name)
@@ -161,28 +148,17 @@ class PointCloudLayer(BaseLayer[PointCloudData]):
             raise ValueError(f"Field '{field_name}' has no component axis.")
         max_index = max(0, field.data.shape[1] - 1)
         clamped = int(max(0, min(max_index, index)))
-        self.vf_active_index[field_name] = clamped
+        field.scalar_component = clamped
         self.update()
         return clamped
 
-    def _init_visibility_mask(self)->None:
-        if self.data.points.ndim < 2:
-            raise Exception\
-                (f"Point cloud holds invalid data: {self.data.points.shape}")
-        self._visibility_mask = np.ones((self.data.points.shape[0]),dtype=bool)
-    
-    def _reset_visibility_mask(self)->None:
-        self._visibility_mask = None
-
     @timed('Set visibility mask')  # TEMP_VISIBILITY_PROFILE
     def set_visibility_mask(self, mask: Optional[NDArray[np.bool_]]) -> None:
-        timing_note(f"Visibility backend: {'shader' if self._visibility_shader is not None else 'CPU filtering'}")  # TEMP_VISIBILITY_PROFILE
         if mask is None:
             self._visibility_mask = None
             if self._visibility_shader is not None:
                 self._visibility_shader.set_mask(None)
-            else:
-                self.update()
+            self.signals.pointVisibilityChanged.emit()
             return
         mask_arr = np.asarray(mask, dtype=bool)
         if mask_arr.ndim != 1:
@@ -196,8 +172,7 @@ class PointCloudLayer(BaseLayer[PointCloudData]):
         if self._visibility_shader is not None:
             with timing('Update shader visibility attribute'):  # TEMP_VISIBILITY_PROFILE
                 self._visibility_shader.set_mask(mask_arr)
-        else:
-            self.update()
+        self.signals.pointVisibilityChanged.emit()
 
     
     def _build_pipeline(
@@ -221,18 +196,14 @@ class PointCloudLayer(BaseLayer[PointCloudData]):
             
             vertex = vtk.vtkVertexGlyphFilter() # points -> drawable 'vertex' objects
             vertex.SetInputData(poly)
-            if self._shader_visibility:
-                # Build topology once. Attribute changes must not rerun glyph generation.
-                vertex.Update()
-                poly.SetVerts(vertex.GetOutput().GetVerts())
+            # Build topology once. Attribute changes must not rerun glyph generation.
+            vertex.Update()
+            poly.SetVerts(vertex.GetOutput().GetVerts())
             
     
             
             mapper = vtk.vtkPolyDataMapper()
-            if self._shader_visibility:
-                mapper.SetInputData(poly)
-            else:
-                mapper.SetInputConnection(vertex.GetOutputPort())
+            mapper.SetInputData(poly)
             mapper.SetScalarModeToUsePointData()
             mapper.Update()
             return poly, mapper
@@ -260,12 +231,10 @@ class PointCloudLayer(BaseLayer[PointCloudData]):
             (self._poly_coarse, self._mapper_coarse, self._coarse_stride),
         ])
 
-        if self._shader_visibility:
-            self._visibility_shader = PointCloudVisibility(actor, self._blend.pipelines)
-            self._visibility_mask = None
-        else:
-            self._init_visibility_mask()
+        self._visibility_shader = PointCloudVisibility(actor, self._blend.pipelines)
+        self._visibility_shader.set_mask(self._visibility_mask)
         self._selection_shader.attach()
+        self._color_mapping = GPUColorMapping(self)
 
     def _apply_clipping_planes(self) -> None:
         for mapper in (self._mapper_fine, self._mapper_coarse):
@@ -295,68 +264,48 @@ class PointCloudLayer(BaseLayer[PointCloudData]):
     def data_index_from_picked_id(self, sub_id: int) -> int:
         coarse = self._main_actor is not None and self._main_actor.GetMapper() is self._mapper_coarse
         stride = self._coarse_stride if coarse else 1
-        if self._shader_visibility:
-            return int(sub_id * stride)
-        return self.visible_inds[::stride][sub_id]
+        return int(sub_id * stride)
 
     @timed('Prepare field display')  # TEMP_VISIBILITY_PROFILE
     def _field_display(self, field: FieldBase | None):
         """Resolve a field using the same rules for foreground and background."""
+        if field is not None:
+            field = self._color_overrides.get(field.name, field)
         ctf = scalar_range = None
         colors_np : Optional[NDArray[np.uint8]] = None # (N,3) colors
         scalars_np : Optional[NDArray[np.float32]] = None # (N,) scalar
 
-        def construct_default_cmap(scalars_np: np.ndarray, cmap_type:Optional[str] = None):
-
-            smin, smax = (scalars_np.min(), scalars_np.max()) if scalars_np.size else (0.0, 1.0)
-            c_pos = np.array([smin, smax])
-            cmap = ColorMap.get_cmap(cmap_type,tuple(c_pos.tolist()))
-            return cmap
-        
         if field is not None:
-            mask = None if self._shader_visibility else self._visibility_mask
-            data_visible = field.data[mask] if mask is not None else field.data
+            # Keep field arrays aligned with the full geometry; visibility is
+            # applied by the shader and does not change the color-map range.
+            data = field.data
+            if field.field_type not in (FieldType.SEMANTIC, FieldType.INSTANCE):
+                mapping = default_map(field)
+                values = components(field, mapping)
+                maps = mapping.channels if isinstance(mapping, VectorColorMap) else (mapping,)
+                results = []
+                for channel, values_channel in zip(maps, values):
+                    lo, hi = resolve_limits(channel, finite_extrema(values_channel))
+                    t = np.full(len(values_channel), .5) if lo == hi else (values_channel-lo)/(hi-lo)
+                    output = sample_map(channel, np.nan_to_num(t))
+                    output[~np.isfinite(values_channel)] = .6
+                    results.append(output)
+                rgb = np.column_stack(results) if isinstance(mapping, VectorColorMap) else results[0]
+                return (np.clip(rgb*255, 0, 255).astype(np.uint8), None, None, None)
             
-            if field.field_type == FieldType.COLOR:
-                if data_visible.ndim != 2:
-                    raise ValueError(f"Unexpected color field shape: {data_visible.shape}")
-                if np.all(np.logical_and(0. <= data_visible, data_visible <= 1.)):
-                    colors_np = (data_visible * 255).astype(np.uint8)
-                elif np.all(np.logical_and(0 <= data_visible, data_visible <= 255)):
-                    colors_np = data_visible.astype(np.uint8)
-            
-            elif field.field_type == FieldType.SCALAR or\
-                    field.field_type == FieldType.INTENSITY:
-                cmap_type = 'gray' if field.field_type == FieldType.INTENSITY else None
-                scalars_np = np.asarray(data_visible, dtype=np.float32).reshape(-1)
-                color_map = field.color_map or construct_default_cmap(scalars_np, cmap_type)
-                ctf, scalar_range = build_vtk_color_transfer_function(color_map)
-            
-            elif field.field_type == FieldType.VECTOR or \
-                    field.field_type == FieldType.NORMAL:
-                ind = self.vf_active_index[field.name]
-                ind = max(0, min(ind, data_visible.shape[1] - 1))
-                scalars_np = data_visible[:,ind]
-                color_map = field.color_map or construct_default_cmap(scalars_np)
-                ctf, scalar_range = build_vtk_color_transfer_function(color_map)
-
-            elif field.field_type == FieldType.SEMANTIC:
+            if field.field_type == FieldType.SEMANTIC:
                 assert isinstance(field, SemanticSegmentation), "Unmatching definition."
                 colors_np = field.schema.get_color_array(field.data)
-                if mask is not None:
-                    colors_np = colors_np[mask]
                             
             elif field.field_type == FieldType.INSTANCE:
                 assert isinstance(field, InstanceSegmentation), "Unmatching definition."
                 colors_np = field.get_color_array()
-                if mask is not None:
-                    colors_np = colors_np[mask]
 
         if colors_np is not None and field is not None and field.field_type in (
             FieldType.SEMANTIC, FieldType.INSTANCE
         ):
             colors_np = colors_np[:, :3].copy()
-            unassigned = data_visible.reshape(-1) == -1
+            unassigned = data.reshape(-1) == -1
             colors_np[unassigned] = self.unassigned_point_color[:3]
 
         return colors_np, scalars_np, ctf, scalar_range
@@ -376,6 +325,7 @@ class PointCloudLayer(BaseLayer[PointCloudData]):
     @timed('Point cloud update')  # TEMP_VISIBILITY_PROFILE
     def update(self) -> None:
         names = self.data.field_names
+        previous_field_name = self._active_field_name
         if self._active_field_name not in names:
             self._active_field_name = names[0] if names else None
         if self.background_field_name not in names:
@@ -384,51 +334,33 @@ class PointCloudLayer(BaseLayer[PointCloudData]):
             return
         assert self._blend is not None and self._main_actor is not None
 
-        with timing('Gather visible XYZ'):  # TEMP_VISIBILITY_PROFILE
-            mask = None if self._shader_visibility else self._visibility_mask
-            points = self.data.points[mask] if mask is not None else self.data.points
-        display = self._field_display(self.active_field)
-        colors, scalars, ctf, scalar_range = display
-        with timing('Prepare background/blending'):  # TEMP_VISIBILITY_PROFILE
-            if self.background_field_name is not None:
-                colors = self._display_rgb(display, len(points))
-                background = self._field_display(self.data.get_fields(self.background_field_name)[0])
-                self._blend.enable(self._display_rgb(background, len(points)), self.foreground_mix)
-            else:
-                self._blend.disable()
+        points = self.data.points
+        self._blend.enabled = self.background_field_name is not None
 
         with timing('Replace VTK arrays (fine and coarse)'):  # TEMP_VISIBILITY_PROFILE
             topology_changed = False
             for poly, mapper, stride in self._blend.pipelines:
                 poly.GetPoints().SetData(ns.numpy_to_vtk(np.ascontiguousarray(points[::stride]), deep=False))
-                if self._shader_visibility and poly.GetNumberOfVerts() != poly.GetNumberOfPoints():
+                if poly.GetNumberOfVerts() != poly.GetNumberOfPoints():
                     vertex = vtk.vtkVertexGlyphFilter()
                     vertex.SetInputData(poly)
                     vertex.Update()
                     poly.SetVerts(vertex.GetOutput().GetVerts())
                     topology_changed = True
                 mapper.SetScalarModeToUsePointData()
-                if colors is not None:
-                    poly.GetPointData().SetScalars(ns.numpy_to_vtk(np.ascontiguousarray(colors[::stride]), deep=False))
-                    mapper.SetColorModeToDirectScalars()
-                    mapper.ScalarVisibilityOn()
-                    mapper.SetLookupTable(None)
-                elif scalars is not None:
-                    poly.GetPointData().SetScalars(ns.numpy_to_vtk(np.ascontiguousarray(scalars[::stride]), deep=False))
-                    mapper.SetColorModeToMapScalars()
-                    mapper.ScalarVisibilityOn()
-                    mapper.SetLookupTable(ctf)
-                    mapper.SetUseLookupTableScalarRange(True)
-                    mapper.SetScalarRange(*scalar_range)
-                else:
-                    poly.GetPointData().SetScalars(None)
-                    mapper.ScalarVisibilityOff()
-                    self._main_actor.GetProperty().SetColor(*theme.DEFAULT_OBJ_COLOR)
                 poly.Modified()
             if topology_changed:
                 self._visibility_shader.set_mask(self._visibility_mask)
-        if topology_changed or not self._shader_visibility:
+        if topology_changed:
             self._selection_shader.update_mask()
+        self._color_mapping.refresh()
+        if previous_field_name != self._active_field_name:
+            self.signals.activeFieldChanged.emit()
+        self.signals.fieldDataChanged.emit()
+
+    def preview_color_map(self, field, mapping):
+        if self._color_mapping is not None:
+            self._color_mapping.preview(field, mapping)
 
     def set_point_size(self, size: int) -> None:
         size = int(max(1, min(size, 50)))  # clamp

@@ -1,4 +1,4 @@
-"""Prototype visibility attribute shared by display and hardware picking."""
+"""Point visibility attribute shared by display and hardware picking."""
 
 import numpy as np
 import vtk

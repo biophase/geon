@@ -15,6 +15,9 @@ def build_vtk_color_transfer_function(
     """
 
     positions = np.asarray(colormap.color_positions, dtype=float)
+    low = 0.0 if colormap.min is None else colormap.min
+    high = 1.0 if colormap.max is None else colormap.max
+    positions = low + positions * (high-low)
     colors = np.asarray(colormap.color_definitions, dtype=float)
 
     if positions.ndim != 1:

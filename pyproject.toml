@@ -28,6 +28,7 @@ dependencies = [
   "numpy>=1.23",
   "h5py>=3.8",
   "PyQt6>=6.6",
+  "pyqtgraph>=0.13.7",
   "vtk>=9.2",
   "plyfile>=0.8.1",
   "pye57",

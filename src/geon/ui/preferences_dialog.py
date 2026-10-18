@@ -13,13 +13,15 @@ from PyQt6.QtWidgets import (
     QHBoxLayout, QLabel,
 )
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QColor
 
 from geon.settings import Preferences
 
 
 class PreferencesDialog(QDialog):
+    resetWindowArrangementRequested = pyqtSignal()
+
     def __init__(self, preferences: Preferences, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Preferences")
@@ -70,6 +72,13 @@ class PreferencesDialog(QDialog):
         appearance = add_tab("Appearance")
         user_form = add_section(general, "User")
         telemetry_form = add_section(general, "Telemetry")
+        window_form = add_section(general, "Window arrangement")
+        self.reset_window_arrangement_button = QPushButton("Reset window arrangement to default")
+        self.reset_window_arrangement_button.setToolTip(
+            "Immediately restore the default window size and dock layout."
+        )
+        self.reset_window_arrangement_button.clicked.connect(self.resetWindowArrangementRequested.emit)
+        window_form.addRow(self.reset_window_arrangement_button)
         camera_form = add_section(viewport, "Camera")
         viewport_form = add_section(appearance, "General viewport")
         cell_form = add_section(appearance, "Cell complex")

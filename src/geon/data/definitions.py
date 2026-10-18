@@ -15,12 +15,26 @@ class ColorMap:
     color_type: Literal['rgb', 'hsv'] = 'rgb'
     color_positions:    NDArray[np.float32] = field(default_factory=lambda: np.array([0., 1.], dtype=np.float32))
     color_definitions:  NDArray[np.float32] = field(default_factory=lambda: np.array([[1.,0.,0.],[0.,1.,0.]], dtype=np.float32))
-    positions_type: Literal['normalized', 'absolute'] = 'normalized'
+    min: Optional[float] = None
+    max: Optional[float] = None
+
+    def validate(self):
+        validate_stops(self.color_positions, self.color_definitions, self.min, self.max)
+        if np.asarray(self.color_definitions).shape != (len(self.color_positions), 3):
+            raise ValueError('Color stops require three components')
+        if self.color_type not in ('rgb', 'hsv'):
+            raise ValueError('Unknown color space')
+
+    def signature(self):
+        self.validate()
+        return ('scalar', self.color_type, self.min, self.max,
+                tuple(self.color_positions), tuple(map(tuple, self.color_definitions)))
 
     
     
     def save_h5py(self, field_group: h5py.Group) -> None:
         """Save or update only the color map in an existing field group."""
+        self.validate()
         data = np.concat([
             self.color_positions[:,None],
             self.color_definitions
@@ -35,6 +49,8 @@ class ColorMap:
         dataset.attrs['name'] = self.name
         dataset.attrs['color_type'] = self.color_type
         dataset.attrs['columns'] = ' '.join(['pos'] + list(self.color_type))
+        dataset.attrs['mapping_type'] = 'scalar'
+        save_limits(dataset, self)
         # Older versions saved this spelling, but did not load it correctly.
         if 'ColorMap' in field_group:
             del field_group['ColorMap']
@@ -42,20 +58,39 @@ class ColorMap:
 
     @classmethod
     def load_h5py(cls, dataset: h5py.Dataset):
+        if isinstance(dataset, h5py.Group):
+            return VectorColorMap.load_h5py(dataset)
         name = dataset.attrs.get('name',"Unnamed Colormap")
         color_type = dataset.attrs.get('color_type', 'rgb')
+        name = name.decode('utf-8') if isinstance(name, bytes) else str(name)
+        color_type = color_type.decode('utf-8') if isinstance(color_type, bytes) else str(color_type)
         assert color_type in ['hsv','rgb']
         data = dataset[()]
         assert isinstance(data , np.ndarray), f"Wrong parsing of colormap data, got: {type(data)}"
-        return cls(
+        positions = data[:, 0]
+        colors = data[:, 1:]
+        minimum, maximum = read_limits(dataset)
+        if 'mapping_type' not in dataset.attrs:
+            order = np.argsort(positions, kind='stable')
+            positions, colors = positions[order], colors[order]
+            positions, indices = np.unique(positions, return_index=True)
+            colors = colors[indices]
+            minimum, maximum = float(positions[0]), float(positions[-1])
+            if minimum == maximum:
+                positions, colors = np.array([0., 1.]), np.repeat(colors[-1:], 2, axis=0)
+            else:
+                positions = (positions - minimum) / (maximum - minimum)
+        result = cls(
             name=name, 
             color_type=color_type, 
-            color_positions=data[:,0], 
-            color_definitions=data[:,1:]
+            color_positions=positions,
+            color_definitions=colors, min=minimum, max=maximum,
             )
+        result.validate()
+        return result
     
     @classmethod
-    def get_cmap(cls, cmap_type: Optional[str], min_max: Tuple[float, float]) -> "ColorMap":
+    def get_cmap(cls, cmap_type: Optional[str], min_max: Optional[Tuple[float, float]] = None) -> "ColorMap":
 
         
         cmap_type = cmap_type or 'rainbow'
@@ -72,10 +107,153 @@ class ColorMap:
             color_definitions=base.color_definitions.copy(),
         )
 
-        dif = min_max[1] - min_max[0]
-        cmap.color_positions = cmap.color_positions * dif + min_max[0]
+        if min_max is not None:
+            cmap.min, cmap.max = map(float, min_max)
 
         return cmap
+
+
+def validate_stops(positions, outputs, minimum, maximum):
+    p, c = np.asarray(positions), np.asarray(outputs)
+    if p.ndim != 1 or len(p) < 2 or not np.isfinite(p).all():
+        raise ValueError('At least two finite stops are required')
+    if p[0] != 0 or p[-1] != 1 or np.any(np.diff(p) <= 0):
+        raise ValueError('Stops must increase strictly from 0 to 1')
+    if len(c) != len(p) or not np.isfinite(c).all() or np.any((c < 0) | (c > 1)):
+        raise ValueError('Stop outputs must be finite and between 0 and 1')
+    for limit in (minimum, maximum):
+        if limit is not None and not np.isfinite(limit):
+            raise ValueError('Limits must be finite or empty')
+    if minimum is not None and maximum is not None and minimum > maximum:
+        raise ValueError('Minimum must not exceed maximum')
+
+
+def save_limits(obj, mapping):
+    for key in ('min', 'max'):
+        value = getattr(mapping, key)
+        if key in obj.attrs:
+            del obj.attrs[key]
+        if value is not None:
+            obj.attrs[key] = float(value)
+
+
+def read_limits(obj):
+    return tuple(float(obj.attrs[k]) if k in obj.attrs else None for k in ('min', 'max'))
+
+
+@dataclass
+class ChannelMap:
+    color_positions: np.ndarray = field(default_factory=lambda: np.array([0., 1.]))
+    output_values: np.ndarray = field(default_factory=lambda: np.array([0., 1.]))
+    min: Optional[float] = None
+    max: Optional[float] = None
+
+    def validate(self):
+        validate_stops(self.color_positions, self.output_values, self.min, self.max)
+        if np.asarray(self.output_values).ndim != 1:
+            raise ValueError('Channel outputs must be one-dimensional')
+
+    def signature(self):
+        self.validate()
+        return (self.min, self.max, tuple(self.color_positions), tuple(self.output_values))
+
+
+@dataclass
+class VectorColorMap:
+    name: str
+    red: ChannelMap = field(default_factory=ChannelMap)
+    green: ChannelMap = field(default_factory=ChannelMap)
+    blue: ChannelMap = field(default_factory=ChannelMap)
+
+    @property
+    def channels(self):
+        return (self.red, self.green, self.blue)
+
+    def validate(self):
+        for channel in self.channels:
+            channel.validate()
+
+    def signature(self):
+        return ('vector', *(channel.signature() for channel in self.channels))
+
+    def save_h5py(self, field_group):
+        self.validate()
+        for key in ('color_map', 'ColorMap'):
+            if key in field_group:
+                del field_group[key]
+        group = field_group.create_group('color_map')
+        group.attrs['mapping_type'] = 'vector'
+        group.attrs['name'] = self.name
+        for key, channel in zip(('red', 'green', 'blue'), self.channels):
+            ds = group.create_dataset(key, data=np.column_stack((channel.color_positions, channel.output_values)))
+            save_limits(ds, channel)
+
+    @classmethod
+    def load_h5py(cls, group):
+        if group.attrs.get('mapping_type') != 'vector':
+            raise ValueError('Unknown color mapping type')
+        channels = []
+        for key in ('red', 'green', 'blue'):
+            ds = group[key]
+            values = ds[()]
+            channels.append(ChannelMap(values[:, 0], values[:, 1], *read_limits(ds)))
+        result = cls(group.attrs['name'], *channels)
+        result.validate()
+        return result
+
+
+def vector_preset(minimum, maximum):
+    return VectorColorMap(f'RGB ({minimum} to {maximum})', *[
+        ChannelMap(min=minimum, max=maximum) for _ in range(3)])
+
+
+def finite_extrema(values):
+    values = np.asarray(values)
+    low, high = np.inf, -np.inf
+    # Bound temporary storage for large clouds, including strided components.
+    flat = values.flat
+    for start in range(0, values.size, 1_000_000):
+        block = np.asarray(flat[start:start+1_000_000])
+        if np.issubdtype(block.dtype, np.integer):
+            low, high = min(low, block.min()), max(high, block.max())
+            continue
+        valid = np.isfinite(block)
+        low = min(low, np.min(block, where=valid, initial=np.inf))
+        high = max(high, np.max(block, where=valid, initial=-np.inf))
+    return (float(low), float(high)) if low != np.inf else (0., 1.)
+
+
+def resolve_limits(mapping, extrema):
+    low = extrema[0] if mapping.min is None else mapping.min
+    high = extrema[1] if mapping.max is None else mapping.max
+    if low > high:
+        raise ValueError('Resolved minimum exceeds maximum')
+    return float(low), float(high)
+
+
+def sample_map(mapping, positions):
+    """Evaluate relative positions identically for previews and GPU tables."""
+    mapping.validate()
+    t = np.clip(positions, 0, 1)
+    if isinstance(mapping, ChannelMap):
+        return np.interp(t, mapping.color_positions, mapping.output_values)
+    # VTK supplies the same HSV interpolation convention as existing rendering.
+    import vtk
+    ctf = vtk.vtkColorTransferFunction()
+    if mapping.color_type == 'hsv':
+        ctf.SetColorSpaceToHSV()
+    for position, color in zip(mapping.color_positions, mapping.color_definitions):
+        if mapping.color_type == 'hsv':
+            ctf.AddHSVPoint(float(position), *map(float, color))
+        else:
+            ctf.AddRGBPoint(float(position), *map(float, color))
+    if mapping.color_type == 'rgb':
+        return np.stack([np.interp(t, mapping.color_positions, mapping.color_definitions[:, c])
+                         for c in range(3)], axis=-1)
+    from vtk.util import numpy_support as ns
+    values = ns.numpy_to_vtk(np.ascontiguousarray(t).reshape(-1), deep=False)
+    rgb = ns.vtk_to_numpy(ctf.MapScalars(values, vtk.VTK_COLOR_MODE_MAP_SCALARS, 0))[:, :3]
+    return (rgb.astype(float) / 255.).reshape(np.shape(t) + (3,))
 
 
         

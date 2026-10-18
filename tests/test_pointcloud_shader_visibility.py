@@ -7,9 +7,25 @@ from geon.data.pointcloud import PointCloudData, FieldType
 from geon.rendering.pointcloud import PointCloudLayer
 
 
+def test_visibility_survives_attach_and_field_updates():
+    data = PointCloudData(np.zeros((3, 3), dtype=np.float32))
+    data.add_field('intensity', np.array([[0.], [50.], [100.]]), FieldType.INTENSITY)
+    layer = PointCloudLayer(data)
+    mask = np.array([False, True, False])
+    layer.set_visibility_mask(mask)
+    renderer = vtk.vtkRenderer()
+    for _ in range(2):
+        layer.attach(renderer)
+        layer.update()
+        np.testing.assert_array_equal(
+            ns.vtk_to_numpy(layer._poly.GetPointData().GetArray('geonVisible')), mask)
+        assert layer._poly.GetNumberOfPoints() == 3
+        assert layer._color_mapping.states['Foreground'][1] == [(0., 100.)]
+        layer.detach()
+
+
 @pytest.mark.parametrize('coarse', [False, True])
-def test_hidden_foreground_does_not_intercept_pick(monkeypatch, coarse):
-    monkeypatch.setenv('GEON_SHADER_VISIBILITY', '1')
+def test_hidden_foreground_does_not_intercept_pick(coarse):
     # Coarse sample indices 0 and 100 overlap, with 0 closest to camera.
     points = np.full((101, 3), 100., dtype=np.float32)
     points[0] = [0, 0, 1]
@@ -89,8 +105,7 @@ def test_hidden_foreground_does_not_intercept_pick(monkeypatch, coarse):
         window.Finalize()
 
 
-def test_geometry_count_change_rebuilds_topology(monkeypatch):
-    monkeypatch.setenv('GEON_SHADER_VISIBILITY', '1')
+def test_geometry_count_change_rebuilds_topology():
     data = PointCloudData(np.zeros((1, 3), dtype=np.float32))
     layer = PointCloudLayer(data)
     layer.attach(vtk.vtkRenderer())

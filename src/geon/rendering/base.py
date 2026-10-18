@@ -5,6 +5,14 @@ from geon.data.base import BaseData
 from typing import Any, TypeVar, Generic, Optional, Sequence, Tuple
 from dataclasses import dataclass, field
 from enum import Enum, auto
+from PyQt6.QtCore import QObject, pyqtSignal
+
+
+class LayerSignals(QObject):
+    pointVisibilityChanged = pyqtSignal()
+    fieldDataChanged = pyqtSignal()
+    activeFieldChanged = pyqtSignal()
+    colorDisplayChanged = pyqtSignal()
 
 TData = TypeVar("TData", bound=BaseData) 
 
@@ -25,6 +33,7 @@ class BaseLayer(Generic[TData], ABC):
 
 
     data: TData
+    signals: LayerSignals = field(default_factory=LayerSignals, init=False, repr=False, compare=False)
     visible: bool = True
     # active: bool = True
     _browser_name: str = 'Untitled'

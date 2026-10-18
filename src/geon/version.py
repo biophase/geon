@@ -1,4 +1,4 @@
-GEON_FORMAT_VERSION = 3
+GEON_FORMAT_VERSION = 4
 GEON_FORMAT_NAME = "geon"
 
 from importlib.metadata import PackageNotFoundError, version
