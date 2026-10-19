@@ -270,9 +270,9 @@
      inkscape:pageopacity="0.0"
      inkscape:pagecheckerboard="0"
      inkscape:deskcolor="#d1d1d1"
-     inkscape:zoom="2.8284271"
-     inkscape:cx="12123.346"
-     inkscape:cy="90.332891"
+     inkscape:zoom="2"
+     inkscape:cx="11979.5"
+     inkscape:cy="186.25"
      inkscape:window-width="2560"
      inkscape:window-height="1371"
      inkscape:window-x="0"
@@ -938,7 +938,8 @@
        height="200"
        id="page142"
        margin="15.077301 0 28.898159"
-       bleed="0" /></sodipodi:namedview><g
+       bleed="0"
+       inkscape:label="settings" /></sodipodi:namedview><g
      inkscape:groupmode="layer"
      inkscape:label="Image"
      id="g1"
