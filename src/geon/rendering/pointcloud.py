@@ -12,7 +12,7 @@ from geon.data.pointcloud import (PointCloudData, FieldType,
                                   )
 
 from geon.config import theme
-from geon.settings import DEFAULT_PREFS
+from geon.settings import DEFAULT_PREFS, coarse_points_stride, normalize_coarse_points_percent
 
 from .base import BaseLayer
 from .pointcloud_blend import PointCloudBlend
@@ -43,7 +43,8 @@ class PointCloudLayer(BaseLayer[PointCloudData]):
         self.foreground_mix: float = 0.5
         self._blend: PointCloudBlend | None = None
         self._lod: PointCloudLOD | None = None
-        self._coarse_stride = 100
+        self.coarse_points_percent = DEFAULT_PREFS["coarse_points_percent"]
+        self._coarse_stride = coarse_points_stride(self.coarse_points_percent)
         self._visibility_shader = None
         self._color_mapping = None
         self._color_overrides = {}
@@ -180,7 +181,6 @@ class PointCloudLayer(BaseLayer[PointCloudData]):
         renderer: vtk.vtkRenderer,
         out_actors: list[vtk.vtkProp],
         
-        coarse_ratio: float = 0.01 # point ratio of coarse LOD
     ) -> None:
         
         # numpy data -> vtk data -> vtk points -> poly -> vertex glyph filter -> mapper
@@ -209,7 +209,6 @@ class PointCloudLayer(BaseLayer[PointCloudData]):
             return poly, mapper
         
         # build mappers
-        self._coarse_stride = max(1, int(1 / coarse_ratio))
         self._poly, self._mapper_fine = _build_points(points_np)
         self._poly_coarse, self._mapper_coarse = _build_points(points_np[::self._coarse_stride])
         self._apply_clipping_planes()
@@ -243,6 +242,22 @@ class PointCloudLayer(BaseLayer[PointCloudData]):
             mapper.RemoveAllClippingPlanes()
             for plane in self._clipping_planes:
                 mapper.AddClippingPlane(plane)
+
+    def set_coarse_points_percent(self, percent: float) -> None:
+        self.coarse_points_percent = normalize_coarse_points_percent(percent)
+        stride = coarse_points_stride(self.coarse_points_percent)
+        if stride == self._coarse_stride:
+            return
+        self._coarse_stride = stride
+        if self._blend is None or self.renderer is None:
+            return
+        # Keep the actors and mappers (and the scene's actor lookup) intact.
+        # Visibility shares this list; color mapping reads it on refresh.
+        self._blend.pipelines[1] = (self._poly_coarse, self._mapper_coarse, stride)
+        self.update()
+        # Refresh even if the new stride happens to produce the same count.
+        self._visibility_shader.set_mask(self._visibility_mask)
+        self._selection_shader.update_mask()
 
     def set_clipping_planes(self, planes: list[vtk.vtkPlane]) -> None:
         self._clipping_planes = list(planes)
@@ -324,6 +339,8 @@ class PointCloudLayer(BaseLayer[PointCloudData]):
 
     @timed('Point cloud update')  # TEMP_VISIBILITY_PROFILE
     def update(self) -> None:
+        if self._lod is not None:
+            self._lod.invalidate()
         names = self.data.field_names
         previous_field_name = self._active_field_name
         if self._active_field_name not in names:

@@ -1,6 +1,8 @@
-"""Keep one shader-capable actor while selecting a point-cloud mapper."""
+"""Point-cloud detail levels for the shared viewport LOD coordinator."""
 
 import vtk
+
+from .lod import LODCoordinator
 
 
 class PointCloudLOD:
@@ -10,16 +12,40 @@ class PointCloudLOD:
         self.actor = actor
         self.fine = fine
         self.coarse = coarse
-        self.observer = renderer.AddObserver(vtk.vtkCommand.StartEvent, self._select)
+        self.level = 0
+        self._costs = [None, None]
+        self.coordinator = LODCoordinator.for_renderer(renderer)
+        self.coordinator.register(self)
 
-    def _select(self, *_) -> None:
-        # As with vtkLODActor, use the measured full-resolution draw time and
-        # the renderer's frame budget. Still renders have a generous budget.
-        count = max(1, self.renderer.GetViewProps().GetNumberOfItems())
-        budget = self.renderer.GetAllocatedRenderTime() / count
-        mapper = self.coarse if self.fine.GetTimeToDraw() > budget else self.fine
+    @property
+    def visible(self):
+        return bool(self.actor.GetVisibility())
+
+    def costs(self):
+        fine = self._costs[0] or 0.0
+        coarse = self._costs[1]
+        if coarse is None:
+            fine_count = max(1, self.fine.GetInput().GetNumberOfPoints())
+            ratio = self.coarse.GetInput().GetNumberOfPoints() / fine_count
+            coarse = fine * ratio
+        return [fine, coarse]
+
+    def select_level(self, level):
+        self.level = level
+        mapper = self.fine if level == 0 else self.coarse
         if self.actor.GetMapper() is not mapper:
             self.actor.SetMapper(mapper)
 
+    def record_frame(self):
+        mapper = self.fine if self.level == 0 else self.coarse
+        measured = max(0.0, mapper.GetTimeToDraw())
+        old = self._costs[self.level]
+        self._costs[self.level] = measured if old is None else 0.7 * old + 0.3 * measured
+        return measured
+
+    def invalidate(self):
+        self._costs = [None, None]
+        self.coordinator.overhead = 0.0
+
     def close(self) -> None:
-        self.renderer.RemoveObserver(self.observer)
+        self.coordinator.unregister(self)

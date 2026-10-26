@@ -1,5 +1,6 @@
 import vtk
 from dataclasses import dataclass
+from contextlib import nullcontext
 
 from PyQt6.QtCore import QTimer
 
@@ -63,7 +64,9 @@ class PointPicker:
         try:
             if display_pass is not None:
                 self.renderer.SetPass(None)
-            selection = selector.Select()
+            coordinator = getattr(self.renderer, '_geon_lod_coordinator', None)
+            with coordinator.picking() if coordinator is not None else nullcontext():
+                selection = selector.Select()
         finally:
             if display_pass is not None:
                 self.renderer.SetPass(display_pass)

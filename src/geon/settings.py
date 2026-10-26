@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable
+import math
 
 try:  # Python 3.11+
     import tomllib  # type: ignore
@@ -14,6 +15,7 @@ DEFAULT_PREFS: Dict[str, Any] = {
     "user_name": "Unnamed User",
     "enable_telemetry": False,
     "camera_sensitivity": 10.0,
+    "coarse_points_percent": 1.0,
     "cell_complex_size_mode": "screen",
     "cell_complex_screen_size_px": 12.0,
     "cell_complex_world_size": 0.1,
@@ -24,6 +26,21 @@ DEFAULT_PREFS: Dict[str, Any] = {
     "viewport_text_color": [255, 255, 255],
     "unassigned_point_color": [204, 204, 204, 255],
 }
+
+
+def normalize_coarse_points_percent(value: Any) -> float:
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        return DEFAULT_PREFS["coarse_points_percent"]
+    if not math.isfinite(value):
+        return DEFAULT_PREFS["coarse_points_percent"]
+    return max(0.01, min(50.0, value))
+
+
+def coarse_points_stride(percent: float) -> int:
+    # Integer strides approximate the requested percentage.
+    return max(2, min(10000, round(100.0 / normalize_coarse_points_percent(percent))))
 
 REGION_GROWING_PREFIX = "region_growing__"
 PLANE_RANSAC_PREFIX = "plane_ransac__"
@@ -140,6 +157,7 @@ class Preferences:
     user_name: str = DEFAULT_PREFS["user_name"]
     enable_telemetry: bool = DEFAULT_PREFS["enable_telemetry"]
     camera_sensitivity: float = DEFAULT_PREFS["camera_sensitivity"]
+    coarse_points_percent: float = DEFAULT_PREFS["coarse_points_percent"]
     cell_complex_size_mode: str = DEFAULT_PREFS["cell_complex_size_mode"]
     cell_complex_screen_size_px: float = DEFAULT_PREFS["cell_complex_screen_size_px"]
     cell_complex_world_size: float = DEFAULT_PREFS["cell_complex_world_size"]
@@ -168,6 +186,7 @@ class Preferences:
     path: Path = None  # type: ignore
 
     def __post_init__(self) -> None:
+        self.coarse_points_percent = normalize_coarse_points_percent(self.coarse_points_percent)
         if self.path is None:
             self.path = _default_path()
 
@@ -193,6 +212,8 @@ class Preferences:
                     val = val.strip()
                     data[key] = _parse_scalar(val)
             prefs.user_name = str(data.get("user_name", prefs.user_name))
+            prefs.coarse_points_percent = normalize_coarse_points_percent(
+                data.get("coarse_points_percent", prefs.coarse_points_percent))
             prefs.enable_telemetry = bool(data.get("enable_telemetry", prefs.enable_telemetry))
             cam_val = data.get("camera_sensitivity", prefs.camera_sensitivity)
             try:
@@ -274,6 +295,7 @@ class Preferences:
 
     def to_toml(self) -> str:
         lines = [
+            f'coarse_points_percent = {normalize_coarse_points_percent(self.coarse_points_percent)}',
             f'user_name = {_toml_scalar(self.user_name)}',
             f'enable_telemetry = {_toml_scalar(self.enable_telemetry)}',
             f'camera_sensitivity = {_toml_scalar(float(self.camera_sensitivity))}',
