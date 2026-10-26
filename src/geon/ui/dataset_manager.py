@@ -27,6 +27,7 @@ from PyQt6.QtGui import QFontMetrics
 class DatasetManager(Dock):
     requestSetActiveDocInScene      = pyqtSignal(Document)
     requestClearUndoStacks          = pyqtSignal()
+    requestAppendMeshToActiveDoc    = pyqtSignal(object)
     
 
     def __init__(self, parent) -> None:
@@ -415,6 +416,43 @@ class DatasetManager(Dock):
         self.populate_tree()
         self.set_active_doc(doc_ref)
         
+    def import_mesh_from_ply(self):
+        from geon.data.mesh import MeshData
+        from .mesh_import_dialog import MeshImportDialog
+
+        if self._dataset is None:
+            if not self.set_work_dir() or self._dataset is None:
+                return
+        path, _ = QFileDialog.getOpenFileName(self, "Open PLY mesh", "", "PLY Files (*.ply)")
+        if not path:
+            return
+        try:
+            mesh = MeshData.from_ply(path)
+        except Exception as exc:
+            QMessageBox.critical(self, "Import mesh failed", f"Could not load PLY mesh:\n{exc}")
+            return
+        scene_manager = getattr(self.window(), "scene_manager", None)
+        scene = getattr(scene_manager, "_scene", None)
+        dialog = MeshImportDialog(
+            mesh, self, active_document_name=scene.doc.name if scene is not None else None)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        if dialog.append_to_active_document:
+            self.requestAppendMeshToActiveDoc.emit(mesh)
+            return
+        # Document names also become filenames; keep the existing import convention.
+        base = osp.splitext(osp.basename(path))[0]
+        name = base
+        suffix = 1
+        while name in self._dataset.doc_ref_names:
+            name = f"{base}_{suffix:03}"
+            suffix += 1
+        doc = Document(name)
+        doc.add_data(mesh)
+        doc_ref = self._dataset.add_document(doc)
+        self.populate_tree()
+        self.set_active_doc(doc_ref)
+
     def disable(self) -> None:
         self.tree.setEnabled(False)
     

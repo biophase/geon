@@ -13,6 +13,7 @@ from geon.config import theme
 from geon.data.boundingbox import FACE_NAMES, BoundingBox, BoundingBoxData
 
 from .base import BaseLayer
+from .selection import SelectableLayer
 from .layer_registry import layer_for
 
 
@@ -24,7 +25,7 @@ WIRE_EDGES = (
 
 
 @layer_for(BoundingBoxData)
-class BoundingBoxLayer(BaseLayer[BoundingBoxData]):
+class BoundingBoxLayer(BaseLayer[BoundingBoxData], SelectableLayer):
     layer_type_id = "boundingbox"
     use_cell_picking_for_selection = True
 
@@ -74,10 +75,21 @@ class BoundingBoxLayer(BaseLayer[BoundingBoxData]):
     def active_selection(self, selection: set[str] | list[str] | tuple[str, ...] | None) -> None:
         known_ids = {box.id for box in self.data.boxes}
         self._active_selection = set(selection or ()) & known_ids
+        if not self._active_selection:
+            self._selection_phase = 0.0
         if self._selected_face is not None and self._selected_face[0] not in self._active_selection:
             self._selected_face = None
         self._sync_selection_timer()
         self.update()
+        self.signals.selectionChanged.emit()
+
+    def capture_selection(self):
+        return (self.active_selection, self.selected_face)
+
+    def restore_selection(self, state):
+        selection, face = state
+        self.active_selection = selection
+        self.selected_face = face
 
     @property
     def selected_face(self) -> tuple[str, str] | None:
@@ -94,6 +106,7 @@ class BoundingBoxLayer(BaseLayer[BoundingBoxData]):
             self._active_selection = {value[0]}
         self._sync_selection_timer()
         self.update()
+        self.signals.selectionChanged.emit()
 
     @property
     def browser_sel_descr(self) -> str | None:

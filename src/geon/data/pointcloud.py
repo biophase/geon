@@ -268,6 +268,11 @@ class PointCloudData(BaseData):
                 return [f for f in self._fields if f.field_type == field_type]
             return [f for f in self._fields]
 
+    def extract_selection(self, selection):
+        """Independent subset retaining every field and its metadata."""
+        data, _ = self.extract_subcloud(selection, field_names=self.field_names)
+        return data
+
     def extract_subcloud(
         self,
         selection: np.ndarray,

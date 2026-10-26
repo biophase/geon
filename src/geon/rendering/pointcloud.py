@@ -15,6 +15,7 @@ from geon.config import theme
 from geon.settings import DEFAULT_PREFS
 
 from .base import BaseLayer
+from .selection import SelectableLayer
 from .pointcloud_blend import PointCloudBlend
 from .pointcloud_lod import PointCloudLOD
 from .layer_registry import layer_for
@@ -30,7 +31,7 @@ from geon.data.definitions import VectorColorMap, finite_extrema, resolve_limits
 
 
 @layer_for(PointCloudData)
-class PointCloudLayer(BaseLayer[PointCloudData]):
+class PointCloudLayer(BaseLayer[PointCloudData], SelectableLayer):
     layer_type_id = "pointcloud"
 
     def __init__(self, data:PointCloudData, browser_name = 'Point Cloud'):
@@ -112,8 +113,12 @@ class PointCloudLayer(BaseLayer[PointCloudData]):
         if selection is not None and selection.size:
             assert selection.max() < self.data.points.shape[0]
             assert selection.min() >= 0
-        self._active_selection = selection
+        self._active_selection = selection.copy() if selection is not None and selection.size else None
         self._selection_shader.update_mask()
+        if self._active_selection is None:
+            self._selection_shader.phase = 0.0
+            self._selection_shader.set_pulse(1.0)
+        self.signals.selectionChanged.emit()
         
         
         

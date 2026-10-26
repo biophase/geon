@@ -180,6 +180,12 @@ class MainWindow(QMainWindow):
             .connect(self.dataset_manager.set_work_dir)
         self.menu_bar.importFromRequested\
             .connect(self.dataset_manager.import_doc_from_ply)
+        self.menu_bar.importMeshPlyRequested\
+            .connect(self.dataset_manager.import_mesh_from_ply)
+        self.menu_bar.deselectRequested.connect(self._on_deselect_active_layer)
+        self.menu_bar.extractSelectionRequested.connect(self._on_extract_selection)
+        self.dataset_manager.requestAppendMeshToActiveDoc\
+            .connect(self._on_append_mesh_to_active_doc)
         self.menu_bar.importCellComplexTxtRequested\
             .connect(self._on_import_cell_complex_from_txt)
         self.menu_bar.exportPointCloudPlyRequested\
@@ -463,6 +469,106 @@ class MainWindow(QMainWindow):
                     default_color=default_color,
                     selection_color=selection_color,
                 )
+
+    def _on_deselect_active_layer(self) -> None:
+        from geon.rendering.selection import SelectableLayer
+        from geon.tools.selection import ClearSelectionCmd
+        scene = self.scene_manager._scene
+        if scene is not None and isinstance(scene.active_layer, SelectableLayer):
+            self.tool_controller.do_global(ClearSelectionCmd(scene.active_layer, self.tool_controller.ctx))
+
+    def _on_extract_selection(self) -> None:
+        from geon.rendering.selection import SelectableLayer
+        from geon.tools.command_manager import LambdaCommand
+        scene = self.scene_manager._scene
+        if scene is None:
+            return
+        selected = [layer for layer in scene.layers.values()
+                    if isinstance(layer, SelectableLayer) and layer.has_selection]
+        if not selected:
+            QMessageBox.information(self, "Extract selection", "No layers have selected elements.")
+            return
+        if len(selected) > 1:
+            dialog = QMessageBox(self)
+            dialog.setWindowTitle("Extract selection")
+            dialog.setText("Multiple layers have selections. Which should be extracted?")
+            active_button = dialog.addButton("Active layer only", QMessageBox.ButtonRole.AcceptRole)
+            all_button = dialog.addButton("All layers", QMessageBox.ButtonRole.ActionRole)
+            dialog.addButton(QMessageBox.StandardButton.Cancel)
+            active_button.setEnabled(any(layer is scene.active_layer for layer in selected))
+            dialog.exec()
+            if dialog.clickedButton() is active_button:
+                selected = [scene.active_layer]
+            elif dialog.clickedButton() is not all_button:
+                return
+        try:
+            extracted = [layer.extract_selection() for layer in selected]
+        except (ValueError, TypeError, IndexError, KeyError) as exc:
+            QMessageBox.warning(self, "Extract selection", str(exc))
+            return
+        used_ids = set(scene.doc.scene_items)
+        used_names = {layer.browser_name for layer in scene.layers.values()}
+        for layer in extracted:
+            while layer.id in used_ids:
+                layer.data.id = layer.data._generate_id()
+            used_ids.add(layer.id)
+            base = layer.browser_name
+            suffix = 2
+            while layer.browser_name in used_names:
+                layer.browser_name = f"{base} {suffix}"
+                suffix += 1
+            used_names.add(layer.browser_name)
+        previous_active = scene.active_layer_id
+
+        def refresh():
+            self._mark_active_doc_modified()
+            self.scene_manager.populate_tree()
+            self.dataset_manager.populate_tree()
+            if scene.active_layer is not None:
+                self.scene_manager.broadcastActivatedLayer.emit(scene.active_layer)
+            self.viewer.rerender()
+
+        def execute():
+            added = []
+            try:
+                for layer in extracted:
+                    scene.doc.add_data(layer.data)
+                    added.append(layer)
+                    scene.add_layer(layer)
+            except Exception:
+                for layer in reversed(added):
+                    if layer.id in scene.layers:
+                        scene.remove_layer(layer.id)
+                    elif layer.id in scene.doc.scene_items:
+                        scene.doc.remove_data(layer.id)
+                raise
+            scene.active_layer_id = extracted[-1].id
+            refresh()
+
+        def undo():
+            for layer in reversed(extracted):
+                scene.remove_layer(layer.id)
+            scene.active_layer_id = previous_active if previous_active in scene.layers else None
+            refresh()
+
+        self.tool_controller.do_global(LambdaCommand("Extract selection to new layers", execute, undo))
+
+    def _on_append_mesh_to_active_doc(self, mesh) -> None:
+        scene = self.scene_manager._scene
+        if scene is None:
+            QMessageBox.information(self, "Import mesh", "Load a document before appending a mesh.")
+            return
+        # Loaded document IDs may overlap this process's generated IDs.
+        while mesh.id in scene.doc.scene_items:
+            mesh.id = mesh._generate_id()
+        scene.doc.add_data(mesh)
+        layer = scene.add_data(mesh)
+        scene.active_layer_id = layer.id
+        self._mark_active_doc_modified()
+        self.scene_manager.populate_tree()
+        self.dataset_manager.populate_tree()
+        self.scene_manager.broadcastActivatedLayer.emit(layer)
+        self.viewer.rerender()
 
     def _mark_active_doc_modified(self) -> None:
         dataset = self.dataset_manager._dataset
@@ -1427,6 +1533,22 @@ class MainWindow(QMainWindow):
             dlg.output_field_base() or "superpoints",
         )
         feature_field_names = dlg.selected_feature_field_names()
+        params = dlg.params()
+        processing_data = layer.data
+        inverse_mapping = None
+        if dlg.on_selection_only():
+            selection = layer.active_selection
+            if selection is None or selection.size == 0:
+                QMessageBox.warning(self, "Superpoint segmentation",
+                                    "The selected point cloud no longer has an active selection.")
+                return
+            try:
+                processing_data, inverse_mapping = layer.data.extract_subcloud(
+                    selection.copy(), field_names=feature_field_names)
+            except (IndexError, KeyError, TypeError, ValueError) as exc:
+                QMessageBox.warning(self, "Superpoint segmentation", str(exc))
+                return
+        result = {"labels": None}
         progress = _native_superpoints.Progress()
 
         class _SuperpointsWorker(QThread):
@@ -1436,19 +1558,15 @@ class MainWindow(QMainWindow):
             def run(self) -> None:
                 try:
                     labels, _stats = segment_superpoints(
-                        layer.data,
+                        processing_data,
                         feature_field_names=feature_field_names,
                         progress=progress,
-                        **dlg.params(),
+                        **params,
                     )
                     labels = np.asarray(labels, dtype=np.int32).reshape(-1)
-                    if labels.shape[0] != layer.data.points.shape[0]:
+                    if labels.shape[0] != processing_data.points.shape[0]:
                         raise RuntimeError("Native output label length does not match point count.")
-                    layer.data.add_field(
-                        name=output_field_name,
-                        data=labels[:, None],
-                        field_type=FieldType.INSTANCE,
-                    )
+                    result["labels"] = labels
                     self.completed.emit()
                 except Exception as exc:  # pragma: no cover - GUI path
                     self.errored.emit(str(exc))
@@ -1521,6 +1639,17 @@ class MainWindow(QMainWindow):
             return
         if cancel_requested["value"]:
             return
+
+        labels = result["labels"]
+        if labels is None:
+            return
+        if inverse_mapping is not None:
+            output_labels = np.full(layer.data.points.shape[0], -1, dtype=np.int32)
+            output_labels[inverse_mapping] = labels
+        else:
+            output_labels = labels
+        layer.data.add_field(name=output_field_name, data=output_labels[:, None],
+                             field_type=FieldType.INSTANCE)
 
         scene_after = self.scene_manager._scene
         target_layer = layer

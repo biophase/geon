@@ -4,6 +4,7 @@ from .tool_context import ToolContext
 from .registry import TOOL_REGISTRY
 from ..rendering.base import BaseLayer
 from ..rendering.pointcloud import PointCloudLayer
+from ..rendering.selection import SelectableLayer
 
 from dataclasses import dataclass, field
 from typing import Any, ClassVar, Optional
@@ -38,7 +39,7 @@ class SelectPointsCmd(Command):
                 else None
             )
         if self.selection_new is None:
-            layer.active_selection = None
+            layer.clear_selection()
         else:
             layer.active_selection = self.selection_new
         ctx.controller.layer_internal_sel_changed.emit(layer)
@@ -53,6 +54,32 @@ class SelectPointsCmd(Command):
         ctx.controller.layer_internal_sel_changed.emit(layer)
         ctx.viewer.rerender()
         
+
+class ClearSelectionCmd(Command):
+    """Clear all selection state while retaining a complete undo snapshot."""
+    def __init__(self, layer, ctx):
+        super().__init__("Deselect selection")
+        self.layer_ref = weakref.ref(layer)
+        self.ctx_ref = weakref.ref(ctx)
+        self.snapshot = layer.capture_selection()
+
+    def _apply(self, restore):
+        layer, ctx = self.layer_ref(), self.ctx_ref()
+        if layer is None or ctx is None:
+            return
+        if restore:
+            layer.restore_selection(self.snapshot)
+        else:
+            layer.clear_selection()
+        ctx.controller.layer_internal_sel_changed.emit(layer)
+        ctx.viewer.rerender()
+
+    def execute(self):
+        self._apply(False)
+
+    def undo(self):
+        self._apply(True)
+
 
 @dataclass
 class DeselectTool(CommandTool):
@@ -72,21 +99,8 @@ class DeselectTool(CommandTool):
         layer = self.ctx.scene.active_layer
         if layer is None:
             return
-        if isinstance(layer, PointCloudLayer) or hasattr(layer, "active_selection"):
-            if layer.active_selection is None:
-                return
-            else:
-                cmd = SelectPointsCmd(
-                    title="Deselect selection",
-                    selection_new=None,
-                    layer_ref=weakref.ref(layer),
-                    ctx_ref=weakref.ref(self.ctx),
-                    selection_old=layer.active_selection
-                )
-                self.command_manager.do(cmd)
-            
-        else:
-            raise NotImplementedError
+        if isinstance(layer, SelectableLayer):
+            self.command_manager.do(ClearSelectionCmd(layer, self.ctx))
         
 
     

@@ -15,11 +15,12 @@ from geon.config import theme
 from geon.data.cellcomplex import CellComplexData, EdgeCell, PointCloudRef, VertexCell
 
 from .base import BaseLayer
+from .selection import SelectableLayer
 from .layer_registry import layer_for
 
 
 @layer_for(CellComplexData)
-class CellComplexLayer(BaseLayer[CellComplexData]):
+class CellComplexLayer(BaseLayer[CellComplexData], SelectableLayer):
     layer_type_id = "cellcomplex"
     use_cell_picking_for_selection = True
     vertex_cube_wire_width = 1.0
@@ -79,8 +80,13 @@ class CellComplexLayer(BaseLayer[CellComplexData]):
     def active_selection(self, selection: set[str] | list[str] | tuple[str, ...] | None) -> None:
         known_ids = {cell.id for cell in self.data.get_cells()}
         self._active_selection = set(selection or ()) & known_ids
+        if not self._active_selection:
+            self._gizmo_hover_handle = None
+            self._gizmo_origin = None
+            self._selection_phase = 0.0
         self._sync_selection_timer()
         self.update()
+        self.signals.selectionChanged.emit()
 
     @property
     def browser_sel_descr(self) -> str | None:

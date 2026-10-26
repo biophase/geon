@@ -9,6 +9,7 @@ from PyQt6.QtCore import QObject, pyqtSignal
 
 
 class LayerSignals(QObject):
+    selectionChanged = pyqtSignal()
     pointVisibilityChanged = pyqtSignal()
     fieldDataChanged = pyqtSignal()
     activeFieldChanged = pyqtSignal()

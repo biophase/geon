@@ -10,6 +10,7 @@ class MenuBar(QMenuBar):
     setWorkdirRequested         = pyqtSignal()
     updateDocumentsRequested    = pyqtSignal()
     importFromRequested         = pyqtSignal()
+    importMeshPlyRequested      = pyqtSignal()
     importCellComplexTxtRequested = pyqtSignal()
     exportPointCloudPlyRequested = pyqtSignal()
     saveDocRequested            = pyqtSignal()
@@ -21,6 +22,8 @@ class MenuBar(QMenuBar):
     fitObbFromSelectionRequested = pyqtSignal()
     undoRequested               = pyqtSignal()
     redoRequested               = pyqtSignal()
+    deselectRequested           = pyqtSignal()
+    extractSelectionRequested   = pyqtSignal()
     editPreferencesRequested    = pyqtSignal()
     aboutRequested              = pyqtSignal()
     
@@ -47,6 +50,13 @@ class MenuBar(QMenuBar):
         act_redo.setShortcut(QKeySequence.StandardKey.Redo)
         act_redo.triggered.connect(self.redoRequested)        
         self.addMenu(self.edit_menu)
+
+        self.select_menu = QMenu("&Select", self)
+        deselect = cast(QAction, self.select_menu.addAction("Deselect active layer"))
+        deselect.triggered.connect(self.deselectRequested)
+        extract = cast(QAction, self.select_menu.addAction("Extract selection to new layer..."))
+        extract.triggered.connect(self.extractSelectionRequested)
+        self.addMenu(self.select_menu)
         
         # document menu
         self.doc_menu = QMenu("&Document",self)
@@ -86,6 +96,8 @@ class MenuBar(QMenuBar):
         self.doc_menu.addSeparator()  
         import_menu = cast(QMenu, self.doc_menu.addMenu("Import document from ..."))
         act_import_from = cast(QAction, import_menu.addAction(".PLY"))
+        act_import_mesh = cast(QAction, import_menu.addAction(".PLY Mesh..."))
+        act_import_mesh.triggered.connect(self.importMeshPlyRequested)
         act_import_cell_txt = cast(QAction, import_menu.addAction(".TXT CellComplex"))
         self.doc_menu.addMenu(import_menu,)
         act_import_from.triggered.connect(self.importFromRequested)

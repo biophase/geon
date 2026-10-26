@@ -47,6 +47,10 @@ class Scene:
 
     def add_data(self, data: BaseData) -> BaseLayer:
         layer = LAYER_REGISTRY.create_layer_for(data)
+        return self.add_layer(layer)
+
+    def add_layer(self, layer: BaseLayer) -> BaseLayer:
+        """Attach an existing layer; document insertion is the caller's responsibility."""
         if layer.id in self._layers.keys():
             raise DuplicateLayerNameError(f"Can't create duplicate layer names: {layer.id}")
         self._layers[layer.id] = layer
@@ -83,8 +87,8 @@ class Scene:
         return self._active_layer_id
 
     @active_layer_id.setter
-    def active_layer_id(self, id:str) -> None:
-        assert id in self._layers.keys()
+    def active_layer_id(self, id:Optional[str]) -> None:
+        assert id is None or id in self._layers.keys()
         self._active_layer_id = id
         
 

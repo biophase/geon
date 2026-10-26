@@ -1,4 +1,5 @@
 import json
+from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any, ClassVar, Dict, List, Optional, Set, Tuple
 from abc import ABC, abstractmethod
@@ -144,6 +145,20 @@ class CellComplexData(BaseData):
             return self.edges
         else :
             raise ValueError(f"Dim {dim} not supported")
+
+    def extract_selection(self, selection):
+        """Copy selected cells and the boundary vertices needed by selected edges."""
+        selected = set(selection)
+        known = {cell.id for cell in self.get_cells()}
+        if not selected <= known:
+            raise ValueError("Selection contains unknown cell IDs.")
+        edges = [edge for edge in self.edges if edge.id in selected]
+        vertex_ids = selected | {vertex for edge in edges for vertex in edge.boundary}
+        return type(self)(
+            vertices=deepcopy([vertex for vertex in self.vertices if vertex.id in vertex_ids]),
+            edges=deepcopy(edges),
+            semantic_attribute_schemas=deepcopy(self.semantic_attribute_schemas),
+        )
 
     def get_extents(self) -> Optional[Tuple[float, float, float, float, float, float]]:
         if not self.vertices:

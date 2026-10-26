@@ -33,6 +33,7 @@ SUPERPOINT_DEFAULTS: dict[str, object] = {
     "cutoff": 10,
     "iterations": 10,
     "parallel": True,
+    "on_selection_only": False,
     "output_field_base": "superpoints",
 }
 
@@ -66,6 +67,8 @@ class SuperpointSegmentationDialog(QDialog):
 
         self.layer_combo = QComboBox(self)
         form.addRow("Point cloud layer", self.layer_combo)
+        self.selection_only_box = QCheckBox("On selection only", self)
+        form.addRow(self.selection_only_box)
 
         feature_group = QGroupBox("Optional feature fields", self)
         feature_layout = QVBoxLayout(feature_group)
@@ -133,6 +136,7 @@ class SuperpointSegmentationDialog(QDialog):
 
         self.layer_combo.currentIndexChanged.connect(self._refresh_feature_list)
         self.output_field_edit.textChanged.connect(self._validate)
+        self.selection_only_box.toggled.connect(self._validate)
 
     def _apply_settings(self, settings: dict[str, object]) -> None:
         merged = dict(SUPERPOINT_DEFAULTS)
@@ -143,6 +147,8 @@ class SuperpointSegmentationDialog(QDialog):
         self.cutoff_spin.setValue(int(merged["cutoff"]))
         self.iterations_spin.setValue(int(merged["iterations"]))
         self.parallel_box.setChecked(bool(merged["parallel"]))
+        self.selection_only_box.setChecked(
+            bool(merged["on_selection_only"]) and self.selection_only_box.isEnabled())
         self.output_field_edit.setText(str(merged["output_field_base"]))
         selected_fields = merged.get("feature_field_names")
         if isinstance(selected_fields, list):
@@ -169,6 +175,11 @@ class SuperpointSegmentationDialog(QDialog):
     def _refresh_feature_list(self) -> None:
         self.feature_list.clear()
         layer = self.selected_layer()
+        selection = layer.active_selection if layer is not None else None
+        has_selection = selection is not None and selection.size > 0
+        self.selection_only_box.setEnabled(has_selection)
+        if not has_selection:
+            self.selection_only_box.setChecked(False)
         if layer is None:
             self._validate()
             return
@@ -197,6 +208,9 @@ class SuperpointSegmentationDialog(QDialog):
                 names.append(value)
         return names
 
+    def on_selection_only(self) -> bool:
+        return self.selection_only_box.isEnabled() and self.selection_only_box.isChecked()
+
     def output_field_base(self) -> str:
         return self.output_field_edit.text().strip()
 
@@ -212,6 +226,7 @@ class SuperpointSegmentationDialog(QDialog):
 
     def settings(self) -> dict[str, object]:
         out = self.params()
+        out["on_selection_only"] = self.on_selection_only()
         out["feature_field_names"] = self.selected_feature_field_names()
         out["output_field_base"] = self.output_field_base()
         return out

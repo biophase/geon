@@ -3,6 +3,7 @@ from .viewer import VTKViewer
 from ..data.document import Document
 from ..rendering.scene import Scene
 from ..rendering.pointcloud import PointCloudLayer
+from ..rendering.mesh import MeshLayer
 from ..rendering.cellcomplex import CellComplexLayer
 from ..rendering.base import BaseLayer
 from ..data.pointcloud import PointCloudData, FieldType, SemanticSegmentation, SemanticClass, FieldBase
@@ -253,6 +254,9 @@ class SceneManager(Dock):
                 self._populate_point_cloud_layer(layer, layer_root)
             elif isinstance(layer, CellComplexLayer):
                 self._populate_cell_complex_layer(layer, layer_root)
+            elif isinstance(layer, MeshLayer):
+                layer_root.addChild(QTreeWidgetItem([f"Vertices ({len(layer.data.vertices):,})"]))
+                layer_root.addChild(QTreeWidgetItem([f"Faces ({len(layer.data.faces):,})"]))
             else:
                 layer_root.addChild(QTreeWidgetItem([type(layer).__name__]))
         self.tree.expandAll()

@@ -3,3 +3,4 @@ from . import pointcloud_ui
 from . import cellcomplex_ui
 from . import camera_ui
 from . import boundingbox_ui
+from . import mesh_ui

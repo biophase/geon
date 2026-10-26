@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 import math
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
@@ -223,6 +224,14 @@ class BoundingBoxData(BaseData):
     @property
     def box_count(self) -> int:
         return len(self.boxes)
+
+    def extract_selection(self, selection):
+        """Copy whole selected boxes, including attributes and the schema."""
+        selected = set(selection)
+        if not selected <= {box.id for box in self.boxes}:
+            raise ValueError("Selection contains unknown box IDs.")
+        return type(self)(boxes=deepcopy([box for box in self.boxes if box.id in selected]),
+                          schema=deepcopy(self.schema))
 
     def get_extents(self) -> Optional[Tuple[float, float, float, float, float, float]]:
         if not self.boxes:
