@@ -5,7 +5,10 @@ from contextlib import contextmanager
 from typing import Protocol
 
 import vtk
+import os
 
+# auto | coarse-interaction | coarse-display
+LOD_DEBUG_MODE = os.environ.get("GEON_LOD_DEBUG", "auto")
 
 class LODParticipant(Protocol):
     """Levels are ordered from full detail to least detail; costs are seconds."""
@@ -102,20 +105,44 @@ class LODCoordinator:
         return self.renderer.GetAllocatedRenderTime() < 1.0
 
     def _start(self, *_):
-        self._frame = None
-        picking = self._picking_depth > 0 or self.renderer.GetSelector() is not None
+        picking = (
+            self._picking_depth > 0
+            or self.renderer.GetSelector() is not None
+        )
+        interactive = self._interactive()
         visible = [p for p in self.participants if p.visible]
-        if picking or not self._interactive():
+
+        force_coarse = (
+            LOD_DEBUG_MODE == "coarse-display"
+            or (
+                LOD_DEBUG_MODE == "coarse-interaction"
+                and interactive
+            )
+        )
+
+        if picking:
             for participant in self.participants:
                 participant.select_level(0)
+
+        elif force_coarse:
+            for participant in visible:
+                participant.select_level(len(participant.costs()) - 1)
+
+        elif not interactive:
+            for participant in self.participants:
+                participant.select_level(0)
+
         else:
             costs = [p.costs() for p in visible]
-            budget = max(0.0, self.renderer.GetAllocatedRenderTime() - self.overhead)
-            levels = self.choose_levels(costs, budget, [p.level for p in visible])
+            budget = max(
+                0.0,
+                self.renderer.GetAllocatedRenderTime() - self.overhead,
+            )
+            levels = self.choose_levels(
+                costs, budget, [p.level for p in visible],
+            )
             for participant, level in zip(visible, levels):
                 participant.select_level(level)
-        if not picking:
-            self._frame = (perf_counter(), visible)
 
     def _end(self, *_):
         frame, self._frame = self._frame, None
