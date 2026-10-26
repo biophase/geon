@@ -234,6 +234,10 @@ class PointCloudLayer(BaseLayer[PointCloudData]):
         self._visibility_shader.set_mask(self._visibility_mask)
         self._selection_shader.attach()
         self._color_mapping = GPUColorMapping(self)
+        # BaseLayer.attach exposes the actor to rendering immediately after
+        # this method returns. Initialize both LODs' color scalars and shader
+        # inputs first: VTK only declares vertexColorVSOutput with scalars set.
+        self.update()
 
     def _apply_clipping_planes(self) -> None:
         for mapper in (self._mapper_fine, self._mapper_coarse):

@@ -19,6 +19,46 @@ def make_layer(count=201):
     return layer, renderer
 
 
+@pytest.mark.parametrize("with_color", [False, True])
+@pytest.mark.parametrize("coarse", [False, True])
+def test_first_render_after_attach_without_update(with_color, coarse):
+    from geon.config import theme
+
+    data = PointCloudData(np.zeros((1, 3), dtype=np.float32))
+    if with_color:
+        data.add_field("red", np.array([[255, 0, 0]], dtype=np.uint8), FieldType.COLOR)
+    renderer = vtk.vtkRenderer()
+    window = vtk.vtkRenderWindow()
+    window.SetOffScreenRendering(1)
+    window.SetMultiSamples(0)
+    window.SetSize(80, 80)
+    window.AddRenderer(renderer)
+    layer = PointCloudLayer(data)
+    layer.attach(renderer)
+    # Exercise the load-time render before any UI calls layer.update().
+    layer._lod.close()
+    mapper = layer._mapper_coarse if coarse else layer._mapper_fine
+    layer._main_actor.SetMapper(mapper)
+    layer.set_point_size(15)
+    renderer.ResetCamera()
+    errors = []
+    mapper.AddObserver(vtk.vtkCommand.ErrorEvent, lambda *_: errors.append(True))
+    try:
+        window.Render()
+        capture = vtk.vtkWindowToImageFilter()
+        capture.SetInput(window)
+        capture.ReadFrontBufferOff()
+        capture.Update()
+        pixels = ns.vtk_to_numpy(capture.GetOutput().GetPointData().GetScalars())
+        expected = ([255, 0, 0] if with_color else
+                    (np.asarray(theme.DEFAULT_OBJ_COLOR) * 255).astype(np.uint8))
+        assert not errors
+        np.testing.assert_allclose(pixels.reshape(80, 80, -1)[40, 40, :3], expected, atol=1)
+    finally:
+        layer.detach()
+        window.Finalize()
+
+
 def test_mix_only_changes_uniform_and_preserves_state():
     layer, _ = make_layer()
     layer.set_background_field_name("blue")
