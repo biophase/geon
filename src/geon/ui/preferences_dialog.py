@@ -83,6 +83,17 @@ class PreferencesDialog(QDialog):
         viewport_form = add_section(appearance, "General viewport")
         cell_form = add_section(appearance, "Cell complex")
         point_form = add_section(appearance, "Point cloud")
+        self.coarse_points_input = QDoubleSpinBox(self)
+        self.coarse_points_input.setDecimals(2)
+        self.coarse_points_input.setRange(0.01, 50.0)
+        self.coarse_points_input.setSingleStep(0.1)
+        self.coarse_points_input.setSuffix(" %")
+        self.coarse_points_input.setValue(self._prefs.coarse_points_percent)
+        self.coarse_points_input.setToolTip(
+            "Approximate percentage of points retained when reduced detail is needed "
+            "during camera movement. Higher values preserve more detail but may be slower."
+        )
+        point_form.addRow("Coarse points amount", self.coarse_points_input)
         self.resize(540, 620)
 
         self.user_input = QLineEdit(self)
@@ -191,6 +202,7 @@ class PreferencesDialog(QDialog):
         )
 
     def apply(self) -> None:
+        self._prefs.coarse_points_percent = self.coarse_points_input.value()
         self._prefs.unassigned_point_color = list(self._unassigned_color.getRgb())
         self._prefs.user_name = self.user_input.text().strip() or "Unnamed User"
         self._prefs.enable_telemetry = self.telemetry_checkbox.isChecked()

@@ -142,6 +142,7 @@ class SceneManager(Dock):
         self._preferences = preferences
         if preferences is not None and self._scene is not None:
             self._scene.set_unassigned_point_color(preferences.unassigned_point_color)
+            self._scene.set_coarse_points_percent(preferences.coarse_points_percent)
 
     def on_document_loaded(self, doc: Document):
         panel = getattr(self.window(), 'color_channels', None)
@@ -154,6 +155,9 @@ class SceneManager(Dock):
             self.viewer._renderer,
             unassigned_point_color=(
                 self.preferences.unassigned_point_color if self.preferences else None
+            ),
+            coarse_points_percent=(
+                self.preferences.coarse_points_percent if self.preferences else 1.0
             ),
         )
         self._scene.set_document(doc)

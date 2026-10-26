@@ -133,8 +133,10 @@ def test_gpu_pixels_endpoints_midpoint_and_fallback(kind, coarse):
     layer.set_point_size(20)
     renderer.ResetCamera()
     if coarse:
-        renderer.AddObserver(vtk.vtkCommand.StartEvent,
-                             lambda *_: renderer.SetAllocatedRenderTime(1e-12), 1.0)
+        # This single-point cloud has identical fine/coarse geometry, so the
+        # budget policy correctly finds no saving. Force coarse to test shaders.
+        layer._lod.close()
+        layer._main_actor.SetMapper(layer._mapper_coarse)
     errors = []
     layer._mapper_fine.AddObserver(vtk.vtkCommand.ErrorEvent, lambda *_: errors.append(True))
 

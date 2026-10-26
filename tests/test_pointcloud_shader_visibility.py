@@ -5,6 +5,75 @@ from vtk.util import numpy_support as ns
 
 from geon.data.pointcloud import PointCloudData, FieldType
 from geon.rendering.pointcloud import PointCloudLayer
+from geon.ui.picker import PointPicker
+
+
+@pytest.mark.parametrize('association', ['point', 'cell'])
+@pytest.mark.parametrize('edl', [False, True])
+def test_picking_uses_fine_mapper_under_coarse_render_budget(association, edl):
+    # Index 1 is absent from the coarse sample. Index 2 is behind it.
+    points = np.full((101, 3), 100., dtype=np.float32)
+    points[1] = [0, 0, 1]
+    points[2] = [0, 0, 0]
+    layer = PointCloudLayer(PointCloudData(points))
+    renderer = vtk.vtkRenderer()
+    window = vtk.vtkRenderWindow()
+    window.SetOffScreenRendering(1)
+    window.SetMultiSamples(0)
+    window.SetSize(100, 100)
+    window.AddRenderer(renderer)
+    display_pass = None
+    if edl:
+        display_pass = vtk.vtkEDLShading()
+        display_pass.SetDelegatePass(vtk.vtkRenderStepsPass())
+        renderer.SetPass(display_pass)
+    interactor = vtk.vtkRenderWindowInteractor()
+    interactor.SetRenderWindow(window)
+    layer.attach(renderer)
+    layer.update()
+    layer.set_point_size(15)
+    camera = renderer.GetActiveCamera()
+    camera.SetPosition(0, 0, 5)
+    camera.SetFocalPoint(0, 0, 0)
+    camera.ParallelProjectionOn()
+    camera.SetParallelScale(2)
+    camera.SetClippingRange(.1, 10)
+    picker = PointPicker(renderer)
+    pick = picker.pick_point if association == 'point' else picker.pick_cell
+    try:
+        window.Render()  # Measure full-resolution draw time first.
+        layer._lod._costs = [.1, .001]
+        window.SetDesiredUpdateRate(interactor.GetDesiredUpdateRate())
+        renderer.AddObserver(vtk.vtkCommand.StartEvent,
+                             lambda *_: renderer.SetAllocatedRenderTime(1e-12), 1.0)
+        window.Render()
+        assert layer._main_actor.GetMapper() is layer._mapper_coarse
+        for expected in [1, 2]:
+            mask = np.zeros(101, dtype=bool)
+            mask[expected] = True
+            layer.set_visibility_mask(mask)
+            # Deterministic display costs: shader compilation on tiny fixtures
+            # can otherwise make coarse rendering measure slower than fine.
+            layer._lod._costs = [.1, .001]
+            costs_before = list(layer._lod._costs)
+            overhead_before = layer._lod.coordinator.overhead
+            result = pick(interactor, 50, 50)
+            assert renderer.GetPass() is display_pass
+            assert layer._lod._costs == costs_before
+            assert layer._lod.coordinator.overhead == overhead_before
+            assert result is not None
+            assert result.prop is layer._main_actor
+            assert result.element_id == expected
+            assert layer.data_index_from_picked_id(result.element_id) == expected
+            assert layer.world_xyz_from_picked_id(result.element_id) == tuple(points[expected])
+            window.Render()
+            assert layer._main_actor.GetMapper() is layer._mapper_coarse
+    finally:
+        if display_pass is not None:
+            renderer.SetPass(None)
+            display_pass.ReleaseGraphicsResources(window)
+        layer.detach()
+        window.Finalize()
 
 
 def test_visibility_survives_attach_and_field_updates():

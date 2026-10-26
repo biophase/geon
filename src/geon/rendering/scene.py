@@ -1,6 +1,6 @@
 from .base import BaseLayer
 from .pointcloud import PointCloudLayer
-from geon.settings import DEFAULT_PREFS
+from geon.settings import DEFAULT_PREFS, normalize_coarse_points_percent
 from .layer_registry import LAYER_REGISTRY
 
 from geon.data.document import Document
@@ -25,9 +25,11 @@ class Scene:
     def __init__(
         self, renderer: vtk.vtkRenderer,
         unassigned_point_color: tuple[int, ...] | list[int] | None = None,
+        coarse_points_percent: float = DEFAULT_PREFS["coarse_points_percent"],
     ) -> None:
         self._layers : OrderedDict[str, BaseLayer] = OrderedDict()
         self._renderer: vtk.vtkRenderer = renderer
+        self._coarse_points_percent = normalize_coarse_points_percent(coarse_points_percent)
         self._unassigned_point_color = tuple(
             unassigned_point_color if unassigned_point_color is not None
             else DEFAULT_PREFS["unassigned_point_color"]
@@ -56,9 +58,16 @@ class Scene:
         self._layers[layer.id] = layer
         if isinstance(layer, PointCloudLayer):
             layer.set_unassigned_point_color(self._unassigned_point_color)
+            layer.set_coarse_points_percent(self._coarse_points_percent)
         layer.attach(self._renderer)
         self._register_layer_actors(layer)
         return layer
+
+    def set_coarse_points_percent(self, percent: float) -> None:
+        self._coarse_points_percent = normalize_coarse_points_percent(percent)
+        for layer in self._layers.values():
+            if isinstance(layer, PointCloudLayer):
+                layer.set_coarse_points_percent(self._coarse_points_percent)
         
         
     def get_layer(self, name:Optional[str]=None) -> Optional[BaseLayer]:
