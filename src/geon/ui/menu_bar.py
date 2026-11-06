@@ -23,6 +23,8 @@ class MenuBar(QMenuBar):
     undoRequested               = pyqtSignal()
     redoRequested               = pyqtSignal()
     deselectRequested           = pyqtSignal()
+    expandInstanceSelectionRequested = pyqtSignal()
+    contractInstanceSelectionRequested = pyqtSignal()
     extractSelectionRequested   = pyqtSignal()
     editPreferencesRequested    = pyqtSignal()
     aboutRequested              = pyqtSignal()
@@ -56,6 +58,13 @@ class MenuBar(QMenuBar):
         deselect.triggered.connect(self.deselectRequested)
         extract = cast(QAction, self.select_menu.addAction("Extract selection to new layer..."))
         extract.triggered.connect(self.extractSelectionRequested)
+        instance_menu = self.select_menu.addMenu("Instance")
+        expand = instance_menu.addAction("Expand")
+        expand.setShortcut(QKeySequence("Ctrl+E"))
+        expand.triggered.connect(self.expandInstanceSelectionRequested)
+        contract = instance_menu.addAction("Contract")
+        contract.setShortcut(QKeySequence("Ctrl+R"))
+        contract.triggered.connect(self.contractInstanceSelectionRequested)
         self.addMenu(self.select_menu)
         
         # document menu

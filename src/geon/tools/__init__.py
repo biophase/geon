@@ -5,6 +5,7 @@ NOTE: tool imports at module level are essential for populating the registry
 and toolbars
 """
 from .lasso import LassoTool
+from .rectangle import RectangleSelectionTool
 from .selection import DeselectTool
 from .visibility import HideTool, IsolateTool, ShowTool
 from .annotate import AnnotateTool
@@ -33,6 +34,7 @@ from .camera import (
 # NOTE: Tool register order determines order in ui tool zones
 TOOL_REGISTRY.register(InspectTool)
 TOOL_REGISTRY.register(LassoTool)
+TOOL_REGISTRY.register(RectangleSelectionTool)
 TOOL_REGISTRY.register(WandTool)
 TOOL_REGISTRY.register(SeededRegionGrowingTool)
 TOOL_REGISTRY.register(SplitBetweenTool)

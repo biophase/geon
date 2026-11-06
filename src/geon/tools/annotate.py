@@ -35,7 +35,7 @@ class _AnnotateSignals(QObject):
 class _AnnotateRibbonSessionState:
     add_semantic: bool = True
     add_instance: bool = False
-    instance_mode: Literal["new", "unassigned"] = "new"
+    instance_mode: Literal["new", "unassigned", "split"] = "new"
     semantic_field_name: Optional[str] = None
     instance_field_name: Optional[str] = None
 
@@ -56,10 +56,12 @@ class AnnotatePointsCmd(Command):
     
     layer_ref: weakref.ReferenceType[PointCloudLayer]
     ctx_ref: weakref.ReferenceType[ToolContext]
-    instance_mode: Literal["new", "unassigned"] = "new"
+    instance_mode: Literal["new", "unassigned", "split"] = "new"
     inst_ind_new: Optional[int] = field(default=None, init=False)
     
     
+    inst_values_new: Optional[NDArray[np.int32]] = field(default=None, init=False)
+
     def execute(self) -> None:
         layer = self.layer_ref()
         ctx = self.ctx_ref()
@@ -82,12 +84,20 @@ class AnnotatePointsCmd(Command):
                 if self.inst_inds_old is None:
                     self.inst_inds_old = field.data[self.selection_old].copy()
                 field = cast(InstanceSegmentation, field)
-                if self.inst_ind_new is None:
-                    self.inst_ind_new = (
-                        -1 if self.instance_mode == "unassigned"
-                        else int(field.get_next_instance_id())
-                    )
-                field.data[self.selection_old] = self.inst_ind_new
+                if self.instance_mode == "split":
+                    if self.inst_values_new is None:
+                        ids, inverse = np.unique(self.inst_inds_old, return_inverse=True)
+                        mapping = field.map_to_free([int(i) for i in ids if i != -1])
+                        new_ids = np.array([mapping.get(int(i), int(i)) for i in ids], dtype=np.int32)
+                        self.inst_values_new = new_ids[inverse].reshape(self.inst_inds_old.shape)
+                    field.data[self.selection_old] = self.inst_values_new
+                else:
+                    if self.inst_ind_new is None:
+                        self.inst_ind_new = (
+                            -1 if self.instance_mode == "unassigned"
+                            else int(field.get_next_instance_id())
+                        )
+                    field.data[self.selection_old] = self.inst_ind_new
         layer.update()
         ctx.viewer.rerender()
                 
@@ -140,7 +150,7 @@ class AnnotateTool(ModeTool):
     
     choice_add_semantic: bool = True
     choice_add_instance: bool = False
-    choice_instance_mode: Literal["new", "unassigned"] = "new"
+    choice_instance_mode: Literal["new", "unassigned", "split"] = "new"
     
     copy_from_active:bool = False
     accept_possible: bool = False
@@ -468,24 +478,31 @@ class AnnotateTool(ModeTool):
 
         new_radio = QRadioButton("new", w)
         unassigned_radio = QRadioButton("unassigned", w)
+        split_radio = QRadioButton("split", w)
         instance_group = QButtonGroup(w)
         instance_group.addButton(new_radio)
         instance_group.addButton(unassigned_radio)
+        instance_group.addButton(split_radio)
         new_radio.setChecked(self.choice_instance_mode == "new")
         unassigned_radio.setChecked(self.choice_instance_mode == "unassigned")
+        split_radio.setChecked(self.choice_instance_mode == "split")
         instance_row = QHBoxLayout()
         instance_row.addWidget(new_radio)
         instance_row.addWidget(unassigned_radio)
+        instance_row.addWidget(split_radio)
         instance_row.addStretch()
         outer.addLayout(instance_row, 1, 3, 1, 2)
 
         def on_instance_mode_changed() -> None:
-            self.choice_instance_mode = "unassigned" if unassigned_radio.isChecked() else "new"
+            self.choice_instance_mode = ("split" if split_radio.isChecked() else
+                                         "unassigned" if unassigned_radio.isChecked() else "new")
             _ANNOTATE_RIBBON_SESSION.instance_mode = self.choice_instance_mode
 
+        split_radio.toggled.connect(on_instance_mode_changed)
         new_radio.toggled.connect(on_instance_mode_changed)
         unassigned_radio.toggled.connect(on_instance_mode_changed)
         accept_btn = QPushButton("Accept", w)
+        accept_btn.setToolTip("Accept annotation (S)")
         accept_btn.clicked.connect(self._Accept)
         outer.addWidget(accept_btn, 0, 5)
         copy_btn = QPushButton("Copy from ...", w)
@@ -509,6 +526,7 @@ class AnnotateTool(ModeTool):
             inst_combo.setEnabled(inst_enabled)
             new_radio.setEnabled(inst_enabled)
             unassigned_radio.setEnabled(inst_enabled)
+            split_radio.setEnabled(inst_enabled)
             any_enabled = sem_enabled or inst_enabled
             copy_btn.setEnabled(any_enabled)
             accept_btn.setEnabled(any_enabled and self.accept_possible)
@@ -569,6 +587,8 @@ class AnnotateTool(ModeTool):
         super().key_press_hook(event)
         if event.key is None:
             return
+        if event.key.lower() == 's' and not (event.ctrl or event.alt):
+            self._Accept()
         if event.key.lower() == 'escape':
             self.ctx.controller.deactivate_tool()
             

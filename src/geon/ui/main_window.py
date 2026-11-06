@@ -137,6 +137,7 @@ class MainWindow(QMainWindow):
 
         self.viewer = VTKViewer(self)
         self.viewer.set_camera_sensitivity(self.preferences.camera_sensitivity)
+        self.viewer.set_camera_precision(self.preferences.precision_camera_multiplier, self.preferences.precision_camera_hotkey)
         self.setCentralWidget(self.viewer)
         
         self.tool_controller = ToolController(context_ribbon=self.ribbon)
@@ -182,6 +183,8 @@ class MainWindow(QMainWindow):
             .connect(self.dataset_manager.import_doc_from_ply)
         self.menu_bar.importMeshPlyRequested\
             .connect(self.dataset_manager.import_mesh_from_ply)
+        self.menu_bar.expandInstanceSelectionRequested.connect(lambda: self._on_instance_selection(False))
+        self.menu_bar.contractInstanceSelectionRequested.connect(lambda: self._on_instance_selection(True))
         self.menu_bar.deselectRequested.connect(self._on_deselect_active_layer)
         self.menu_bar.extractSelectionRequested.connect(self._on_extract_selection)
         self.dataset_manager.requestAppendMeshToActiveDoc\
@@ -343,6 +346,7 @@ class MainWindow(QMainWindow):
         act_connected_components = cast(
             QAction, seg_menu.addAction("Connected components instance segmentation")
         )
+        act_connected_components.setShortcut(QKeySequence("Ctrl+T"))
         act_connected_components.triggered.connect(self._on_connected_components)
 
     def _get_active_pointcloud_layer(self) -> PointCloudLayer | None:
@@ -433,6 +437,7 @@ class MainWindow(QMainWindow):
             self.preferences.save()
             self.scene_manager.preferences = self.preferences
             self.viewer.set_camera_sensitivity(self.preferences.camera_sensitivity)
+            self.viewer.set_camera_precision(self.preferences.precision_camera_multiplier, self.preferences.precision_camera_hotkey)
             self._apply_cell_complex_preferences()
             self._apply_bounding_box_preferences()
             self.viewer.rerender()
@@ -469,6 +474,30 @@ class MainWindow(QMainWindow):
                     default_color=default_color,
                     selection_color=selection_color,
                 )
+
+    def _on_instance_selection(self, contract: bool) -> None:
+        import weakref
+        from geon.tools.selection import SelectPointsCmd
+        scene = self.scene_manager._scene
+        if scene is None or scene.active_layer is None:
+            return
+        layer = scene.active_layer
+        try:
+            operation = getattr(layer, "instance_selection", None)
+            if operation is None:
+                raise ValueError(
+                    f"{type(layer).__name__} does not implement instance selection contraction."
+                )
+            selection = operation(contract=contract)
+        except (ValueError, NotImplementedError) as exc:
+            QMessageBox.warning(self, "Instance selection", str(exc))
+            return
+        self.tool_controller.do_global(SelectPointsCmd(
+            title="Contract instance selection" if contract else "Expand instance selection",
+            selection_new=selection,
+            layer_ref=weakref.ref(layer),
+            ctx_ref=weakref.ref(self.tool_controller.ctx),
+        ))
 
     def _on_deselect_active_layer(self) -> None:
         from geon.rendering.selection import SelectableLayer

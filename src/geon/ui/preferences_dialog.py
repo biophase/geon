@@ -110,6 +110,17 @@ class PreferencesDialog(QDialog):
         self.camera_sensitivity_input.setSingleStep(0.5)
         self.camera_sensitivity_input.setValue(float(self._prefs.camera_sensitivity))
         camera_form.addRow("Camera sensitivity", self.camera_sensitivity_input)
+        self.precision_camera_multiplier_input = QDoubleSpinBox(self)
+        self.precision_camera_multiplier_input.setDecimals(6)
+        self.precision_camera_multiplier_input.setRange(0.000001, 1.0)
+        self.precision_camera_multiplier_input.setSingleStep(0.01)
+        self.precision_camera_multiplier_input.setValue(self._prefs.precision_camera_multiplier)
+        camera_form.addRow("Precision camera multiplier", self.precision_camera_multiplier_input)
+        self.precision_camera_hotkey_input = QComboBox(self)
+        self.precision_camera_hotkey_input.setEditable(True)
+        self.precision_camera_hotkey_input.addItems(["Shift", "Control", "Alt", "Meta"])
+        self.precision_camera_hotkey_input.setCurrentText(self._prefs.precision_camera_hotkey)
+        camera_form.addRow("Precision camera hotkey", self.precision_camera_hotkey_input)
 
         self.cell_size_mode_combo = QComboBox(self)
         self.cell_size_mode_combo.addItem("Screen space", "screen")
@@ -207,6 +218,8 @@ class PreferencesDialog(QDialog):
         self._prefs.user_name = self.user_input.text().strip() or "Unnamed User"
         self._prefs.enable_telemetry = self.telemetry_checkbox.isChecked()
         self._prefs.camera_sensitivity = float(self.camera_sensitivity_input.value())
+        self._prefs.precision_camera_multiplier = self.precision_camera_multiplier_input.value()
+        self._prefs.precision_camera_hotkey = self.precision_camera_hotkey_input.currentText().strip() or "Shift"
         mode = self.cell_size_mode_combo.currentData()
         self._prefs.cell_complex_size_mode = str(mode or "screen")
         self._prefs.cell_complex_screen_size_px = float(self.cell_screen_size_input.value())

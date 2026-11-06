@@ -1,8 +1,8 @@
 from geon.util.operation_timing import timed, profile_render  # TEMP_VISIBILITY_PROFILE
-from PyQt6.QtGui import QMouseEvent, QResizeEvent
+from PyQt6.QtGui import QMouseEvent, QResizeEvent, QKeySequence
 from PyQt6.QtWidgets import (QWidget, QDockWidget, QLabel, QToolButton,QHBoxLayout,
                              QTreeWidget,QVBoxLayout, QGridLayout,QPushButton,
-                             QFrame, QMenu
+                             QFrame, QMenu, QApplication
                              )
 
 from geon.config.theme import *
@@ -14,7 +14,7 @@ from geon.rendering.base import BaseLayer
 from geon.rendering.scene import Scene
 
 
-from PyQt6.QtCore import Qt, QSize, QTimer, QPoint
+from PyQt6.QtCore import Qt, QSize, QTimer, QPoint, QEvent
 
 import vtkmodules.qt
 
@@ -161,20 +161,60 @@ class InteractorStyle(vtk.vtkInteractorStyleTrackballCamera):
         if self.mode_tool is not None:
             self.mode_tool.mouse_move_event_hook(self.event_info)
         if self.camera_enabled:
-            self.OnMouseMove()
+            self._camera_action(self.OnMouseMove)
             
     def mouse_wheel_forward_event(self, _vtk_obj, _vtk_event):
         if self.mode_tool is not None:
             self.mode_tool.mouse_wheel_forward_hook(self.event_info)
         if self.camera_enabled:
-            self.OnMouseWheelForward()
+            self._camera_action(self.OnMouseWheelForward)
 
     def mouse_wheel_backward_event(self, _vtk_obj, _vtk_event):
         if self.mode_tool is not None:
             self.mode_tool.mouse_wheel_backward_hook(self.event_info)
         if self.camera_enabled:
-            self.OnMouseWheelBackward()
+            self._camera_action(self.OnMouseWheelBackward)
         
+    def _camera_action(self, action):
+        # Scale this movement only. No persistent sensitivity state can become stale.
+        factor = self._viewer.precision_camera_factor()
+        if factor == 1.0:
+            action()
+            return
+        camera = self._renderer.GetActiveCamera()
+        before = (camera.GetPosition(), camera.GetFocalPoint(), camera.GetViewUp(),
+                  camera.GetParallelScale(), camera.GetDistance())
+        interactor = self.GetInteractor()
+        render_enabled = interactor.GetEnableRender() if interactor is not None else None
+        if interactor is not None:
+            interactor.EnableRenderOff()
+        try:
+            action()
+        finally:
+            if interactor is not None:
+                interactor.SetEnableRender(render_enabled)
+        after = (camera.GetPosition(), camera.GetFocalPoint(), camera.GetViewUp(),
+                 camera.GetParallelScale(), camera.GetDistance())
+        if before == after:
+            return
+
+        def blend(old, new):
+            return tuple(a + factor * (b - a) for a, b in zip(old, new))
+        distance = before[4] + factor * (camera.GetDistance() - before[4])
+        position = blend(before[0], camera.GetPosition())
+        focal_point = blend(before[1], camera.GetFocalPoint())
+        direction = tuple(p - f for p, f in zip(position, focal_point))
+        length = sum(value * value for value in direction) ** 0.5
+        if length > 0:
+            position = tuple(f + d * distance / length for f, d in zip(focal_point, direction))
+        camera.SetPosition(*position)
+        camera.SetFocalPoint(*focal_point)
+        camera.SetViewUp(*blend(before[2], camera.GetViewUp()))
+        camera.OrthogonalizeViewUp()
+        camera.SetParallelScale(before[3] + factor * (camera.GetParallelScale() - before[3]))
+        self._renderer.ResetCameraClippingRange()
+        self._viewer.rerender()
+
     def key_press_event(self, _vtk_obj, _vtk_event):
         # return
         print(f"[Interactor] key press event")
@@ -521,6 +561,46 @@ class VTKViewer(QWidget):
         
     def set_camera_enabled(self, enabled: bool) -> None:
         self._interactor_style.camera_enabled = enabled
+
+    def set_camera_precision(self, multiplier: float, hotkey: str) -> None:
+        self._precision_multiplier = min(1.0, max(0.000001, float(multiplier)))
+        self._precision_hotkey = hotkey
+        self._precision_keys = set()
+        app = QApplication.instance()
+        if app is not None:
+            app.installEventFilter(self)
+
+    def eventFilter(self, watched, event):
+        keys = getattr(self, "_precision_keys", None)
+        if keys is not None:
+            if event.type() == QEvent.Type.KeyPress and not event.isAutoRepeat():
+                keys.add(event.key())
+            elif event.type() == QEvent.Type.KeyRelease and not event.isAutoRepeat():
+                keys.discard(event.key())
+            elif event.type() in (QEvent.Type.ApplicationDeactivate, QEvent.Type.WindowDeactivate,
+                                   QEvent.Type.FocusOut):
+                keys.clear()
+        return super().eventFilter(watched, event)
+
+    def precision_camera_factor(self) -> float:
+        hotkey = getattr(self, "_precision_hotkey", "Shift")
+        modifiers = {"shift": Qt.KeyboardModifier.ShiftModifier,
+                     "control": Qt.KeyboardModifier.ControlModifier,
+                     "ctrl": Qt.KeyboardModifier.ControlModifier,
+                     "alt": Qt.KeyboardModifier.AltModifier,
+                     "meta": Qt.KeyboardModifier.MetaModifier}
+        modifier = modifiers.get(hotkey.lower())
+        if modifier is not None:
+            held = bool(QApplication.queryKeyboardModifiers() & modifier)
+        else:
+            sequence = QKeySequence(hotkey)
+            held = False
+            if sequence.count() == 1:
+                combination = sequence[0]
+                required = combination.keyboardModifiers()
+                held = (combination.key() in getattr(self, "_precision_keys", set())
+                        and QApplication.queryKeyboardModifiers() & required == required)
+        return getattr(self, "_precision_multiplier", 0.05) if held else 1.0
 
     def set_camera_sensitivity(self, value: float) -> None:
         self._interactor_style.SetMotionFactor(float(value))

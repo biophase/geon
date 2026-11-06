@@ -27,17 +27,20 @@ class SelectPointsCmd(Command):
     ctx_ref: weakref.ReferenceType[ToolContext]
     selection_old: Optional[Any] = None 
     
+    _captured: bool = field(default=False, init=False)
+
     def execute(self) -> None:
         layer = self.layer_ref()
         ctx = self.ctx_ref()
         if layer is None or ctx is None:
             return
-        if self.selection_old is None:
+        if not self._captured and self.selection_old is None:
             self.selection_old = (
                 layer.active_selection.copy()
                 if layer.active_selection is not None
                 else None
             )
+        self._captured = True
         if self.selection_new is None:
             layer.clear_selection()
         else:

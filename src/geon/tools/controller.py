@@ -124,6 +124,9 @@ class ToolController(QObject):
         return self._last_tool
         
     def install_tool_schortcuts(self, parent: QWidget) -> None:
+        app = QApplication.instance()
+        if app is not None:
+            app.installEventFilter(self)
         for tool_id,  tool_cls in TOOL_REGISTRY._tools.items():
             shortcut = tool_cls.shortcut
             if shortcut is None:
@@ -133,6 +136,30 @@ class ToolController(QObject):
             sc.setContext(Qt.ShortcutContext.ApplicationShortcut)
             sc.activated.connect(lambda tid=tool_id: self._run_shortcut(tid))
             
+    def eventFilter(self, watched, event):
+        if (event.type() == QEvent.Type.KeyPress and event.key() == Qt.Key.Key_S
+                and event.modifiers() == Qt.KeyboardModifier.NoModifier
+                and not event.isAutoRepeat()):
+            if self._accept_annotation():
+                return True
+        return super().eventFilter(watched, event)
+
+    def _accept_annotation(self) -> bool:
+        from .annotate import AnnotateTool
+        from .cellcomplex import CellComplexAnnotateTool
+        if isinstance(QApplication.focusWidget(), (
+            QLineEdit, QTextEdit, QPlainTextEdit, QSpinBox, QDoubleSpinBox, QComboBox
+        )):
+            return False
+        tool = self._active_tool
+        if isinstance(tool, AnnotateTool):
+            tool._Accept()
+            return True
+        if isinstance(tool, CellComplexAnnotateTool):
+            tool._accept()
+            return True
+        return False
+
     def _run_shortcut(self, tool_id: str) -> None:
         w = QApplication.focusWidget()
         

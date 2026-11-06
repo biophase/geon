@@ -34,6 +34,22 @@ from geon.data.definitions import VectorColorMap, finite_extrema, resolve_limits
 class PointCloudLayer(BaseLayer[PointCloudData], SelectableLayer):
     layer_type_id = "pointcloud"
 
+    def instance_selection(self, *, contract: bool = False) -> np.ndarray:
+        """Select complete instances in the active field."""
+        if not isinstance(self.active_field, InstanceSegmentation):
+            raise ValueError("The active field is not of type instance.")
+        values = self.active_field.data.reshape(-1)
+        selection = self.active_selection
+        if selection is None or len(selection) == 0:
+            return np.empty(0, dtype=np.int64)
+        selected = np.unique(selection)
+        ids, counts = np.unique(values[selected], return_counts=True)
+        if contract:
+            total_ids, total_counts = np.unique(values, return_counts=True)
+            counts_match = counts == total_counts[np.searchsorted(total_ids, ids)]
+            ids = ids[counts_match]
+        return np.flatnonzero(np.isin(values, ids))
+
     def __init__(self, data:PointCloudData, browser_name = 'Point Cloud'):
         super().__init__(data)
         self._poly:         Optional[vtk.vtkPolyData] = None

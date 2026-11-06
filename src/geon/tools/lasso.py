@@ -81,6 +81,7 @@ class LassoApplyPolyCmd(Command):
 @dataclass
 class LassoTool(ModeTool):
     # metadata
+    selection_title: ClassVar = 'Lasso selection'
     label: ClassVar = 'lasso'
     tooltip: ClassVar = "Lasso segmentation"
     icon_path: ClassVar = resource_path('lasso.png')
@@ -262,7 +263,7 @@ class LassoTool(ModeTool):
         other points are hidden until tool deactivation
         """
         self.layer.active_selection = None
-        poly_ = self.poly_points 
+        poly_ = list(self.poly_points)
         if self.ghost_point is not None:
             poly_ += [self.ghost_point]
         if len(poly_) < 3:
@@ -280,7 +281,7 @@ class LassoTool(ModeTool):
         
         timing_note(f"Output: {len(new_cands):,} candidates")  # TEMP_VISIBILITY_PROFILE
         cmd = LassoApplyPolyCmd(
-            title=f'Lasso {mode}',
+            title=f'{self.selection_title} ({mode})',
             cand_inds_new=new_cands,
             sd_new=True,
             layer_ref=weakref.ref(self.layer),
@@ -470,7 +471,7 @@ class LassoTool(ModeTool):
                     self.selection_conflict_flag
                     )
             cmd = SelectPointsCmd(
-                title="Lasso selection",
+                title=self.selection_title,
                 selection_new=self.cand_inds.copy(),
                 layer_ref=weakref.ref(self.layer),
                 ctx_ref=weakref.ref(self.ctx),

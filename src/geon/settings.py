@@ -15,6 +15,8 @@ DEFAULT_PREFS: Dict[str, Any] = {
     "user_name": "Unnamed User",
     "enable_telemetry": False,
     "camera_sensitivity": 10.0,
+    "precision_camera_multiplier": 0.05,
+    "precision_camera_hotkey": "Shift",
     "coarse_points_percent": 1.0,
     "cell_complex_size_mode": "screen",
     "cell_complex_screen_size_px": 12.0,
@@ -157,6 +159,8 @@ class Preferences:
     user_name: str = DEFAULT_PREFS["user_name"]
     enable_telemetry: bool = DEFAULT_PREFS["enable_telemetry"]
     camera_sensitivity: float = DEFAULT_PREFS["camera_sensitivity"]
+    precision_camera_multiplier: float = DEFAULT_PREFS["precision_camera_multiplier"]
+    precision_camera_hotkey: str = DEFAULT_PREFS["precision_camera_hotkey"]
     coarse_points_percent: float = DEFAULT_PREFS["coarse_points_percent"]
     cell_complex_size_mode: str = DEFAULT_PREFS["cell_complex_size_mode"]
     cell_complex_screen_size_px: float = DEFAULT_PREFS["cell_complex_screen_size_px"]
@@ -220,6 +224,12 @@ class Preferences:
                 prefs.camera_sensitivity = float(cam_val)
             except (TypeError, ValueError):
                 prefs.camera_sensitivity = DEFAULT_PREFS["camera_sensitivity"]
+            try:
+                multiplier = float(data.get("precision_camera_multiplier", 0.05))
+                prefs.precision_camera_multiplier = min(1.0, max(0.000001, multiplier))
+            except (TypeError, ValueError):
+                prefs.precision_camera_multiplier = 0.05
+            prefs.precision_camera_hotkey = str(data.get("precision_camera_hotkey", "Shift"))
             prefs.cell_complex_size_mode = str(
                 data.get("cell_complex_size_mode", prefs.cell_complex_size_mode)
             )
@@ -299,6 +309,8 @@ class Preferences:
             f'user_name = {_toml_scalar(self.user_name)}',
             f'enable_telemetry = {_toml_scalar(self.enable_telemetry)}',
             f'camera_sensitivity = {_toml_scalar(float(self.camera_sensitivity))}',
+            f'precision_camera_multiplier = {_toml_scalar(float(self.precision_camera_multiplier))}',
+            f'precision_camera_hotkey = {_toml_scalar(self.precision_camera_hotkey)}',
             f'cell_complex_size_mode = {_toml_scalar(self.cell_complex_size_mode)}',
             f'cell_complex_screen_size_px = {_toml_scalar(float(self.cell_complex_screen_size_px))}',
             f'cell_complex_world_size = {_toml_scalar(float(self.cell_complex_world_size))}',
