@@ -12,6 +12,7 @@ from geon.data.definitions import (ColorMap, VectorColorMap, PARAM_MAP, vector_p
                                   sample_map, finite_extrema, resolve_limits)
 from geon.data.pointcloud import FieldType
 from geon.rendering.pointcloud import PointCloudLayer
+from geon.rendering.mesh import MeshLayer
 from geon.rendering.color_mapping import default_map, components
 from geon.io.color_maps import save_map
 from geon.util.resources import resource_path
@@ -103,7 +104,7 @@ class ColorChannels(QDockWidget):
         self.layout.setSpacing(6)
         heading = QHBoxLayout()
         heading.addWidget(self.gray('Current field: '))
-        self.label = QLabel('No active point-cloud field')
+        self.label = QLabel('No active field')
         heading.addWidget(self.label, 1)
         self.layout.addLayout(heading)
         self.controls = QWidget()
@@ -217,7 +218,7 @@ class ColorChannels(QDockWidget):
         return False
 
     def activate(self, layer):
-        field = layer.active_field if isinstance(layer, PointCloudLayer) else None
+        field = layer.active_field if isinstance(layer, (PointCloudLayer, MeshLayer)) else None
         if layer is self.layer and field is self.source_field:
             return True
         if not self.allow_switch():
@@ -237,14 +238,15 @@ class ColorChannels(QDockWidget):
                 self.layer.signals.activeFieldChanged.disconnect(self.active_field_changed)
             except TypeError:
                 pass
-        self.layer = layer if isinstance(layer, PointCloudLayer) else None
+        self.layer = layer if isinstance(layer, (PointCloudLayer, MeshLayer)) else None
         self.source_field = field
+        self._update_mesh_axes(layer)
         self.field = copy(field) if field is not None else None
         field = self.field
         self.hist_data = None
         if field is None:
             self.draft = None
-            self.label.setText('No active point-cloud field')
+            self.label.setText('No active field')
         else:
             self.baseline = (deepcopy(field.color_map), field.scalar_component, field.rgb_components)
             self.original = deepcopy(field.color_map)
@@ -262,6 +264,31 @@ class ColorChannels(QDockWidget):
         self.rebuild()
         self.invalidate()
         return True
+
+    def _update_mesh_axes(self, layer):
+        temporary = isinstance(layer, MeshLayer) and layer.preview_field is not None
+        previous = getattr(self, "_temporary_axis_state", None)
+        if temporary:
+            if previous is None:
+                self._temporary_axis_state = {key: action.isChecked() for key, action in self.axis_actions.items()}
+            for action in self.axis_actions.values():
+                action.setChecked(True)
+            self.plot.setLabel("bottom", "Distance to mesh", units="m")
+            self.plot.setLabel("left", "Source points")
+            self.save_button.setText("Apply to preview")
+            self.save_button.setToolTip("This color map is kept only for the reconstruction preview.")
+        else:
+            if previous is not None:
+                for key, value in previous.items():
+                    self.axis_actions[key].setChecked(value)
+                self._temporary_axis_state = None
+            self.save_button.setText("Save")
+            self.save_button.setToolTip("")
+            self.plot.setLabel("bottom", "Value", units="")
+            label = f"{layer.active_level.value.capitalize()} elements" if isinstance(layer, MeshLayer) else "Visible points"
+            self.plot.setLabel("left", label)
+        for axis_name in ("bottom", "left"):
+            self.set_axis_visible(axis_name, "label", self.axis_actions[axis_name, "label"].isChecked())
 
     def active_field_changed(self):
         self.activate(self.layer)
@@ -530,7 +557,7 @@ class ColorChannels(QDockWidget):
         if not self.dirty:
             return True
         try:
-            if self.dataset:
+            if self.dataset and getattr(self.layer, "preview_field", None) is not self.source_field:
                 old_bindings = self.source_field.scalar_component, self.source_field.rgb_components
                 self.source_field.scalar_component, self.source_field.rgb_components = self.field.scalar_component, self.field.rgb_components
                 try:
@@ -550,7 +577,7 @@ class ColorChannels(QDockWidget):
             scene = getattr(scene_manager, '_scene', None)
             if scene is not None:
                 for other in scene._layers.values():
-                    if other is not self.layer and isinstance(other, PointCloudLayer):
+                    if other is not self.layer and isinstance(other, (PointCloudLayer, MeshLayer)):
                         other.update()
             self.window.viewer.rerender()
             return True
@@ -595,11 +622,12 @@ class ColorChannels(QDockWidget):
             self.timer.start()
 
     def refresh_histogram(self):
-        if not self.isVisible() or self.field is None or self.field.field_type == FieldType.INSTANCE:
+        if (not self.isVisible() or self.field is None or
+                (self.field.field_type == FieldType.INSTANCE and not isinstance(self.layer, MeshLayer))):
             return
         if self.jobs:
             return
-        semantic = self.field.field_type == FieldType.SEMANTIC
+        semantic = self.field.field_type in (FieldType.SEMANTIC, FieldType.INSTANCE)
         values = [self.field.data.reshape(-1)] if semantic else components(self.field, self.draft)
         limits = None
         if not semantic and self.range_mode == 'range':
@@ -646,8 +674,12 @@ class ColorChannels(QDockWidget):
         edges, counts = self.hist_data
         if not len(edges):
             return
-        if self.field.field_type == FieldType.SEMANTIC:
-            colors = self.field.schema.get_color_array(edges.astype(np.int32))[:, :3]
+        if self.field.field_type in (FieldType.SEMANTIC, FieldType.INSTANCE):
+            if self.field.field_type == FieldType.SEMANTIC:
+                colors = self.field.schema.get_color_array(edges.astype(np.int32))[:, :3]
+            else:
+                from geon.data.pointcloud import InstanceSegmentation
+                colors = InstanceSegmentation("histogram", edges.astype(np.int32)).get_color_array()
             colors[edges == -1] = self.layer.unassigned_point_color[:3]
             x = np.arange(len(edges))
             self.plot.addItem(pg.BarGraphItem(x=x, height=counts[0], width=.8, brushes=[QColor(*map(int,c)) for c in colors], pen=None))

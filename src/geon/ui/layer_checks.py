@@ -8,14 +8,16 @@ from ..rendering.boundingbox import BoundingBoxLayer
 from ..rendering.cellcomplex import CellComplexLayer
 from ..rendering.pointcloud import PointCloudLayer
 from ..rendering.scene import Scene
+from ..rendering.mesh import MeshLayer
 
 
-LayerT = TypeVar("LayerT", PointCloudLayer, BoundingBoxLayer, CellComplexLayer)
+LayerT = TypeVar("LayerT", PointCloudLayer, BoundingBoxLayer, CellComplexLayer, MeshLayer)
 
 _LAYER_NAMES = {
     PointCloudLayer: "point cloud",
     BoundingBoxLayer: "bounding box",
     CellComplexLayer: "cell complex",
+    MeshLayer: "mesh",
 }
 
 

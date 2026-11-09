@@ -33,6 +33,10 @@ dependencies = [
   "plyfile>=0.8.1",
   "pye57",
   "laspy[lazrs]",
+  "scipy>=1.10",
+  "shapely>=2.1",
+  "matplotlib>=3.6",
+  "ifcopenshell>=0.8.3,<0.9",
 ]
 
 [project.optional-dependencies]

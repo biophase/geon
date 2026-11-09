@@ -1,0 +1,113 @@
+{
+  "version": 1,
+  "schema": "IFC4X3_ADD2",
+  "semantic_schema": "BRIDGE_",
+  "semantic_field": {
+    "level": "face",
+    "name": "class"
+  },
+  "object_field": {
+    "level": "face",
+    "name": "patches"
+  },
+  "face_field": null,
+  "classes": {
+    "0": {
+      "name": "abutment",
+      "ifc_class": "IfcElementAssembly",
+      "predefined_type": "ABUTMENT"
+    },
+    "1": {
+      "name": "barrierFlexible",
+      "ifc_class": "IfcRailing",
+      "predefined_type": "GUARDRAIL"
+    },
+    "2": {
+      "name": "barrierRailing",
+      "ifc_class": "IfcRailing",
+      "predefined_type": "GUARDRAIL"
+    },
+    "3": {
+      "name": "barrierRigid",
+      "ifc_class": "IfcWall",
+      "predefined_type": "PARAPET"
+    },
+    "4": {
+      "name": "beam",
+      "ifc_class": "IfcBeam"
+    },
+    "5": {
+      "name": "bearing",
+      "ifc_class": "IfcBearing"
+    },
+    "6": {
+      "name": "column",
+      "ifc_class": "IfcColumn"
+    },
+    "7": {
+      "name": "deckCap",
+      "ifc_class": "IfcMember",
+      "predefined_type": "USERDEFINED"
+    },
+    "8": {
+      "name": "footing",
+      "ifc_class": "IfcFooting"
+    },
+    "9": {
+      "name": "naturalGround",
+      "ifc_class": "IfcGeographicElement",
+      "predefined_type": "TERRAIN"
+    },
+    "10": {
+      "name": "panelizedWall",
+      "ifc_class": "IfcWall",
+      "predefined_type": "ELEMENTEDWALL"
+    },
+    "11": {
+      "name": "pipe",
+      "ifc_class": "IfcPipeSegment"
+    },
+    "12": {
+      "name": "railBalast",
+      "ifc_class": "IfcCourse",
+      "predefined_type": "BALLASTBED"
+    },
+    "13": {
+      "name": "railSleeper",
+      "ifc_class": "IfcTrackElement",
+      "predefined_type": "SLEEPER"
+    },
+    "14": {
+      "name": "railTrack",
+      "ifc_class": "IfcRail",
+      "predefined_type": "RAIL"
+    },
+    "15": {
+      "name": "roadMarking",
+      "ifc_class": "IfcSurfaceFeature",
+      "predefined_type": "PAVEMENTSURFACEMARKING"
+    },
+    "16": {
+      "name": "signTraffic",
+      "ifc_class": "IfcSign",
+      "predefined_type": "PICTORAL"
+    },
+    "17": {
+      "name": "slabDeck",
+      "ifc_class": "IfcSlab",
+      "predefined_type": "FLOOR"
+    },
+    "18": {
+      "name": "slabPaving",
+      "ifc_class": "IfcPavement"
+    },
+    "19": {
+      "name": "stair",
+      "ifc_class": "IfcStair"
+    },
+    "20": {
+      "name": "unlabeled",
+      "ifc_class": "IfcBuildingElementProxy"
+    }
+  }
+}

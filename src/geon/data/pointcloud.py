@@ -776,7 +776,7 @@ class SemanticSchema:
                     type_id_str = _decode_utf8(type_id)
                     # your PointCloudData.save_hdf5 uses type_id = self.get_type_id()
                     # which is likely "PointCloudData"
-                    if type_id_str not in ("PointCloudData", "PointCloud"):  # keep lenient if you rename later
+                    if type_id_str not in ("PointCloudData", "PointCloud", "MeshData"):  # keep lenient if you rename later
                         continue
 
                 fields_grp = pc_grp.get("fields")
@@ -784,8 +784,13 @@ class SemanticSchema:
                     continue
 
                 # Iterate fields under /fields (e.g. "intensity", "semantics", ...)
-                for field_name in fields_grp.keys():
-                    field_grp = fields_grp.get(field_name)
+                field_nodes = []
+                for field_name, node in fields_grp.items():
+                    if isinstance(node, h5py.Group) and "field_type" in node.attrs:
+                        field_nodes.append((field_name, node))
+                    elif isinstance(node, h5py.Group):
+                        field_nodes.extend((f"{field_name}/{name}", group) for name, group in node.items())
+                for field_name, field_grp in field_nodes:
                     if not isinstance(field_grp, h5py.Group):
                         continue
                     

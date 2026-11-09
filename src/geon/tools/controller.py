@@ -38,7 +38,18 @@ class ToolController(QObject):
         self._last_tool: Optional[BaseTool] = None
         
         self.ribbon : ContextRibbon = context_ribbon
+        app = QApplication.instance()
+        if app is not None:
+            app.aboutToQuit.connect(self.cancel_background_tasks)
         
+    def cancel_background_tasks(self):
+        from PyQt6.QtCore import QThread
+        workers = self.findChildren(QThread)
+        for worker in workers:
+            worker.requestInterruption()
+        for worker in workers:
+            worker.wait()
+
     @property
     def ctx(self) -> Optional[ToolContext]:
         return self._ctx
@@ -90,6 +101,8 @@ class ToolController(QObject):
             else:
                 tool.activate()
                 
+            if self._active_tool is not tool:
+                return
             if isinstance(tool, ModeTool):
                 w = QWidget(self.ribbon)
                 self.tool_activated\
@@ -147,6 +160,7 @@ class ToolController(QObject):
     def _accept_annotation(self) -> bool:
         from .annotate import AnnotateTool
         from .cellcomplex import CellComplexAnnotateTool
+        from .mesh_fields import MeshAnnotateTool
         if isinstance(QApplication.focusWidget(), (
             QLineEdit, QTextEdit, QPlainTextEdit, QSpinBox, QDoubleSpinBox, QComboBox
         )):
@@ -155,7 +169,7 @@ class ToolController(QObject):
         if isinstance(tool, AnnotateTool):
             tool._Accept()
             return True
-        if isinstance(tool, CellComplexAnnotateTool):
+        if isinstance(tool, (CellComplexAnnotateTool, MeshAnnotateTool)):
             tool._accept()
             return True
         return False
@@ -169,6 +183,10 @@ class ToolController(QObject):
             QComboBox
             )):
             return
+        if tool_id == "AnnotateTool" and self.ctx is not None:
+            from geon.rendering.mesh import MeshLayer
+            if isinstance(self.ctx.scene.active_layer, MeshLayer):
+                tool_id = "MeshAnnotateTool"
         self.activate_tool(tool_id)
 
     def clear_undo_stacks(self) -> None:

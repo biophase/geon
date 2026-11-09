@@ -4,3 +4,7 @@ plyfile
 h5py
 pye57
 laspy[lazrs]
+scipy>=1.10
+shapely>=2.1
+ifcopenshell>=0.8.3,<0.9
+matplotlib>=3.6

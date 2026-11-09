@@ -259,12 +259,38 @@ class SceneManager(Dock):
             elif isinstance(layer, CellComplexLayer):
                 self._populate_cell_complex_layer(layer, layer_root)
             elif isinstance(layer, MeshLayer):
-                layer_root.addChild(QTreeWidgetItem([f"Vertices ({len(layer.data.vertices):,})"]))
-                layer_root.addChild(QTreeWidgetItem([f"Faces ({len(layer.data.faces):,})"]))
+                self._populate_mesh_layer(layer, layer_root)
             else:
                 layer_root.addChild(QTreeWidgetItem([type(layer).__name__]))
         self.tree.expandAll()
         self.update_tree_visibility()
+
+    def _populate_mesh_layer(self, layer, root):
+        from geon.data.mesh import MeshLevel
+        group = QButtonGroup(self)
+        group.setExclusive(True)
+        for level in MeshLevel:
+            item = QTreeWidgetItem([f"{level.value.capitalize()} ({layer.data.element_count(level):,})"])
+            root.addChild(item)
+            for field in layer.data.get_fields(level=level):
+                child = QTreeWidgetItem([field.name])
+                item.addChild(child)
+                active = CheckBoxActive()
+                group.addButton(active)
+                active.setChecked(layer.active_level == level and layer.active_field_name == field.name)
+                def activate(checked, target_level=level, name=field.name):
+                    if not checked:
+                        return
+                    panel = getattr(self.window(), "color_channels", None)
+                    if panel is not None and not panel.allow_switch():
+                        self.populate_tree()
+                        return
+                    layer.set_active_field(target_level, name)
+                    self._scene.active_layer_id = layer.id
+                    self.broadcastActivatedLayer.emit(layer)
+                    self.viewer.rerender()
+                active.clicked.connect(activate)
+                self.tree.setItemWidget(child, 1, self._center_widget(active))
 
     def _populate_cell_complex_layer(
         self,
@@ -518,6 +544,14 @@ class SceneManager(Dock):
         return msg.clickedButton() is delete_btn
 
     def _delete_layer(self, layer: BaseLayer) -> None:
+        from geon.tools.reconstruction import ReconstructMeshTool
+        active = self.tool_controller.active_tool
+        if isinstance(active, ReconstructMeshTool):
+            if layer is active.preview_layer:
+                self.tool_controller.deactivate_tool()
+                return
+            if layer is getattr(active, "source", None):
+                self.tool_controller.deactivate_tool()
         if self._scene is None:
             return
         if layer.id not in self._scene.layers:

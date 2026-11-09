@@ -167,6 +167,7 @@ class MainWindow(QMainWindow):
         # signals #
         ###########
         
+        self.scene_manager.broadcastDeleteScene.connect(lambda _scene: self.tool_controller.deactivate_tool())
         self.scene_manager.broadcastDeleteScene\
             .connect(self.dataset_manager.save_scene_doc)
 
@@ -183,6 +184,9 @@ class MainWindow(QMainWindow):
             .connect(self.dataset_manager.import_doc_from_ply)
         self.menu_bar.importMeshPlyRequested\
             .connect(self.dataset_manager.import_mesh_from_ply)
+        self.menu_bar.reconstructMeshRequested.connect(lambda: self.tool_controller.activate_tool("ReconstructMeshTool"))
+        self.menu_bar.exportMeshIfcRequested.connect(self._on_export_mesh_ifc)
+        self.menu_bar.editMeshFieldsRequested.connect(self._on_edit_mesh_fields)
         self.menu_bar.expandInstanceSelectionRequested.connect(lambda: self._on_instance_selection(False))
         self.menu_bar.contractInstanceSelectionRequested.connect(lambda: self._on_instance_selection(True))
         self.menu_bar.deselectRequested.connect(self._on_deselect_active_layer)
@@ -474,6 +478,29 @@ class MainWindow(QMainWindow):
                     default_color=default_color,
                     selection_color=selection_color,
                 )
+
+    def _on_export_mesh_ifc(self):
+        from geon.rendering.mesh import MeshLayer
+        from geon.ui.ifc_export_dialog import export_mesh_with_dialog
+        scene = self.scene_manager._scene
+        layer = require_active_layer(self, scene, MeshLayer)
+        if layer is None:
+            return
+        from geon.tools.reconstruction import ReconstructMeshTool
+        if isinstance(self.tool_controller.active_tool, ReconstructMeshTool):
+            QMessageBox.information(self, "IFC export", "Accept the reconstruction preview before exporting.")
+            return
+        mapping = export_mesh_with_dialog(layer.data, self)
+        if mapping is not None:
+            layer.data.metadata["ifc_map"] = mapping
+            self.tool_controller.layer_data_modified.emit(layer)
+
+    def _on_edit_mesh_fields(self):
+        from geon.rendering.mesh import MeshLayer
+        from geon.ui.layers.mesh_ui import edit_fields
+        layer = require_active_layer(self, self.scene_manager._scene, MeshLayer)
+        if layer is not None:
+            edit_fields(layer, self, self.tool_controller)
 
     def _on_instance_selection(self, contract: bool) -> None:
         import weakref

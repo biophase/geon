@@ -1,0 +1,24 @@
+{
+  "min_points": 150,
+  "subsample_distance": null,
+  "exclude_ids": [
+    -1
+  ],
+  "alpha_radius": 0.15,
+  "max_plane_rmse": 0.5,
+  "adjacency_radius": 0.2,
+  "min_contact_points": 5,
+  "edge_tolerance": 0.25,
+  "support_step": 0.02,
+  "join_coplanar": true,
+  "coplanar_join_mode": "bridge",
+  "coplanar_angle_degrees": 10,
+  "coplanar_plane_tolerance": 0.3,
+  "coplanar_boundary_tolerance": 0.3,
+  "corner_tolerance": 0.5,
+  "min_edge_length": 0.1,
+  "min_plane_angle_degrees": 0.5,
+  "simplify_tolerance": 0.12,
+  "weld_tolerance": 1e-07,
+  "cylinder_trim_mode": "extent"
+}

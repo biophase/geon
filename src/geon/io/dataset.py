@@ -6,6 +6,7 @@ import h5py
 
 from geon.data.document import Document
 from geon.data.pointcloud import SemanticSchema, PointCloudData, SemanticSegmentation
+from geon.data.mesh import MeshData
 from geon.data.cellcomplex import CellComplexData
 
 from geon.version import GEON_FORMAT_VERSION
@@ -272,10 +273,11 @@ class Dataset:
                    
                 
                 for data_name, data in doc.scene_items.items():
-                    if isinstance(data, PointCloudData):
+                    if isinstance(data, (PointCloudData, MeshData)):
                         for field in data.get_fields():
                             if isinstance (field, SemanticSegmentation):
-                                build_key = _point_key(ref.name, data_name, field.name, field.schema.name)
+                                field_name = (data.field_level(field).value+"/"+field.name) if isinstance(data, MeshData) else field.name
+                                build_key = _point_key(ref.name, data_name, field_name, field.schema.name)
                                 loaded_schemas[build_key] = field.schema
                     elif isinstance(data, CellComplexData):
                         seen_cell_attrs: set[tuple[int, str, str]] = set()

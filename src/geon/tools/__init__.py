@@ -9,6 +9,8 @@ from .rectangle import RectangleSelectionTool
 from .selection import DeselectTool
 from .visibility import HideTool, IsolateTool, ShowTool
 from .annotate import AnnotateTool
+from .mesh_fields import MeshAnnotateTool
+from .reconstruction import ReconstructMeshTool
 from .wand import WandTool
 from .seeded_region_growing import SeededRegionGrowingTool
 from .split_between import SplitBetweenTool
@@ -43,6 +45,8 @@ TOOL_REGISTRY.register(HideTool)
 TOOL_REGISTRY.register(IsolateTool)
 TOOL_REGISTRY.register(ShowTool)
 TOOL_REGISTRY.register(AnnotateTool)
+TOOL_REGISTRY.register(MeshAnnotateTool)
+TOOL_REGISTRY.register(ReconstructMeshTool)
 TOOL_REGISTRY.register(CellPickVertexTool)
 TOOL_REGISTRY.register(CellComplexAddEdgeTool)
 TOOL_REGISTRY.register(CellComplexAssociateTool)

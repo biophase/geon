@@ -96,7 +96,63 @@ original settings. **Save** updates matching named map definitions throughout
 the dataset, writing only color-map metadata to existing HDF5 files. Component
 bindings belong to each field. Unsaved documents still require a document save.
 
-The file format is now version 4. Older absolute-stop maps are read with explicit
+The file format is now version 5 (mesh fields and object membership). Older absolute-stop maps are read with explicit
 limits that preserve their previous appearance. Map-name conflicts are resolved
 with numbered suffixes and reported when the dataset is populated.
 
+
+## Mesh reconstruction and IFC
+
+Choose **Document → Mesh → From PCD instance field** with a point cloud active.
+Choose the primitive instance field and any additional fields to transfer. Two
+additional field selectors are provided initially; add or remove selectors as
+needed. The grouped reconstruction controls start with
+[`resources/reconstruction_settings.json`](resources/reconstruction_settings.json).
+Reconstruction runs in a background worker. Cancel discards the preview; Accept
+adds one mesh with normal undo/redo.
+
+The preview ribbon offers **Corners**, face-field display, mesh transparency and
+source-cloud visibility. Borders are teal for shared analytic intersections,
+green for coplanar joins and red for optimized outer boundaries. **Deviation
+(temporary)** shows local RMS point-to-surface distance on a regular surface
+sampling, capped at 80,000 vertices. Its Color Channels histogram counts the
+represented **source points**, uses numeric distance ticks in metres, and supports
+temporary color-map edits. Sampling, distance arrays and border actors are removed
+when the preview ends; they do not increase the saved mesh's resolution.
+Meshes larger than the sampling budget retain their ordinary field preview.
+
+Each mesh supports vertex, edge, face and object fields using the existing
+`FieldType`, semantic schemas and color maps. Use the mesh ribbon to switch levels,
+edit fields, select elements or classify them. Click selects an element; Shift-click
+toggles it. Object membership is an explicit face-to-object ID array. Edges are
+unique undirected vertex pairs. Reconstructed object membership initially follows
+the primitive IDs. Fields and schemas persist in HDF5; older geometry-only mesh
+files remain readable.
+
+Field transfer happens after simplification and stitching. Source points vote
+within their primitive's final faces; semantic and instance fields use majority
+voting (ties choose the lowest ID). Numeric, vector and color fields use averages.
+Faces without source votes inherit the nearest point from their own primitive.
+Deviation is measured to the assigned final triangle, including simplified border
+changes; only source points belonging to retained reconstructed primitives count.
+
+Choose **Document → Mesh → Export IFC 4.3…** after accepting the mesh. Select a
+semantic field and an instance field separating objects. Object-level semantic
+fields can use the mesh's built-in object membership instead. Labels at other
+levels vote using the distinct original elements belonging to each object, rather
+than duplicating shared vertices. The exporter interprets coordinates as metres.
+
+The class table lists concrete IFC4.3 element and spatial classes, plus their
+predefined types. The bundled [`resources/ifc_map.json`](resources/ifc_map.json)
+contains defaults for all 21 classes in `BRIDGE_`; load or save an edited mapping
+from the export dialog. Mappings include field levels, so identically named
+fields at different levels remain distinct. Surface features attach to the
+nearest exported pavement/slab or physical host; if none exists, an unspecified
+proxy host is created. The IFC model is validated before replacing the target file.
+
+An optional instance field preserves face groups as named
+[IFC shape aspects](https://standards.buildingsmart.org/IFC/DEV/IFC4_3/HTML/lexical/IfcShapeAspect.html).
+It does not control edge visibility in IFC viewers. Open reconstructions are
+exported as [polygonal face sets](https://docs.ifcopenshell.org/autoapi/ifcopenshell/api/geometry/add_mesh_representation/index.html),
+without asserting that they are watertight solids. SciPy, Shapely, Matplotlib and
+IfcOpenShell are installed with geon's package dependencies.

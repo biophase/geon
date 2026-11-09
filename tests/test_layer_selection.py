@@ -88,7 +88,9 @@ def test_box_face_clear_and_snapshot():
 
 
 def test_capability_is_optional():
-    assert not issubclass(MeshLayer, SelectableLayer)
+    from geon.rendering.camera import CameraLayer
+    assert issubclass(MeshLayer, SelectableLayer)
+    assert not issubclass(CameraLayer, SelectableLayer)
 
 
 def test_deselect_command_restores_box_face():

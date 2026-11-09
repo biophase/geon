@@ -4,6 +4,7 @@ from copy import deepcopy
 import h5py
 from geon.data.definitions import ColorMap
 from geon.data.pointcloud import PointCloudData
+from geon.data.mesh import MeshData, MeshLevel
 from geon.version import GEON_FORMAT_VERSION
 
 
@@ -15,10 +16,12 @@ class MapReference:
     mapping: object
     field: object = None
     persist: bool = True
+    level: str | None = None
 
     @property
     def group_path(self):
-        return f'/document/{self.point_id}/fields/{self.field_name}'
+        prefix = f'{self.level}/' if self.level else ''
+        return f'/document/{self.point_id}/fields/{prefix}{self.field_name}'
 
 
 def scan_maps(dataset):
@@ -31,17 +34,29 @@ def scan_maps(dataset):
                     for f in sorted(cloud.get_fields(), key=lambda f: f.name):
                         if f.color_map is not None:
                             result.append(MapReference(ref, point_id, f.name, f.color_map, f))
+                elif isinstance(cloud, MeshData):
+                    for level in MeshLevel:
+                        for f in cloud.get_fields(level=level):
+                            if f.color_map is not None:
+                                result.append(MapReference(ref, point_id, f.name, f.color_map, f, level=level.value))
         elif ref.path:
             with h5py.File(ref.path, 'r') as handle:
                 for point_id, group in sorted(handle['document'].items()):
                     if not isinstance(group, h5py.Group) or 'fields' not in group:
                         continue
+                    field_nodes = []
                     for name, field in sorted(group['fields'].items()):
+                        if "field_type" in field.attrs:
+                            field_nodes.append((name, field, None))
+                        else:
+                            field_nodes.extend((nested_name, nested, name) for nested_name, nested in field.items()
+                                               if isinstance(nested, h5py.Group) and "field_type" in nested.attrs)
+                    for name, field, level in field_nodes:
                         node = field.get('color_map')
                         if node is None:
                             node = field.get('ColorMap')
                         if node is not None:
-                            result.append(MapReference(ref, point_id, name, ColorMap.load_h5py(node)))
+                            result.append(MapReference(ref, point_id, name, ColorMap.load_h5py(node), level=level))
     return result
 
 
@@ -107,11 +122,12 @@ def save_map(dataset, original, draft, active_cloud, active_field):
     if original is not None:
         targets = [r for r in scan_maps(dataset)
                    if r.mapping.name == original.name and r.mapping.signature() == original.signature()]
+    active_level = active_cloud.field_level(active_field).value if isinstance(active_cloud, MeshData) else None
     for docref in dataset.doc_refs:
         doc = dataset._loaded_docs.get(docref.name)
         if doc is not None and doc.scene_items.get(active_cloud.id) is active_cloud:
-            if not any(r.document is docref and r.point_id == active_cloud.id and r.field_name == active_field.name for r in targets):
-                targets.append(MapReference(docref, active_cloud.id, active_field.name, original, active_field))
+            if not any(r.document is docref and r.point_id == active_cloud.id and r.field_name == active_field.name and r.level == active_level for r in targets):
+                targets.append(MapReference(docref, active_cloud.id, active_field.name, original, active_field, level=active_level))
     # Check every existing target before making changes. No whole-document saves.
     for target in targets:
         if target.document.path:
