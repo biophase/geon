@@ -209,6 +209,20 @@ jobs:
           fi
           "$VENV_PY" -m PyInstaller geon.spec --noconfirm --clean
 
+      - name: Verify frozen geometry kernels
+        shell: bash
+        run: |
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            VENV_PY=".venv/Scripts/python.exe"
+            SMOKE="dist/geometry-smoke/geometry-smoke.exe"
+          else
+            VENV_PY=".venv/bin/python"
+            SMOKE="dist/geometry-smoke/geometry-smoke"
+          fi
+          "$VENV_PY" -m PyInstaller --onedir --name geometry-smoke --noconfirm --clean scripts/smoke_surface_geometry.py
+          "$SMOKE"
+          "$SMOKE" --ifc-first
+
       - name: Package executable
         shell: bash
         run: |

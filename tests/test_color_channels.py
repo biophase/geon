@@ -107,6 +107,15 @@ def test_field_component_bindings_round_trip(tmp_path):
         assert loaded.color_map.signature() == field.color_map.signature()
 
 
+def test_histogram_excludes_extreme_tails_before_binning():
+    values = np.r_[-1e9, np.linspace(0, 1, 1000), 1e9]
+    edges, counts = calculate_histogram([values])
+    assert 0 <= edges[0] < .02 and .98 < edges[-1] <= 1
+    assert 970 < counts[0].sum() < len(values)
+    explicit, _ = calculate_histogram([values], limits=(-2, 2))
+    assert explicit[0] == -2 and explicit[-1] == 2
+
+
 def test_histogram_visible_shared_bins_and_nonfinite():
     values = [np.array([0., 1., 2., np.nan]), np.array([2., 1., 0., np.inf])]
     edges, counts = calculate_histogram(values, np.array([True, False, True, True]))

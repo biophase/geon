@@ -71,6 +71,8 @@ class Document:
         for k, v in self.scene_items.items():
             child_group = group.create_group(v.id)
             v.save_hdf5(child_group)
+            if getattr(v,'name',None) is not None:
+                child_group.attrs['name']=v.name
             
             
     def __repr__(self):
@@ -148,6 +150,8 @@ class Document:
                 type_id = _decode(type_attr)
                 data_cls = data_registry.get(str(type_id))
                 data_obj = data_cls.load_hdf5(child_group)
+                if 'name' in child_group.attrs:
+                    data_obj.name=_decode(child_group.attrs['name'])
                 
                 # Ensure ids stay in sync with the group name
                 if getattr(data_obj, "id", None) != child_name:

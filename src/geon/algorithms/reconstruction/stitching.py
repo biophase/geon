@@ -12,7 +12,7 @@ def stitch_boundaries(vertices,faces,labels,parts,flags,patches,tolerance=.05,mi
     unique,first,count=np.unique(edges,axis=0,return_index=True,return_counts=True)
     source=np.tile(np.arange(len(tri)),3)[first]
     allowed=(count==1)&~np.asarray(flags)[source]
-    allowed &= np.array([patches[int(ids[i])].cylinder is None for i in source])
+    allowed &= np.array([patches[int(ids[i])].kind in ('plane', 'bspline') for i in source])
     edges=unique[allowed];source=source[allowed];edgeids=ids[source]
     if not len(edges):return vertices,faces,labels,parts,flags,[],0
     a,b=xyz[edges[:,0]],xyz[edges[:,1]];length=np.linalg.norm(b-a,axis=1)
@@ -29,11 +29,11 @@ def stitch_boundaries(vertices,faces,labels,parts,flags,patches,tolerance=.05,mi
         for j in np.flatnonzero(possible):
             pa,pb=patches[int(edgeids[i])],patches[int(edgeids[j])]
             if pa.part_id!=pb.part_id:continue
-            nearly_parallel = abs(pa.normal@pb.normal)>=np.cos(np.deg2rad(cfg.coplanar_angle_degrees if cfg else 5))
+            nearly_parallel = abs(pa.normal_at(pa.project(a[i]))@pb.normal_at(pb.project(a[j])))>=np.cos(np.deg2rad(cfg.coplanar_angle_degrees if cfg else 5))
             if cfg is not None:
                 if nearly_parallel:
                     if not cfg.join_coplanar:continue
-                    if max(np.abs((a[i]-pb.center)@pb.normal),np.abs((a[j]-pa.center)@pa.normal))>cfg.coplanar_plane_tolerance:continue
+                    if max(abs(pb.residual(a[i])),abs(pa.residual(a[j])))>cfg.coplanar_plane_tolerance:continue
                 elif not cfg.bridge_remaining_gaps:continue
             aa=np.array([a[i]+start[j]*direction[i],a[i]+stop[j]*direction[i]])
             t=((aa-a[j])@direction[i])/dot[j]
@@ -75,7 +75,7 @@ def stitch_boundaries(vertices,faces,labels,parts,flags,patches,tolerance=.05,mi
         for polygon in ([aa[0],aa[1],bb[1]],[aa[0],bb[1],bb[0]]):
             points=np.asarray(polygon);normal=np.cross(points[1]-points[0],points[2]-points[0])
             if np.linalg.norm(normal)<1e-12:continue
-            if normal@patches[owner].normal<0:points=points[[0,2,1]]
+            if normal@patches[owner].normal_at(patches[owner].project(points.mean(axis=0)))<0:points=points[[0,2,1]]
             indices=[index(p) for p in points]
             if len(set(indices))==3:strips.append((indices,owner))
     newfaces=[];newlabels=[];newparts=[];newflags=[]
@@ -95,7 +95,7 @@ def stitch_boundaries(vertices,faces,labels,parts,flags,patches,tolerance=.05,mi
         for triangle in shapely.constrained_delaunay_triangles(polygon).geoms:
             ix=tree.query(np.asarray(triangle.exterior.coords)[:3])[1];newface=[ring[int(k)] for k in ix]
             p=np.asarray(newvertices)[newface]
-            if np.cross(p[1]-p[0],p[2]-p[0])@patch.normal<0:newface=newface[::-1]
+            if np.cross(p[1]-p[0],p[2]-p[0])@patch.normal_at(patch.project(p.mean(axis=0)))<0:newface=newface[::-1]
             newfaces.append(newface);newlabels.append(label);newparts.append(part);newflags.append(flag)
     for face,owner in strips:
         newfaces.append(face);newlabels.append(owner);newparts.append(-1 if patches[owner].part_id is None else patches[owner].part_id);newflags.append(True)

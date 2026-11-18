@@ -12,7 +12,13 @@ def calculate_histogram(values, mask=None, limits=None, categorical=False):
     nonempty = [v for v in visible if v.size]
     if not nonempty:
         return np.array([]), []
-    low, high = limits if limits is not None else (min(v.min() for v in nonempty), max(v.max() for v in nonempty))
+    # Choose bins after excluding the tails; explicit user ranges stay explicit.
+    if limits is None:
+        bounds = [np.quantile(v, [.01, .99], method='nearest') for v in nonempty]
+        low, high = min(b[0] for b in bounds), max(b[1] for b in bounds)
+        visible = [v[(v >= low) & (v <= high)] for v in visible]
+    else:
+        low, high = limits
     if low == high:
         low, high = low-.5, high+.5
     edges = np.linspace(low, high, 257)

@@ -12,6 +12,13 @@ from .layer_registry import layer_for
 
 @layer_for(MeshData)
 class MeshLayer(BaseLayer[MeshData], SelectableLayer):
+    @classmethod
+    def merge(cls, layers, *, name=None):
+        merged,first=cls._merge_layers(layers,name)
+        merged.set_active_field(first.active_level,first.active_field_name)
+        merged.opacity=first.opacity
+        return merged
+
     layer_type_id = "mesh"
     @property
     def use_cell_picking_for_selection(self):

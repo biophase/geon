@@ -79,6 +79,15 @@ class PointCloudData(BaseData):
         self._fields: List["FieldBase"] = []
         self._field_added_callbacks: List[Callable[["FieldBase"], None]] = []
 
+    @classmethod
+    def merge(cls, objects, *, name=None):
+        from .merging import merge_fields
+        objects=cls._merge_inputs(objects)
+        result=cls(np.concatenate([obj.points for obj in objects]))
+        result._fields=merge_fields(objects)
+        result.name=name or getattr(objects[0],'name','Point Cloud')
+        return result
+
     def get_extents(self) -> Optional[Tuple[float, float, float, float, float, float]]:
         if self.points.size == 0:
             return None

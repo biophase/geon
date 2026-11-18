@@ -177,7 +177,7 @@ def test_dialog_defaults_and_arbitrary_mapped_fields(app):
     dialog.close()
 
 
-def preview_setup(app):
+def preview_setup(app, splines=None):
     from geon.rendering.pointcloud import PointCloudLayer
     window=QMainWindow()
     window.dataset_manager=SimpleNamespace(_dataset=None)
@@ -205,8 +205,20 @@ def preview_setup(app):
     widget=tool.create_context_widget(window)
     mesh_result,result=reconstruct_cloud(source.data,"patches",["classes","objects"])
     surface=deviation_surface(result,source.data.points,np.zeros(len(source.data.points)),max_vertices=1000)
-    tool._ready((mesh_result,corner_curves(result),surface,result.point_deviations))
+    tool._ready((mesh_result,corner_curves(result),surface,result.point_deviations,splines or {}))
     return tool,ctx,window,widget
+
+
+def test_deviation_preview_exceeds_old_vertex_cap():
+    result=SimpleNamespace(vertices=np.array([[0.,0,0],[1.,0,0],[0.,1,0]]),
+        faces=np.tile([0,1,2],(26667,1)),face_patch_ids=np.zeros(26667,dtype=int),
+        deviation_point_indices=np.array([0]),point_deviations=np.array([.02]))
+    progress=Mock()
+    vertices,faces,values=deviation_surface(result,np.array([[0.,0,0]]),np.array([0]),
+                                           spacing=2,progress=progress)
+    assert len(vertices)>80000 and len(faces)==26667
+    np.testing.assert_allclose(values,.02)
+    progress.assert_called()
 
 
 def test_preview_histogram_uses_source_points_and_cancel_cleans_up(app):
@@ -218,7 +230,8 @@ def test_preview_histogram_uses_source_points_and_cancel_cleans_up(app):
     assert panel.source_field is tool._deviation_field
     assert panel.axis_actions["bottom","numbers"].isChecked()
     edges,counts=calculate_histogram([panel.source_field.data.ravel()])
-    assert counts[0].sum()==len(tool.source.data.points)
+    values=panel.source_field.data.ravel()
+    assert counts[0].sum()==np.count_nonzero((values>=edges[0]) & (values<=edges[-1]))
     assert counts[0].sum()>len(preview.data.faces)
     panel.show()
     panel.histogram_ready(panel.generation,edges,counts)
@@ -342,6 +355,86 @@ def test_all_reconstruction_config_controls_are_exposed(app):
     dialog=ReconstructionDialog(PointCloudLayer(cloud()))
     assert set(dialog.inputs)=={field.name for field in fields(Config)}
     dialog.close()
+
+
+def test_reconstruction_log_exposes_fit_rejections_and_updates(app):
+    from PyQt6.QtWidgets import QPlainTextEdit
+    tool,ctx,window,widget=preview_setup(app)
+    tool._set_status('Patch 25: rejected spline: insufficient support')
+    tool.log_button.click()
+    text=tool._log_dialog.findChild(QPlainTextEdit)
+    assert 'Patch 25: rejected spline' in text.toPlainText()
+    assert text.isReadOnly()
+    tool._set_status('Patch 25: PCA height axis 1: accepted spline')
+    assert 'PCA height axis 1' in text.toPlainText()
+    assert all(entry.startswith('[elapsed ') and '; delta ' in entry for entry in tool._log_messages)
+    tool._log_dialog.close()
+    ctx.controller.deactivate_tool()
+    window.close()
+
+
+def test_reconstruction_ribbon_has_two_rows_and_bounded_status(app):
+    tool,ctx,window,widget=preview_setup(app)
+    grid=widget.layout()
+    assert grid.rowCount()==2
+    for index in range(grid.count()):
+        row,column,row_span,column_span=grid.getItemPosition(index)
+        assert row+row_span<=2
+        assert grid.itemAt(index).widget().height()==18
+    message='Pair 123/456: computing and validating surface intersections '*8
+    tool._set_status(message)
+    assert message in tool.status_label.toolTip()
+    assert tool.status_label.width()==260
+    assert tool.status_label.fontMetrics().horizontalAdvance(tool.status_label.text())<=260
+    ctx.controller.deactivate_tool()
+    window.close()
+
+
+def test_reconstruction_failure_detail_is_in_timestamped_log(app,monkeypatch):
+    from PyQt6.QtWidgets import QMessageBox
+    tool,ctx,window,widget=preview_setup(app)
+    dialogs=[]
+    monkeypatch.setattr(QMessageBox,'exec',lambda self:dialogs.append(self.detailedText()))
+    tool._failed('Patch 9: shared seam node is not on the accepted boundary')
+    assert 'Reconstruction failed: Patch 9:' in dialogs[0]
+    assert '[elapsed ' in dialogs[0]
+    assert tool.preview_layer is None
+    window.close()
+
+
+@pytest.mark.parametrize('accept',[False,True])
+def test_spline_overlays_are_optional_and_removed_after_preview(app,accept):
+    grid=[np.array([[0.,0,0],[1.,0,0],[1.,1,0]])]
+    overlay={25:dict(grid=grid,control_net=[np.array([[0.,0,.2],[.4,0,.2]])],
+                     control_points=np.array([[0.,0,.2],[1.,0,.2]]))}
+    tool,ctx,window,widget=preview_setup(app,overlay)
+    assert tool.spline_grid_button.isEnabled()
+    assert tool.spline_control_button.isEnabled()
+    assert tool._spline_grid_actors[0].GetVisibility()
+    assert not any(a.GetVisibility() for a in tool._spline_control_actors)
+    tool.spline_control_button.setChecked(True)
+    tool.corners_button.setChecked(False)
+    assert all(a.GetVisibility() for a in tool._spline_control_actors+tool._spline_grid_actors)
+    assert not any(a.GetVisibility() for a in tool._overlays)
+    actors=tool._spline_control_actors+tool._spline_grid_actors
+    if accept:
+        tool._accept()
+        assert len(ctx.scene.doc.scene_items)==2
+    else:
+        ctx.controller.deactivate_tool()
+        assert len(ctx.scene.doc.scene_items)==1
+    assert not tool._spline_control_actors and not tool._spline_grid_actors
+    assert not any(ctx.viewer._renderer.HasViewProp(a) for a in actors)
+    window.close()
+
+
+def test_empty_reconstruction_error_includes_patch_rejection():
+    from geon.algorithms.reconstruction.core import Config
+    points=np.random.default_rng(74).normal(size=(300,3))
+    data=PointCloudData(points)
+    data.add_field('instances',np.full(len(points),25,dtype=np.int32),FieldType.INSTANCE)
+    with pytest.raises(ValueError,match='Patch 25:'):
+        reconstruct_cloud(data,'instances',config=Config(fit_cylinders=False,fit_bsplines=False))
 
 
 @pytest.mark.parametrize('level',list(MeshLevel))

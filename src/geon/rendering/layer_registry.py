@@ -14,7 +14,10 @@ class LayerRegistry:
     def create_layer_for(self, data_obj: BaseData) -> BaseLayer:
         data_cls = type(data_obj)
         layer_cls = self._map[data_cls]
-        return layer_cls(data_obj)
+        layer=layer_cls(data_obj)
+        if getattr(data_obj,'name',None):
+            layer.browser_name=data_obj.name
+        return layer
 
 LAYER_REGISTRY = LayerRegistry()
 

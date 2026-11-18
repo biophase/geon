@@ -53,6 +53,7 @@ geon = "geon.app:main"
 [tool.scikit-build]
 sdist.include = [
   "CMakeLists.txt",
+  "cmake/**",
   "native/**",
   "resources/**",
   "external/**",

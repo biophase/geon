@@ -210,6 +210,21 @@ class BoundingBox:
 
 @register_data
 class BoundingBoxData(BaseData):
+    @classmethod
+    def merge(cls, objects, *, name=None):
+        from .merging import merge_schemas
+        objects=cls._merge_inputs(objects)
+        schema,maps=merge_schemas([o.schema for o in objects])
+        boxes=[];used=set()
+        for obj,mapping in zip(objects,maps):
+            for box in deepcopy(obj.boxes):
+                while box.id in used:box.id=generate_uuid()
+                used.add(box.id)
+                box.semantic_id=mapping.get(box.semantic_id,box.semantic_id)
+                boxes.append(box)
+        result=cls(boxes,schema);result.name=name or getattr(objects[0],'name','Bounding Boxes')
+        return result
+
     type_id = "BoundingBoxData"
 
     def __init__(

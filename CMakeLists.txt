@@ -128,11 +128,14 @@ if(OpenMP_CXX_FOUND)
 endif()
 
 set(GEON_NATIVE_INSTALL_DIR "geon/_native")
+include(cmake/GeonOCCT.cmake)
 
 pybind11_add_module(lasso MODULE native/lasso.cpp)
+pybind11_add_module(touching_graph MODULE native/touching_graph.cpp)
+target_include_directories(touching_graph PRIVATE "${GEON_NANOFLANN_DIR}")
 
 install(
-  TARGETS features region_growing plane_ransac superpoints region_merge corner_cleanup split_between subsampling lasso
+  TARGETS features region_growing plane_ransac superpoints region_merge corner_cleanup split_between subsampling lasso touching_graph
   LIBRARY DESTINATION ${GEON_NATIVE_INSTALL_DIR}
   RUNTIME DESTINATION ${GEON_NATIVE_INSTALL_DIR}
   ARCHIVE DESTINATION ${GEON_NATIVE_INSTALL_DIR}

@@ -23,6 +23,7 @@ class MenuBar(QMenuBar):
     importCameraSnapshotJsonRequested = pyqtSignal()
     createEmptyBoundingBoxLayerRequested = pyqtSignal()
     fitObbFromSelectionRequested = pyqtSignal()
+    mergeLayersRequested = pyqtSignal()
     undoRequested               = pyqtSignal()
     redoRequested               = pyqtSignal()
     deselectRequested           = pyqtSignal()
@@ -91,6 +92,9 @@ class MenuBar(QMenuBar):
 
         # layer menu
         self.layer_menu = QMenu("&Layer", self)
+        self.merge_layers_action=self.layer_menu.addAction('Merge')
+        self.merge_layers_action.setEnabled(False)
+        self.merge_layers_action.triggered.connect(self.mergeLayersRequested)
         bbox_menu = cast(QMenu, self.layer_menu.addMenu("Bounding box"))
         act_empty_bbox = cast(QAction, bbox_menu.addAction("Create empty layer"))
         act_empty_bbox.triggered.connect(self.createEmptyBoundingBoxLayerRequested)

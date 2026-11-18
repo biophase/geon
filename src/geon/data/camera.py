@@ -30,6 +30,11 @@ def _list(values: Sequence[float]) -> List[float]:
 @register_data
 class CameraData(BaseData):
     type_id = "CameraSnapshot"
+    supports_merge = False
+
+    @classmethod
+    def merge(cls, objects, *, name=None):
+        raise ValueError('Camera snapshots represent individual views and cannot be merged.')
 
     def __init__(
         self,

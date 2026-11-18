@@ -32,6 +32,16 @@ from geon.data.definitions import VectorColorMap, finite_extrema, resolve_limits
 
 @layer_for(PointCloudData)
 class PointCloudLayer(BaseLayer[PointCloudData], SelectableLayer):
+    @classmethod
+    def merge(cls, layers, *, name=None):
+        merged,first=cls._merge_layers(layers,name)
+        merged.point_size=first.point_size
+        merged.foreground_mix=first.foreground_mix
+        merged.background_field_name=first.background_field_name
+        if first.active_field_name is not None:
+            merged.set_active_field_name(first.active_field_name)
+        return merged
+
     layer_type_id = "pointcloud"
 
     def instance_selection(self, *, contract: bool = False) -> np.ndarray:

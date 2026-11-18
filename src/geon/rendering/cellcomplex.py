@@ -21,6 +21,14 @@ from .layer_registry import layer_for
 
 @layer_for(CellComplexData)
 class CellComplexLayer(BaseLayer[CellComplexData], SelectableLayer):
+    @classmethod
+    def merge(cls, layers, *, name=None):
+        from copy import deepcopy
+        merged,first=cls._merge_layers(layers,name)
+        for attr in ('size_mode','screen_size_px','world_size','edge_width','default_color','active_semantic_attribute_by_dim'):
+            setattr(merged,attr,deepcopy(getattr(first,attr)))
+        return merged
+
     layer_type_id = "cellcomplex"
     use_cell_picking_for_selection = True
     vertex_cube_wire_width = 1.0

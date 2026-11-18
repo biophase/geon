@@ -23,7 +23,7 @@ from ..tools.controller import ToolController
 
 from PyQt6.QtWidgets import (QStackedWidget, QLabel, QWidget, QVBoxLayout, QHBoxLayout, QTreeWidget,
                              QTreeWidgetItem, QCheckBox, QButtonGroup, QRadioButton, QHeaderView, QMenu,
-                             QDialog, QMessageBox, QToolButton)
+                             QDialog, QMessageBox, QToolButton, QInputDialog)
 from PyQt6.QtCore import Qt, pyqtSignal, QSize
 from PyQt6.QtGui import QIcon, QAction
 
@@ -464,6 +464,9 @@ class SceneManager(Dock):
         layers = [o for o in objs if isinstance(o, BaseLayer)]
         
         menu = QMenu(self.tree)
+        if len(layers)==len(items) and layers and type(layers[0]).can_merge(layers):
+            merge_action=menu.addAction('Merge')
+            merge_action.triggered.connect(self.merge_selected_layers)
         field = clicked.data(0, Qt.ItemDataRole.UserRole)
         parent = clicked.parent()
         owner = parent.data(0, Qt.ItemDataRole.UserRole) if parent is not None else None
@@ -522,6 +525,53 @@ class SceneManager(Dock):
         if menu.isEmpty():
             return
         menu.exec(viewport.mapToGlobal(pos))
+
+    def merge_candidates(self):
+        """Whole highlighted layer rows in browser order, never point selections."""
+        selected=self.tree.selectedItems()
+        if self._scene is None or len(selected)<2:
+            return []
+        if any(not isinstance(item.data(0,Qt.ItemDataRole.UserRole),BaseLayer) for item in selected):
+            return []
+        layers=[self.tree.topLevelItem(i).data(0,Qt.ItemDataRole.UserRole)
+                for i in range(self.tree.topLevelItemCount()) if self.tree.topLevelItem(i).isSelected()]
+        if not layers or not type(layers[0]).can_merge(layers):
+            return []
+        if any(self._scene.layers.get(layer.id) is not layer for layer in layers):
+            return []
+        return layers
+
+    def merge_selected_layers(self):
+        from geon.tools.merge_layers import MergeLayersCommand
+        layers=self.merge_candidates()
+        if not layers:return
+        name,accepted=QInputDialog.getText(self,'Merge layers','Name:',text=layers[0]._browser_name)
+        if not accepted or not name.strip():return
+        scene=self._scene
+        self.tool_controller.deactivate_tool()
+        if scene is not self._scene or any(scene.layers.get(layer.id) is not layer for layer in layers):return
+        try:
+            merged=type(layers[0]).merge(layers,name=name.strip())
+            while merged.id in scene.layers or merged.id in scene.doc.scene_items:
+                merged.data.id=merged.data._generate_id()
+            self.tool_controller.do_global(MergeLayersCommand(scene,layers,merged,self._refresh_after_merge))
+        except (ValueError,TypeError,RuntimeError) as exc:
+            QMessageBox.warning(self,'Merge layers',str(exc))
+
+    def _refresh_after_merge(self):
+        window=self.viewer.window()
+        mark=getattr(window,'_mark_active_doc_modified',None)
+        if callable(mark):mark()
+        manager=getattr(window,'dataset_manager',None)
+        if manager is not None and hasattr(manager,'populate_tree'):manager.populate_tree()
+        self.populate_tree()
+        active=self._scene.active_layer if self._scene else None
+        if active is not None:
+            self.broadcastActivatedLayer.emit(active)
+            for i in range(self.tree.topLevelItemCount()):
+                item=self.tree.topLevelItem(i)
+                if item.data(0,Qt.ItemDataRole.UserRole) is active:item.setSelected(True)
+        self.viewer.rerender()
 
     def _set_background_field(self, layer: PointCloudLayer, name: str) -> None:
         layer.set_background_field_name(name)

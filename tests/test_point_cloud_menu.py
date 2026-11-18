@@ -32,6 +32,8 @@ def window(qt_app):
     window = MainWindow.__new__(MainWindow)
     QMainWindow.__init__(window)
     window.scene_manager = SimpleNamespace(_scene=None)
+    window.color_channels = SimpleNamespace(allow_switch=lambda: True)
+    window.window_layout = SimpleNamespace(save=lambda: None)
     window.menu_bar = MenuBar(window)
     window._populate_point_cloud_menu()
     yield window
@@ -53,7 +55,9 @@ def test_document_menu_groups_point_cloud_tools(window):
     for action in bar.point_cloud_menu.actions():
         assert action.text() not in document
     segmentation = bar.point_cloud_menu.actions()[-1].menu()
-    assert len(segmentation.actions()) == 6
+    assert len(segmentation.actions()) == 7
+    assert "Planar region growing on superpoints (experimental)" in [
+        action.text() for action in segmentation.actions()]
 
 
 def point_cloud_actions(window):
@@ -76,7 +80,7 @@ def test_each_point_cloud_action_checks_active_layer(window, monkeypatch, scene_
     errors = []
     monkeypatch.setattr(QMessageBox, "critical", lambda parent, title, text: errors.append(text))
     actions = list(point_cloud_actions(window))
-    assert len(actions) == 9
+    assert len(actions) == 10
     for action in actions:
         action.trigger()
     assert errors == ["Activate a point cloud first."] * len(actions)

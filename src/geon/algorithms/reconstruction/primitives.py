@@ -1,4 +1,4 @@
-"""Cylinder fitting, exact intersection sampling, and conforming UV refinement."""
+"""Cylinder fitting, OCCT intersection sampling, and conforming UV refinement."""
 from dataclasses import dataclass
 import numpy as np
 from scipy.optimize import least_squares
@@ -14,11 +14,27 @@ class Cylinder:
     angular_span: float
     periodic: bool
     rmse: float
+    kind = 'cylinder'
+
+    def normal_at(self, uv):
+        theta = np.asarray(uv)[..., 0]/self.radius + self.theta_start
+        return np.cos(theta)[..., None]*self.u + np.sin(theta)[..., None]*self.v
+
+    def descriptor(self, bounds):
+        bounds = np.asarray(bounds, dtype=float).copy()
+        bounds[[0, 2]] = bounds[[0, 2]]/self.radius + self.theta_start
+        # A complete periodic surface has exactly one angular revolution.
+        if bounds[2]-bounds[0] > 2*np.pi:
+            bounds[0], bounds[2] = self.theta_start, self.theta_start+2*np.pi
+        return dict(kind=self.kind, origin=self.origin, normal=self.axis,
+                    u=self.u, radius=self.radius, bounds=bounds)
 
     def project(self, xyz):
         q=np.asarray(xyz)-self.origin
         theta=(np.arctan2(q@self.v,q@self.u)-self.theta_start)%(2*np.pi)
-        return np.column_stack([self.radius*theta,q@self.axis])
+        # Preserve leading dimensions, including a single point (3,) -> (2,).
+        # Corner reconciliation mixes normals from all surface types.
+        return np.stack([self.radius*theta,q@self.axis],axis=-1)
 
     def lift(self, uv):
         uv=np.asarray(uv);theta=uv[...,0]/self.radius+self.theta_start
@@ -76,52 +92,14 @@ def curve_in_patch(patch, xyz):
 
 
 def primitive_residual(patch, xyz):
-    if patch.cylinder is None:return (np.asarray(xyz)-patch.center)@patch.normal
-    return patch.cylinder.residual(xyz)
+    from .geometry_backend import surface_of
+    return surface_of(patch).residual(xyz)
 
 
-def raw_intersection_curves(a,b,step):
-    """Sample analytical parameterizations; NaNs separate disconnected branches."""
-    if a.cylinder is None and b.cylinder is not None:a,b=b,a
-    c=a.cylinder
-    if c is None:return []
-    lo,hi=a.footprint.bounds[0]/c.radius,a.footprint.bounds[2]/c.radius
-    theta=np.linspace(lo,hi,max(16,int(np.ceil((hi-lo)*c.radius/step))+1))+c.theta_start
-    radial=c.radius*(np.cos(theta)[:,None]*c.u+np.sin(theta)[:,None]*c.v)
-    base=c.origin+radial
-    tlo,thi=a.footprint.bounds[1],a.footprint.bounds[3]
-    if b.cylinder is None:
-        n=b.normal;den=float(n@c.axis)
-        if abs(den)>1e-6:
-            t=-((base-b.center)@n)/den
-            points=base+t[:,None]*c.axis
-            points[(t<tlo-step*2)|(t>thi+step*2)]=np.nan
-            return [points]
-        x,y=c.radius*(n@c.u),c.radius*(n@c.v);scale=np.hypot(x,y)
-        if scale<1e-10:return []
-        cosine=-float((c.origin-b.center)@n)/scale
-        if abs(cosine)>1:return []
-        curves=[]
-        for angle in (np.arctan2(y,x)+np.arccos(cosine),np.arctan2(y,x)-np.arccos(cosine)):
-            rel=(angle-c.theta_start)%(2*np.pi)
-            if not lo-1e-8<=rel<=hi+1e-8:continue
-            t=np.linspace(tlo,thi,max(2,int(np.ceil((thi-tlo)/step))+1))
-            curves.append(c.origin+c.radius*(np.cos(angle)*c.u+np.sin(angle)*c.v)+t[:,None]*c.axis)
-        return curves
-    other=b.cylinder;M=np.eye(3)-np.outer(other.axis,other.axis)
-    qa=base-other.origin;A=float(c.axis@M@c.axis)
-    if A<1e-10:
-        delta=M@(other.origin-c.origin);d=np.linalg.norm(delta)
-        if d<1e-10 or d>c.radius+other.radius or d<abs(c.radius-other.radius):return []
-        u=delta/d;v=np.cross(c.axis,u);offset=(c.radius**2-other.radius**2+d*d)/(2*d);h=np.sqrt(max(0,c.radius**2-offset**2))
-        t=np.linspace(tlo,thi,max(2,int(np.ceil((thi-tlo)/step))+1))
-        return [c.origin+offset*u+sign*h*v+t[:,None]*c.axis for sign in (-1,1)]
-    B=2*(qa@M@c.axis);C=np.einsum('ij,ij->i',qa@M,qa)-other.radius**2
-    discriminant=B*B-4*A*C;curves=[]
-    for sign in (-1,1):
-        t=(-B+sign*np.sqrt(np.maximum(discriminant,0)))/(2*A)
-        points=base+t[:,None]*c.axis;points[(discriminant<0)|(t<tlo-step*2)|(t>thi+step*2)]=np.nan;curves.append(points)
-    return curves
+def raw_intersection_curves(a, b, step, chord_tolerance=.005, margin=0., diagnostic=None):
+    """OCCT intersections for every supported surface pair."""
+    from .geometry_backend import intersection_curves
+    return intersection_curves(a, b, step, chord_tolerance, margin, diagnostic)
 
 
 def simplify_curve_3d(points,tolerance):
@@ -134,6 +112,74 @@ def simplify_curve_3d(points,tolerance):
         if len(dist) and dist.max()>tolerance:
             k=a+1+int(np.argmax(dist));keep.add(k);stack.extend([(a,k),(k,b)])
     return points[sorted(keep)]
+
+
+def refine_surface_triangles(polygons, lift, tolerance, locked_curves=(), spacing=None):
+    """Conforming two-direction refinement, preserving common seam segments."""
+    import shapely
+    vertices, lookup, faces = [], {}, []
+    def index(p):
+        key = tuple(np.round(p, 11))
+        if key not in lookup:
+            lookup[key] = len(vertices)
+            vertices.append(np.asarray(p))
+        return lookup[key]
+    if spacing is None:
+        initial=[np.asarray(t.exterior.coords)[:3] for p in polygons
+                 for t in shapely.constrained_delaunay_triangles(p).geoms]
+    else:
+        from .meshing import grid_triangles
+        initial=grid_triangles(polygons,spacing)
+    for triangle in initial:
+        faces.append([index(p) for p in triangle])
+    locked = set()
+    for curve in locked_curves:
+        for a, b in zip(curve[:-1], curve[1:]):
+            locked.add(tuple(sorted((index(a), index(b)))))
+    for iteration in range(24):
+        if len(faces) > 1000000:
+            raise ValueError('Spline triangulation exceeded one million triangles')
+        edges = sorted({tuple(sorted((a, b))) for tri in faces for a, b in zip(tri, np.roll(tri, -1))})
+        uv = np.asarray(vertices)
+        xyz = lift(uv)
+        split = {}
+        for start in range(0, len(edges), 65536):
+            block = np.asarray(edges[start:start+65536], dtype=int)
+            if not len(block):
+                continue
+            midpoint = uv[block].mean(axis=1)
+            error = np.linalg.norm(lift(midpoint)-xyz[block].mean(axis=1), axis=1)
+            for edge, mid in zip(block[error > tolerance], midpoint[error > tolerance]):
+                key = tuple(edge)
+                if key not in locked:
+                    split[key] = index(mid)
+        refined, interior_split = [], False
+        for tri in faces:
+            mids = [split.get(tuple(sorted((tri[i], tri[(i+1)%3])))) for i in range(3)]
+            count = sum(m is not None for m in mids)
+            if count == 0:
+                center = uv[tri].mean(axis=0)
+                if np.linalg.norm(lift(center)-xyz[tri].mean(axis=0)) > tolerance:
+                    m = index(center)
+                    refined.extend([[tri[i], tri[(i+1)%3], m] for i in range(3)])
+                    interior_split = True
+                else:
+                    refined.append(tri)
+            elif count == 3:
+                a,b,c = tri; x,y,z = mids
+                refined.extend([[a,x,z], [x,b,y], [z,y,c], [x,y,z]])
+            else:
+                i = (next(i for i,m in enumerate(mids) if m is not None) if count == 1 else
+                     next(i for i in range(3) if mids[i] is not None and mids[(i+1)%3] is not None))
+                a,b,c = [tri[(i+j)%3] for j in range(3)]; x = mids[i]
+                if count == 1:
+                    refined.extend([[a,x,c], [x,b,c]])
+                else:
+                    y=mids[(i+1)%3];refined.extend([[a,x,c], [x,y,c], [x,b,y]])
+        faces = refined
+        if not split and not interior_split:
+            return np.asarray(vertices)[np.asarray(faces, dtype=int)] if faces else np.empty((0,3,2))
+    raise ValueError('Spline triangulation did not converge to chord tolerance')
 
 
 def refine_uv_triangles(polygons, max_dx):

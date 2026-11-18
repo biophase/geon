@@ -8,3 +8,6 @@
 [submodule "external/pybind11"]
 	path = external/pybind11
 	url = https://github.com/pybind/pybind11.git
+[submodule "external/opencascade"]
+	path = external/opencascade
+	url = https://github.com/Open-Cascade-SAS/OCCT.git

@@ -12,6 +12,7 @@ from .features_dialog import FeaturesDialog
 from .region_growing_dialog import RegionGrowingDialog
 from .plane_ransac_dialog import PlaneRansacDialog
 from .superpoint_segmentation_dialog import SuperpointSegmentationDialog
+from .superpoint_region_growing_dialog import run_superpoint_region_growing
 from .region_merge_dialog import RegionMergeDialog
 from .corner_cleanup_dialog import CornerCleanupDialog
 from .connected_components_dialog import ConnectedComponentsDialog
@@ -191,6 +192,11 @@ class MainWindow(QMainWindow):
         self.menu_bar.contractInstanceSelectionRequested.connect(lambda: self._on_instance_selection(True))
         self.menu_bar.deselectRequested.connect(self._on_deselect_active_layer)
         self.menu_bar.extractSelectionRequested.connect(self._on_extract_selection)
+        self.menu_bar.mergeLayersRequested.connect(self.scene_manager.merge_selected_layers)
+        self.menu_bar.layer_menu.aboutToShow.connect(lambda: self.menu_bar.merge_layers_action.setEnabled(
+            bool(self.scene_manager.merge_candidates())))
+        self.scene_manager.tree.itemSelectionChanged.connect(lambda: self.menu_bar.merge_layers_action.setEnabled(
+            bool(self.scene_manager.merge_candidates())))
         self.dataset_manager.requestAppendMeshToActiveDoc\
             .connect(self._on_append_mesh_to_active_doc)
         self.menu_bar.importCellComplexTxtRequested\
@@ -343,6 +349,9 @@ class MainWindow(QMainWindow):
         act_plane_ransac.triggered.connect(self._on_plane_ransac)
         act_superpoints = cast(QAction, seg_menu.addAction("Superpoint segmentation"))
         act_superpoints.triggered.connect(self._on_superpoint_segmentation)
+        act_superpoint_growth = cast(QAction, seg_menu.addAction(
+            "Planar region growing on superpoints (experimental)"))
+        act_superpoint_growth.triggered.connect(self._on_superpoint_region_growing)
         act_region_merge = cast(QAction, seg_menu.addAction("Merge planar regions"))
         act_region_merge.triggered.connect(self._on_region_merge)
         act_corner_cleanup = cast(QAction, seg_menu.addAction("Clean up corner regions"))
@@ -1563,6 +1572,9 @@ class MainWindow(QMainWindow):
                     break
         self.scene_manager.populate_tree()
         self.viewer.rerender()
+
+    def _on_superpoint_region_growing(self) -> None:
+        run_superpoint_region_growing(self)
 
     def _on_superpoint_segmentation(self) -> None:
         scene = self.scene_manager._scene

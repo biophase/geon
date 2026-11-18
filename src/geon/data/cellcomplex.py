@@ -120,6 +120,31 @@ class EdgeCell(Cell):
 
 @register_data
 class CellComplexData(BaseData):
+    @classmethod
+    def merge(cls, objects, *, name=None):
+        from .merging import merge_schemas
+        objects=cls._merge_inputs(objects)
+        schemas={};maps={}
+        for dim in range(CELL_COMPLEX_MAX_DIM+1):
+            schemas[dim]={}
+            names=dict.fromkeys(n for obj in objects for n in obj.semantic_attribute_schemas.get(dim,{}))
+            for key in names:
+                schemas[dim][key],maps[dim,key]=merge_schemas([o.semantic_attribute_schemas.get(dim,{}).get(key) for o in objects])
+        cells=[];used=set()
+        for i,obj in enumerate(objects):
+            copied=deepcopy(obj.get_cells());ids={}
+            for cell in copied:
+                old=cell.id
+                while cell.id in used:cell.id=generate_uuid()
+                used.add(cell.id);ids[old]=cell.id
+            for cell in copied:
+                cell.boundary=[ids[k] for k in cell.boundary]
+                for key,value in cell.semantic_attributes.items():
+                    cell.semantic_attributes[key]=maps[cell.dim,key][i].get(value,value)
+            cells.extend(copied)
+        result=cls([c for c in cells if c.dim==0],[c for c in cells if c.dim==1],schemas)
+        result.name=name or getattr(objects[0],'name','Cell Complex')
+        return result
     
     def __init__(self, 
                  vertices: Optional[List[VertexCell]] = None,

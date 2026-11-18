@@ -47,6 +47,7 @@ def coarse_points_stride(percent: float) -> int:
 REGION_GROWING_PREFIX = "region_growing__"
 PLANE_RANSAC_PREFIX = "plane_ransac__"
 SUPERPOINTS_PREFIX = "superpoints__"
+SUPERPOINT_REGION_GROWING_PREFIX = "superpoint_region_growing__"
 REGION_MERGE_PREFIX = "region_merge__"
 CORNER_CLEANUP_PREFIX = "corner_cleanup__"
 CONNECTED_COMPONENTS_PREFIX = "connected_components__"
@@ -55,6 +56,7 @@ _TOOL_PREFIXES: Dict[str, str] = {
     "region_growing": REGION_GROWING_PREFIX,
     "plane_ransac": PLANE_RANSAC_PREFIX,
     "superpoints": SUPERPOINTS_PREFIX,
+    "superpoint_region_growing": SUPERPOINT_REGION_GROWING_PREFIX,
     "region_merge": REGION_MERGE_PREFIX,
     "corner_cleanup": CORNER_CLEANUP_PREFIX,
     "connected_components": CONNECTED_COMPONENTS_PREFIX,
@@ -184,6 +186,7 @@ class Preferences:
     region_growing_settings: Dict[str, Any] = field(default_factory=dict)
     plane_ransac_settings: Dict[str, Any] = field(default_factory=dict)
     superpoints_settings: Dict[str, Any] = field(default_factory=dict)
+    superpoint_region_growing_settings: Dict[str, Any] = field(default_factory=dict)
     region_merge_settings: Dict[str, Any] = field(default_factory=dict)
     corner_cleanup_settings: Dict[str, Any] = field(default_factory=dict)
     connected_components_settings: Dict[str, Any] = field(default_factory=dict)
@@ -260,6 +263,8 @@ class Preferences:
             prefs.region_growing_settings = _tool_settings_from_data(data, REGION_GROWING_PREFIX)
             prefs.plane_ransac_settings = _tool_settings_from_data(data, PLANE_RANSAC_PREFIX)
             prefs.superpoints_settings = _tool_settings_from_data(data, SUPERPOINTS_PREFIX)
+            prefs.superpoint_region_growing_settings = _tool_settings_from_data(
+                data, SUPERPOINT_REGION_GROWING_PREFIX)
             prefs.region_merge_settings = _tool_settings_from_data(data, REGION_MERGE_PREFIX)
             prefs.corner_cleanup_settings = _tool_settings_from_data(data, CORNER_CLEANUP_PREFIX)
             prefs.connected_components_settings = _tool_settings_from_data(
@@ -278,6 +283,12 @@ class Preferences:
 
     def get_plane_ransac_settings(self) -> Dict[str, Any]:
         return dict(self.plane_ransac_settings)
+
+    def set_superpoint_region_growing_settings(self, settings: Dict[str, Any]) -> None:
+        self.superpoint_region_growing_settings = _sanitize_settings(settings)
+
+    def get_superpoint_region_growing_settings(self) -> Dict[str, Any]:
+        return dict(self.superpoint_region_growing_settings)
 
     def set_superpoints_settings(self, settings: Dict[str, Any]) -> None:
         self.superpoints_settings = _sanitize_settings(settings)
@@ -325,6 +336,7 @@ class Preferences:
             (REGION_GROWING_PREFIX, self.region_growing_settings),
             (PLANE_RANSAC_PREFIX, self.plane_ransac_settings),
             (SUPERPOINTS_PREFIX, self.superpoints_settings),
+            (SUPERPOINT_REGION_GROWING_PREFIX, self.superpoint_region_growing_settings),
             (REGION_MERGE_PREFIX, self.region_merge_settings),
             (CORNER_CLEANUP_PREFIX, self.corner_cleanup_settings),
             (CONNECTED_COMPONENTS_PREFIX, self.connected_components_settings),

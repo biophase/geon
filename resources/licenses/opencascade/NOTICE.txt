@@ -1,0 +1,12 @@
+Open CASCADE Technology (OCCT), release V7_9_3
+Source: https://github.com/Open-Cascade-SAS/OCCT
+Pinned commit: a016080bf6738d6aeae020badee4e888ad1540a5.
+
+The geon._native.surface_geometry extension contains statically linked OCCT
+geometry toolkits. OCCT is distributed under LGPL 2.1 with the OCCT exception.
+The original LICENSE_LGPL_21.txt and OCCT_LGPL_EXCEPTION.txt are installed beside
+this notice. The pinned OCCT source is included in geon's source distribution
+and can also be obtained with git submodule update --init --recursive.
+
+Copyright notices in the upstream source remain applicable. Geon is distributed
+under GPL-3.0-only; see its LICENSE and the upstream OCCT notices for full terms.

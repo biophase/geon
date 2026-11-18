@@ -45,6 +45,7 @@ class BridgeTests(unittest.TestCase):
         xyz,ids=self.data(offset=.004,tilt=.005)
         r=reconstruct(xyz,ids,config=Config(alpha_radius=.07))
         self.check_bridge(r)
+        self.assertTrue(any(e.get('border_regularized') for e in r.bridges))
 
     def test_overlap_is_not_bridged(self):
         xyz,ids=self.data(gap=-.03)

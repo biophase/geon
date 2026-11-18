@@ -10,6 +10,10 @@ from .layer_registry import layer_for
 
 @layer_for(CameraData)
 class CameraLayer(BaseLayer[CameraData]):
+    @classmethod
+    def merge(cls, layers, *, name=None):
+        raise ValueError('Camera snapshots cannot be merged.')
+
     layer_type_id = "camera_snapshot"
 
     def __init__(self, data: CameraData):

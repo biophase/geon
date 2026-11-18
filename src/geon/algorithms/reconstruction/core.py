@@ -1,15 +1,15 @@
-"""Open-shell reconstruction of segmented planes and cylinders.
+"""Open-shell reconstruction of planes, cylinders and PCA-local B-splines.
 
-Dependencies: numpy scipy shapely>=2.1 (GEOS>=3.10) plyfile.
+Dependencies: numpy scipy shapely>=2.1 (GEOS>=3.10) plyfile, geon's OCCT extension.
 Primitive fitting and mesh stitching live in this package.
 
-    from planar_reconstruction import Config, reconstruct
+    from geon.algorithms.reconstruction.core import Config, reconstruct
     result = reconstruct(points, patch_ids, config=Config(), verbose=True)
     result.export_ply('reconstructed.ply')
 
 Patch IDs remain separate. Optional part IDs restrict adjacency. Cylinder fitting
 is selected only after a substantial residual improvement and angular support.
-Analytical joins are preferred; bounded bridge strips can recover supported seams
+Surface intersections are preferred; bounded bridge strips can recover supported seams
 without changing source primitive fidelity. Bridge/cap triangles belong to the
 smaller original patch by point count. Intentional outer borders and single-patch
 holes remain open. This does not promise a watertight solid or exact CAD B-rep.
@@ -26,8 +26,10 @@ import shapely
 from shapely.geometry import Polygon, LineString
 from shapely.errors import GEOSException
 from .stitching import stitch_boundaries
+from .surfaces import Plane, fit_bspline
+from .geometry_backend import triple_points
 from .primitives import (fit_cylinder, curve_in_patch, primitive_residual,
-    raw_intersection_curves, simplify_curve_3d, refine_uv_triangles)
+    raw_intersection_curves, simplify_curve_3d, refine_surface_triangles)
 
 
 @dataclass
@@ -37,6 +39,12 @@ class Config:
     exclude_ids: tuple[int, ...] = (-1,)
     alpha_radius: float = .10  # Circumradius, NOT inverse alpha.
     max_plane_rmse: float = .025
+    fit_bsplines: bool = True
+    max_bspline_rmse: float = .025
+    bspline_error_ratio: float = .5
+    bspline_smoothing: float = .001
+    bspline_max_slope: float = 1.
+    bspline_mesh_spacing: float = .5  # Maximum regular UV cell width, coordinate units.
     fit_cylinders: bool = True
     cylinder_trim_mode: str = "observed"  # "extent" regularizes complete columns.
     cylinder_plane_trigger: float = .02
@@ -46,6 +54,7 @@ class Config:
     cylinder_min_angle_degrees: float = 35.
     curve_tolerance: float = .005
     cylinder_chord_tolerance: float = .01
+    cylinder_mesh_spacing: float = .25  # Maximum physical UV cell width.
     rescue_shared_edges: bool = True
     bridge_remaining_gaps: bool = True
     clean_border_pass: bool = True
@@ -71,6 +80,11 @@ class Config:
     weld_tolerance: float = 1e-7
 
     def __post_init__(self):
+        for name in ('max_bspline_rmse', 'bspline_smoothing', 'bspline_max_slope', 'bspline_mesh_spacing', 'cylinder_mesh_spacing'):
+            if not np.isfinite(getattr(self, name)) or getattr(self, name) <= 0:
+                raise ValueError(f'{name} must be finite and positive')
+        if not 0 < self.bspline_error_ratio < 1:
+            raise ValueError('bspline_error_ratio must be between 0 and 1')
         for name in ('alpha_radius', 'max_plane_rmse', 'adjacency_radius',
                      'edge_tolerance', 'support_step', 'min_edge_length',
                      'cylinder_plane_trigger', 'max_cylinder_rmse', 'cylinder_max_radius',
@@ -114,20 +128,38 @@ class Patch:
     cylinder: object | None = None
     plane_rmse: float = 0.
     source_point_count: int = 0  # After input filtering, before subsampling.
+    spline: object | None = None
 
     @property
     def kind(self):
-        return 'cylinder' if self.cylinder is not None else 'plane'
+        return self.surface.kind
+
+    @property
+    def surface(self):
+        if self.spline is not None:
+            return self.spline
+        if self.cylinder is not None:
+            return self.cylinder
+        return Plane(self.center, self.normal, self.basis)
+
+    def normal_at(self, uv):
+        return self.surface.normal_at(uv)
+
+    @property
+    def parameter_bounds(self):
+        if self.footprint is not None:
+            return np.asarray(self.footprint.bounds)
+        uv = self.project(self.points)
+        return np.r_[uv.min(axis=0), uv.max(axis=0)]
+
+    def residual(self, xyz):
+        return self.surface.residual(xyz)
 
     def project(self, xyz):
-        if self.cylinder is not None:
-            return self.cylinder.project(xyz)
-        return (np.asarray(xyz) - self.center) @ self.basis
+        return self.surface.project(xyz)
 
     def lift(self, uv):
-        if self.cylinder is not None:
-            return self.cylinder.lift(uv)
-        return self.center + np.asarray(uv) @ self.basis.T
+        return self.surface.lift(uv)
 
 
 @dataclass
@@ -191,8 +223,8 @@ def spatial_subsample(points, min_distance):
 def alpha_footprint(uv, radius, log=None):
     """Build polygons from exposed Delaunay edges, without triangle union.
 
-    Polygonization can also produce faces filling holes. Classify each polygon's
-    interior sample against the retained triangulation to discard those faces.
+    Polygonization can also produce faces filling holes. Classify each polygon
+    using the retained triangle attached to one of its exposed boundary edges.
     This preserves nested islands and disconnected components without guessing
     ring orientation or walking ambiguous point-touching vertices ourselves.
     """
@@ -223,18 +255,28 @@ def alpha_footprint(uv, radius, log=None):
 
     edges = np.concatenate([kept[:, [0, 1]], kept[:, [1, 2]], kept[:, [2, 0]]])
     edges.sort(axis=1)
-    unique_edges, counts = np.unique(edges, axis=0, return_counts=True)
+    unique_edges, first, counts = np.unique(edges, axis=0, return_index=True, return_counts=True)
     boundary_edges = unique_edges[counts == 1]
+    boundary_triangles = kept[first[counts == 1] % len(kept)]
     report(f"boundary edge counting ({len(boundary_edges):,} edges)")
 
     candidates = list(shapely.polygonize(shapely.linestrings(uv[boundary_edges])).geoms)
     if not candidates:
         raise ValueError('Alpha boundary contains no polygon loops')
-    samples = shapely.get_coordinates(shapely.point_on_surface(candidates))
-    simplex = triangulation.find_simplex(samples)
-    inside = np.zeros(len(simplex), dtype=bool)
-    inside[simplex >= 0] = retained[simplex[simplex >= 0]]
-    selected = [poly for poly, keep in zip(candidates, inside) if keep]
+    # find_simplex lazily computes transforms for EVERY Delaunay triangle. On
+    # million-triangle scans that costs tens of seconds to classify a few loops.
+    # Each exposed edge has exactly one retained incident triangle. Its centroid
+    # lies inside the polygon on the material side, and outside the hole face.
+    witnesses={tuple(uv[edge].ravel()):uv[triangle].mean(axis=0)
+               for edge,triangle in zip(boundary_edges,boundary_triangles)}
+    selected=[]
+    for poly in candidates:
+        edge=np.asarray(poly.exterior.coords)[:2]
+        if tuple(edge[0])>tuple(edge[1]):
+            edge=edge[::-1]
+        witness=shapely.Point(witnesses[tuple(edge.ravel())])
+        if poly.covers(witness):
+            selected.append(poly)
     if not selected:
         raise ValueError('Alpha boundary contains no retained polygon faces')
     result = selected[0] if len(selected) == 1 else shapely.MultiPolygon(selected)
@@ -303,50 +345,20 @@ def _candidate_pairs(patches, cfg, log=lambda message: None):
                 yield i, j
 
 
-def _plane_intersection_segments(a, b, cfg):
-    d = np.cross(a.normal, b.normal)
-    if np.linalg.norm(d) < np.sin(np.deg2rad(cfg.min_plane_angle_degrees)):
-        return []
-    d /= np.linalg.norm(d)
-    # Solve relative to a nearby origin to avoid large-coordinate cancellation.
-    origin = (a.center+b.center)/2
-    matrix = np.stack([a.normal, b.normal, d])
-    rhs = [a.normal @ (a.center-origin), b.normal @ (b.center-origin), 0.]
-    p0 = origin + np.linalg.solve(matrix, rhs)
-    intervals = []
-    for p in (a, b):
-        boundary = _boundary_samples(p, cfg.support_step)
-        t = (boundary-p0) @ d
-        off = np.linalg.norm(boundary-(p0+t[:, None]*d), axis=1)
-        t = t[off <= cfg.edge_tolerance]
-        if len(t) < 2:
+def _intersection_segments(a, b, cfg, diagnostic=None):
+    report = diagnostic or (lambda message: None)
+    if a.kind == 'plane' and b.kind == 'plane':
+        if np.linalg.norm(np.cross(a.normal, b.normal)) < 1e-8 and abs((b.center-a.center)@a.normal) < 1e-7:
+            report('coincident planes: defer to supported coplanar border joining')
             return []
-        intervals.append((t.min(), t.max()))
-    lo, hi = max(x[0] for x in intervals), min(x[1] for x in intervals)
-    if hi-lo < cfg.min_edge_length:
-        return []
-    t = np.linspace(lo, hi, max(2, int(np.ceil((hi-lo)/cfg.support_step))+1))
-    xyz = p0+t[:, None]*d
-    valid = np.ones(len(t), dtype=bool)
-    for p in (a, b):
-        # Both a nearby observed boundary and nearby actual point support are required.
-        boundary_tree = cKDTree(_boundary_samples(p, cfg.support_step))
-        valid &= boundary_tree.query(xyz)[0] <= cfg.edge_tolerance
-        valid &= cKDTree(p.points).query(xyz)[0] <= cfg.adjacency_radius
-    runs = np.split(np.flatnonzero(valid), np.flatnonzero(np.diff(np.flatnonzero(valid)) > 1)+1)
-    return [xyz[[run[0], run[-1]]] for run in runs
-            if len(run) >= 2 and t[run[-1]]-t[run[0]] >= cfg.min_edge_length]
-
-
-def _intersection_segments(a, b, cfg):
-    if a.cylinder is None and b.cylinder is None:
         if cfg.join_coplanar and cfg.prefer_coplanar_join and abs(a.normal@b.normal)>=np.cos(np.deg2rad(cfg.coplanar_angle_degrees)):
             return []
-        return _plane_intersection_segments(a, b, cfg)
+        if np.linalg.norm(np.cross(a.normal, b.normal)) < np.sin(np.deg2rad(cfg.min_plane_angle_degrees)):
+            return []
     trees = [cKDTree(_boundary_samples(p, cfg.support_step)) for p in (a, b)]
     point_trees = [cKDTree(p.points) for p in (a, b)]
     result = []
-    for raw in raw_intersection_curves(a, b, cfg.support_step):
+    for raw in raw_intersection_curves(a, b, cfg.support_step, cfg.curve_tolerance, cfg.edge_tolerance, diagnostic=report):
         finite = np.isfinite(raw).all(axis=1)
         valid = finite.copy()
         for tree, point_tree in zip(trees, point_trees):
@@ -361,10 +373,13 @@ def _intersection_segments(a, b, cfg):
             curve = raw[indices]
             if len(curve) < 2 or np.linalg.norm(np.diff(curve, axis=0), axis=1).sum() < cfg.min_edge_length:
                 continue
-            radius = min(p.cylinder.radius for p in (a,b) if p.cylinder is not None)
-            curve = simplify_curve_3d(curve, min(cfg.curve_tolerance, cfg.cylinder_chord_tolerance*.5, radius*.02))
+            cylinders = [p.cylinder for p in (a,b) if p.cylinder is not None]
+            tolerance = cfg.curve_tolerance
+            if cylinders:
+                tolerance = min(tolerance, cfg.cylinder_chord_tolerance*.5, min(c.radius for c in cylinders)*.02)
+            curve = simplify_curve_3d(curve, tolerance)
             result.append(curve)
-    return result
+    return [piece for curve in result for piece in _supported_boundary_pieces(a,b,curve,cfg)]
 
 
 def _edge_points(edge):
@@ -372,22 +387,77 @@ def _edge_points(edge):
 
 
 def _has_curve(geometry, points):
-    return all(_has_edge(geometry, points[i:i+2]) for i in range(len(points)-1))
+    return _has_curves(geometry, [points])
 
 
 def _has_edge(geometry, endpoints, atol=1e-8):
-    for ring in _rings(geometry):
-        for a, b in zip(ring, np.roll(ring, -1, axis=0)):
-            if (np.linalg.norm(a-endpoints[0]) < atol and np.linalg.norm(b-endpoints[1]) < atol
-                or np.linalg.norm(b-endpoints[0]) < atol and np.linalg.norm(a-endpoints[1]) < atol):
-                return True
-    return False
+    return _has_curves(geometry, [endpoints], atol)
+
+
+def _preserves_local_locks(patch, geometry, curve, tolerance):
+    """Only a chain inside the new curve's tolerance box can be replaced.
+
+    _batch_boundary checks every removed chain vertex against that curve.
+    Existing locks outside this box therefore remain unchanged by construction.
+    """
+    if not patch.locked:return True
+    locked=np.asarray(patch.locked)
+    low=curve.min(axis=0)-tolerance-1e-8
+    high=curve.max(axis=0)+tolerance+1e-8
+    near=np.all(locked.max(axis=1)>=low,axis=1)&np.all(locked.min(axis=1)<=high,axis=1)
+    return _has_curves(geometry,locked[near])
+
+
+def _has_curves(geometry, curves, atol=1e-8):
+    """Check complete boundary segments in one spatial index, in either direction.
+
+    Repeated Python scans of every ring for every locked seam made long girder
+    boundary recovery quadratic in the number of accumulated seam segments.
+    """
+    queries = [np.stack((c[:-1],c[1:]),axis=1) for c in map(np.asarray,curves) if len(c)>1]
+    if not queries:
+        return True
+    segments = [np.stack((r,np.roll(r,-1,axis=0)),axis=1) for r in _rings(geometry) if len(r)]
+    if not segments:
+        return False
+    segments = np.concatenate(segments)
+    segments = np.concatenate((segments,segments[:,::-1]))
+    queries = np.concatenate(queries)
+    tree=cKDTree(segments.reshape(-1,4))
+    _,nearest=tree.query(queries.reshape(-1,4))
+    exact=np.all(np.linalg.norm(segments[nearest]-queries,axis=2)<atol,axis=1)
+    missing=queries[~exact]
+    if not len(missing):
+        return True
+    neighbors=tree.query_ball_point(missing.reshape(-1,4),np.nextafter(np.sqrt(2)*atol,np.inf))
+    missing=[query for query,ids in zip(missing,neighbors)
+             if not (len(ids) and np.any(np.all(np.linalg.norm(segments[ids]-query,axis=2)<atol,axis=1)))]
+    if not len(missing):return True
+    # Inserting a junction may subdivide an existing seam without moving it.
+    # Test complete collinear interval coverage, not just matching endpoints.
+    lines=shapely.linestrings(segments)
+    index=shapely.STRtree(lines)
+    for query in missing:
+        delta=query[1]-query[0];length2=float(delta@delta)
+        if length2<=atol*atol:
+            continue
+        ids=index.query(LineString(query),predicate='dwithin',distance=atol)
+        candidates=segments[ids]
+        t=np.einsum('nki,i->nk',candidates-query[0],delta)/length2
+        distance=np.linalg.norm(candidates-query[0]-t[:,:,None]*delta,axis=2)
+        intervals=np.sort(t[np.all(distance<=atol,axis=1)],axis=1)
+        end=0.;fraction=atol/np.sqrt(length2)
+        for lo,hi in sorted(intervals.tolist()):
+            if lo>end+fraction:break
+            end=max(end,hi)
+        if end<1-fraction:return False
+    return True
 
 
 def _reconcile_corners(patches, proposals, cfg, log):
-    """Snap nearby edge endpoints to supported, well-conditioned 3-plane corners.
+    """Snap nearby edge endpoints to supported, well-conditioned three-surface corners.
 
-    No averaging across incompatible planes. All displacement checks use the
+    No averaging across incompatible surfaces. All displacement checks use the
     original endpoints; an endpoint is assigned at most once (no chain drift).
     """
     from itertools import combinations
@@ -407,27 +477,29 @@ def _reconcile_corners(patches, proposals, cfg, log):
     candidates = []
     for ids in sorted(triples):
         ps = [patches[i] for i in ids]
-        if any(p.cylinder is not None for p in ps):
+        try:
+            corners = triple_points(ps, tolerance)
+        except RuntimeError as exc:
+            log(f'Corner {ids}: {exc}')
             continue
-        matrix = np.stack([p.normal for p in ps])
-        if np.linalg.cond(matrix) > 1000:
-            continue
-        origin = np.mean([p.center for p in ps], axis=0)
-        corner = origin + np.linalg.solve(matrix, [p.normal @ (p.center-origin) for p in ps])
-        if any(trees[p.id].query(corner)[0] > cfg.adjacency_radius or
-               p.footprint.boundary.distance(shapely.Point(p.project(corner))) > cfg.edge_tolerance
-               for p in ps):
-            continue
-        endpoints = []
-        for k in sorted(set().union(*(set(incident[i]) for i in ids))):
-            if not set(proposals[k]['patch_ids']).issubset(ids):
+        for corner in corners:
+            matrix = np.stack([p.normal_at(p.project(corner)) for p in ps])
+            if np.linalg.cond(matrix) > 1000:
                 continue
-            distances = np.linalg.norm(proposals[k]['endpoints']-corner, axis=1)
-            end = int(np.argmin(distances))
-            if distances[end] <= tolerance:
-                endpoints.append((k, end, float(distances[end])))
-        if len(endpoints) >= 2 and len(set().union(*(set(proposals[k]['patch_ids']) for k, _, _ in endpoints))) == 3:
-            candidates.append((max(d for _, _, d in endpoints), ids, corner, endpoints))
+            if any(trees[p.id].query(corner)[0] > cfg.adjacency_radius or
+                   p.footprint.boundary.distance(shapely.Point(p.project(corner))) > cfg.edge_tolerance
+                   for p in ps):
+                continue
+            endpoints = []
+            for k in sorted(set().union(*(set(incident[i]) for i in ids))):
+                if not set(proposals[k]['patch_ids']).issubset(ids):
+                    continue
+                distances = np.linalg.norm(proposals[k]['endpoints']-corner, axis=1)
+                end = int(np.argmin(distances))
+                if distances[end] <= tolerance:
+                    endpoints.append((k, end, float(distances[end])))
+            if len(endpoints) >= 2 and len(set().union(*(set(proposals[k]['patch_ids']) for k, _, _ in endpoints))) == 3:
+                candidates.append((max(d for _, _, d in endpoints), ids, corner, endpoints))
     assigned = set()
     accepted = 0
     for _, ids, corner, endpoints in sorted(candidates, key=lambda x: (x[0], x[1])):
@@ -483,7 +555,7 @@ def _insert_boundary_endpoints(ring, endpoints, tolerance):
     return ring[edges]+fractions[:, None]*vectors[edges]
 
 
-def _chain_options(ring, endpoints, tolerance):
+def _chain_options(ring, endpoints, tolerance, check_distance=True):
     """Candidate arcs after exact endpoint projections split boundary edges."""
     n = len(ring)
     if np.linalg.norm(endpoints[0]-endpoints[-1]) < 1e-9:
@@ -499,7 +571,7 @@ def _chain_options(ring, endpoints, tolerance):
     for first, last, ends in ((start, stop, endpoints), (stop, start, endpoints[::-1])):
         steps = (last-first) % n
         indices = (np.arange(steps+1)+first) % n
-        if np.max(shapely.distance(shapely.points(ring[indices]), line)) > tolerance:
+        if check_distance and np.max(shapely.distance(shapely.points(ring[indices]), line)) > tolerance:
             continue
         length = np.linalg.norm(np.diff(ring[indices], axis=0), axis=1).sum()
         options.append((length, first, last, ends, set(indices[:-1].tolist())))
@@ -584,9 +656,89 @@ def _batch_boundary(patch, edges, cfg):
             return None
         result.append(candidate)
     geometry = result[0] if len(result) == 1 else shapely.MultiPolygon(result)
-    if not geometry.is_valid or not all(_has_curve(geometry, curve_in_patch(patch, _edge_points(e))) for e in edges):
+    if getattr(patch, 'spline', None) is not None:
+        # Coplanar/gap recovery tolerances can exceed edge_tolerance. They must
+        # never extend a height patch past its fitted, bounded border halo.
+        bounds = np.asarray(geometry.bounds)
+        domain = patch.spline.bounds
+        if np.any(bounds[:2] < domain[:2]-1e-8) or np.any(bounds[2:] > domain[2:]+1e-8):
+            return None
+    if not geometry.is_valid or not _has_curves(geometry, [curve_in_patch(patch, _edge_points(e)) for e in edges]):
         return None
     return geometry
+
+
+def _supported_boundary_pieces(a, b, curve, cfg):
+    """Split a seam at deep observed notches; avoid crossing retained end borders.
+
+    A nearest-boundary radius test alone can bridge a narrow, deep notch: each
+    seam sample is close to a notch mouth although its boundary chain dives far
+    away. Keep those gaps, then trim only failing endpoints by a bounded amount.
+    """
+    def valid(points):
+        edge = dict(patch_ids=(a.id,b.id),points=points,endpoints=points[[0,-1]])
+        return all(_batch_boundary(p,[edge],cfg) is not None for p in (a,b))
+    if valid(curve):
+        return [curve]
+    if np.linalg.norm(curve[0]-curve[-1]) < 1e-8:
+        return [curve]  # Closed-ring conflicts are handled jointly by assembly.
+    distances = np.r_[0,np.cumsum(np.linalg.norm(np.diff(curve,axis=0),axis=1))]
+    blocked = []
+    for p in (a,b):
+        uv = curve_in_patch(p,curve)
+        line = LineString(uv)
+        options = []
+        for ring in _rings(p.footprint):
+            ring = _insert_boundary_endpoints(ring,uv[[0,-1]],cfg.edge_tolerance)
+            for option in _chain_options(ring,uv,cfg.edge_tolerance,check_distance=False):
+                _,first,last,_,_ = option
+                indices = (np.arange((last-first)%len(ring)+1)+first)%len(ring)
+                chain = ring[indices]
+                gap = shapely.distance(shapely.points(chain),line)
+                options.append((float(np.mean(gap)),chain,gap))
+        if not options:
+            continue
+        _,chain,gap = min(options,key=lambda x:x[0])
+        bad = np.flatnonzero(gap > cfg.edge_tolerance)
+        positions = shapely.line_locate_point(line,shapely.points(chain))
+        uv_distances = np.r_[0,np.cumsum(np.linalg.norm(np.diff(uv,axis=0),axis=1))]
+        positions = np.interp(positions,uv_distances,distances)
+        for run in np.split(bad,np.flatnonzero(np.diff(bad)>1)+1):
+            if not len(run):
+                continue
+            lo,hi=max(0,run[0]-1),min(len(chain)-1,run[-1]+1)
+            loc = positions[lo:hi+1]
+            blocked.append((max(0,float(loc.min())-cfg.support_step),
+                            min(distances[-1],float(loc.max())+cfg.support_step)))
+    intervals, start = [], 0.
+    for lo,hi in sorted(blocked):
+        if lo>start:
+            intervals.append((start,lo))
+        start=max(start,hi)
+    intervals.append((start,distances[-1]))
+
+    def section(lo,hi):
+        params=np.r_[lo,distances[(distances>lo)&(distances<hi)],hi]
+        return np.column_stack([np.interp(params,distances,curve[:,k]) for k in range(3)])
+    pieces=[]
+    for lo,hi in intervals:
+        if hi-lo < cfg.min_edge_length:
+            continue
+        # Most failures occur where moving an endpoint makes a short loop with
+        # an untouched border. Try each end independently; never move farther
+        # than the configured boundary tolerance or fill an unsupported gap.
+        trims = sorted(set([0., *[min(cfg.edge_tolerance,cfg.support_step*2**i) for i in range(5)]]))
+        attempts = sorted(((x,y) for x in trims for y in trims),key=lambda v:(sum(v),max(v),v))
+        accepted=None
+        for left,right in attempts:
+            if hi-lo-left-right < cfg.min_edge_length:
+                continue
+            part=section(lo+left,hi-right)
+            if valid(part):
+                accepted=part
+                break
+        pieces.append(section(lo,hi) if accepted is None else accepted)
+    return pieces
 
 
 def _assemble_topology(patches, proposals, cfg, diagnostics, log):
@@ -645,7 +797,8 @@ def _rescue_edges(patches, proposals, shared, cfg, diagnostics, log):
                 current = copy.copy(patch)
                 current.footprint = patch.polygon
                 geometry = _batch_boundary(current, [edge], cfg)
-                if geometry is None or not all(_has_edge(geometry, lock) for lock in patch.locked):
+                if geometry is None or not _preserves_local_locks(
+                        patch,geometry,curve_in_patch(patch,_edge_points(edge)),cfg.edge_tolerance):
                     break
                 edits.append((patch, geometry))
             if len(edits) == 2:
@@ -681,9 +834,13 @@ def _sample_border_runs(patch, step):
                 if length <= 1e-12:
                     continue
                 count = max(1, int(np.ceil(length/step)))
-                samples.append(point+np.arange(count)[:, None]/count*vector)
+                sample = point+np.arange(count)[:, None]/count*vector
+                samples.append(sample)
                 direction = sign*np.array([-vector[1], vector[0]])/length
-                inward.append(np.repeat((direction @ patch.basis.T)[None, :], count, axis=0))
+                eps = max(1e-7, step*1e-4)
+                world = patch.lift(sample+direction*eps)-patch.lift(sample)
+                world /= np.maximum(np.linalg.norm(world, axis=1)[:, None], 1e-15)
+                inward.append(world)
             if samples:
                 runs.append((patch.lift(np.concatenate(samples)), np.concatenate(inward)))
     return runs
@@ -698,17 +855,21 @@ def _cyclic_supported_runs(valid):
     return [order[x] for x in np.split(indices, np.flatnonzero(np.diff(indices) > 1)+1) if len(x)]
 
 
-def _coplanar_curves(a, b, cfg, corner_gap=False):
+def _coplanar_curves(a, b, cfg, corner_gap=False, border_cache=None):
     """Match opposing local border runs; simplify their common midpoint once."""
-    if a.cylinder is not None or b.cylinder is not None:
-        return []
+    planar = a.kind == b.kind == 'plane'
     cosine = abs(float(a.normal @ b.normal))
-    if not corner_gap and cosine < np.cos(np.deg2rad(cfg.coplanar_angle_degrees)):
+    if planar and not corner_gap and cosine < np.cos(np.deg2rad(cfg.coplanar_angle_degrees)):
         return []
-    if corner_gap and cosine >= np.cos(np.deg2rad(cfg.coplanar_angle_degrees)):
+    if planar and corner_gap and cosine >= np.cos(np.deg2rad(cfg.coplanar_angle_degrees)):
         return []
-    aruns = _sample_border_runs(a, cfg.support_step)
-    bruns = _sample_border_runs(b, cfg.support_step)
+    def runs(patch):
+        if border_cache is None:
+            return _sample_border_runs(patch,cfg.support_step)
+        if patch.id not in border_cache:
+            border_cache[patch.id]=_sample_border_runs(patch,cfg.support_step)
+        return border_cache[patch.id]
+    aruns,bruns = runs(a),runs(b)
     if not aruns or not bruns:
         return []
     bxyz = np.concatenate([x for x, _ in bruns])
@@ -726,26 +887,59 @@ def _coplanar_curves(a, b, cfg, corner_gap=False):
         valid = distance <= (cfg.gap_bridge_tolerance if corner_gap else cfg.coplanar_boundary_tolerance)
         if a.locked:
             valid &= shapely.distance(shapely.points(a.project(axyz)),shapely.MultiLineString(a.locked)) > 1e-7
-        # Plane offset is tested locally at matched borders, not face centroids.
-        if not corner_gap:
-            valid &= np.abs((axyz-b.center) @ b.normal) <= cfg.coplanar_plane_tolerance
-            valid &= np.abs((matched-a.center) @ a.normal) <= cfg.coplanar_plane_tolerance
+        if not np.any(valid):
+            continue
+        an = a.normal_at(a.project(axyz))
+        bn = b.normal_at(b.project(matched))
+        local_cos = np.abs(np.einsum('ij,ij->i', an, bn))
+        parallel = local_cos >= np.cos(np.deg2rad(cfg.coplanar_angle_degrees))
+        valid &= ~parallel if corner_gap else parallel
+        if not np.any(valid):
+            continue
         # Face interiors must lie on opposite sides of the seam. This excludes
         # duplicated/stacked same-side borders and transverse point contacts.
         if not corner_gap:
             valid &= np.einsum('ij,ij->i', ainward, binward[nearest]) < -.5
+            # Nearest endpoints beyond the overlapping border range must not
+            # extend the seam diagonally into either patch's outer boundary.
+            gap = matched-axyz
+            valid &= np.abs(np.einsum('ij,ij->i', gap, np.cross(ainward, an))) <= cfg.support_step*.55+1e-8
+            valid &= np.abs(np.einsum('ij,ij->i', gap, np.cross(binward[nearest], bn))) <= cfg.support_step*.55+1e-8
+            # OCCT closest-point solves are expensive on splines. Only solve
+            # them for samples that passed all cheap border/normal predicates.
+            indices=np.flatnonzero(valid)
+            if not len(indices):
+                continue
+            valid[indices] &= np.abs(primitive_residual(b,axyz[indices])) <= cfg.coplanar_plane_tolerance
+            indices=np.flatnonzero(valid)
+            if not len(indices):
+                continue
+            valid[indices] &= np.abs(primitive_residual(a,matched[indices])) <= cfg.coplanar_plane_tolerance
         else:
-            tangent_a = np.cross(ainward,a.normal)
-            tangent_b = np.cross(binward[nearest],b.normal)
+            tangent_a = np.cross(ainward,an)
+            tangent_b = np.cross(binward[nearest],bn)
             valid &= np.abs(np.einsum('ij,ij->i',tangent_a,tangent_b)) > .85
             gap = matched-axyz
             valid &= np.einsum('ij,ij->i',gap,ainward) <= distance*.15
             valid &= np.einsum('ij,ij->i',-gap,binward[nearest]) <= distance*.15
-            d = np.cross(a.normal,b.normal);d /= np.linalg.norm(d)
-            origin = (a.center+b.center)/2
-            p0 = origin+np.linalg.solve(np.stack([a.normal,b.normal,d]),[a.normal@(a.center-origin),b.normal@(b.center-origin),0.])
-            for samples in (axyz,matched):
-                off=samples-p0;valid &= np.linalg.norm(off-(off@d)[:,None]*d,axis=1)<=cfg.edge_tolerance
+            if not np.any(valid):
+                continue
+            if planar:
+                d = np.cross(a.normal,b.normal);d /= np.linalg.norm(d)
+                origin = (a.center+b.center)/2
+                p0 = origin+np.linalg.solve(np.stack([a.normal,b.normal,d]),[a.normal@(a.center-origin),b.normal@(b.center-origin),0.])
+                for samples in (axyz,matched):
+                    off=samples-p0;valid &= np.linalg.norm(off-(off@d)[:,None]*d,axis=1)<=cfg.edge_tolerance
+            else:
+                try:
+                    curves = raw_intersection_curves(a,b,cfg.support_step,cfg.curve_tolerance,cfg.edge_tolerance)
+                except RuntimeError:
+                    curves = []
+                if not curves:
+                    continue
+                supported = cKDTree(np.concatenate(curves))
+                valid &= supported.query(axyz)[0] <= cfg.edge_tolerance
+                valid &= supported.query(matched)[0] <= cfg.edge_tolerance
         for run in _cyclic_supported_runs(valid):
             if len(run) < 3 or np.linalg.norm(np.diff(axyz[run], axis=0), axis=1).sum() < cfg.min_edge_length:
                 continue
@@ -764,14 +958,18 @@ def _coplanar_curves(a, b, cfg, corner_gap=False):
             uv = a.project(common)
             if not LineString(uv).is_simple:
                 continue
-            simplified = np.asarray(LineString(uv).simplify(cfg.simplify_tolerance).coords)
-            keep = cKDTree(uv).query(simplified)[1]
+            if planar:
+                simplified = np.asarray(LineString(uv).simplify(cfg.simplify_tolerance).coords)
+                keep = cKDTree(uv).query(simplified)[1]
+            else:
+                simplified = simplify_curve_3d(common, min(cfg.simplify_tolerance, cfg.curve_tolerance))
+                keep = cKDTree(common).query(simplified)[1]
             common = common[keep]
             if len(common) >= 2:
                 proposals.append({'patch_ids': (a.id, b.id), 'kind': 'coplanar',
                                   'points': common, 'endpoints': common[[0, -1]],
                                   'side_points': {a.id: aside[keep], b.id: bside[keep]},
-                                  'bridge_type': 'corner_gap' if corner_gap else 'coplanar'})
+                                  'bridge_type': 'corner_gap' if corner_gap else ('coplanar' if planar else 'curved')})
     return proposals
 
 
@@ -792,13 +990,35 @@ def _local_edge(edge, label):
     return dict(edge, kind='coplanar', points=curve, endpoints=curve[[0, -1]])
 
 
-def _project_polygon_between(geometry, source, target):
-    parts = []
-    for poly in polygons(geometry):
-        shell = target.project(source.lift(np.asarray(poly.exterior.coords)))
-        holes = [target.project(source.lift(np.asarray(r.coords))) for r in poly.interiors]
-        parts.append(Polygon(shell, holes))
-    return parts[0] if len(parts) == 1 else shapely.MultiPolygon(parts)
+def _mesh_edge_uv(patch,edge):
+    if patch.id in edge.get('mesh_uv',{}):
+        return edge['mesh_uv'][patch.id]
+    return curve_in_patch(patch,_edge_points(edge))
+
+
+def _synchronize_existing_seam_nodes(edges, patches):
+    """Share every boundary subdivision across both sides of a seam."""
+    nodes={label:np.concatenate(list(_rings(p.polygon))) for label,p in patches.items()}
+    for edge in edges:
+        charts={label:curve_in_patch(patches[label],_edge_points(_local_edge(edge,label)))
+                for label in edge['patch_ids']}
+        fractions=[{0.,1.} for _ in range(len(_edge_points(edge))-1)]
+        for label,curve in charts.items():
+            for k,(a,b) in enumerate(zip(curve[:-1],curve[1:])):
+                delta=b-a;length2=float(delta@delta)
+                if length2<=1e-20:continue
+                t=(nodes[label]-a)@delta/length2
+                near=(t>1e-9)&(t<1-1e-9)
+                near &= np.linalg.norm(nodes[label]-a-t[:,None]*delta,axis=1)<=1e-8
+                fractions[k].update(np.round(t[near],12).tolist())
+        def split(curve):
+            return np.vstack([a+np.array(sorted(ts))[:-1,None]*(b-a)
+                              for a,b,ts in zip(curve[:-1],curve[1:],fractions)]+[curve[-1:]])
+        edge['points']=split(_edge_points(edge))
+        edge['endpoints']=edge['points'][[0,-1]].copy()
+        if 'side_points' in edge:
+            edge['side_points']={label:split(curve) for label,curve in edge['side_points'].items()}
+        edge['mesh_uv']={label:split(curve) for label,curve in charts.items()}
 
 
 def _bridge_is_valid(edge, patches, geometries, cfg):
@@ -807,46 +1027,50 @@ def _bridge_is_valid(edge, patches, geometries, cfg):
     aa, bb = [edge['side_points'][i] for i in edge['patch_ids']]
     if any(np.any(np.linalg.norm(np.diff(x, axis=0), axis=1) < 1e-10) for x in (aa, bb)):
         return False
-    pa = geometries[a.id]
-    pb = _project_polygon_between(geometries[b.id], b, a)
-    if not pb.is_valid:
-        return False
-    au, bu = a.project(aa), a.project(bb)
-    for k in range(len(aa)-1):
-        quad = np.array([au[k], au[k+1], bu[k+1], bu[k]])
-        strip = Polygon(quad)
-        # A vertical transition can project to a line; a crossing bow tie has
-        # nonzero unsigned projected triangle area, so must still be rejected.
-        v = quad[1:]-quad[0]
-        unsigned_area = sum(abs(v[i, 0]*v[i+1, 1]-v[i, 1]*v[i+1, 0])/2 for i in (0, 1))
-        if unsigned_area <= 1e-12:
-            continue
-        if not strip.is_valid:
-            return False
-        tolerance = max(1e-12, strip.area*1e-7)
-        # Projection overlap is not a physical collision when the two sides
-        # are on different planes. A strip whose far side stays strictly on one
-        # side of a face plane cannot intersect that face except at its border.
-        distance_b_to_a = primitive_residual(a, bb[k:k+2])
-        distance_a_to_b = primitive_residual(b, aa[k:k+2])
-        separated_a = np.all(distance_b_to_a > 1e-7) or np.all(distance_b_to_a < -1e-7)
-        separated_b = np.all(distance_a_to_b > 1e-7) or np.all(distance_a_to_b < -1e-7)
-        if ((not separated_a and strip.intersection(pa).area > tolerance) or
-            (not separated_b and strip.intersection(pb).area > tolerance)):
-            return False
+    # Test each strip in each face's own chart. Projecting an entire curved
+    # face into another chart can wrap/fold even when the local join is sound.
+    for patch,own,other in ((a,aa,bb),(b,bb,aa)):
+        for k in range(len(own)-1):
+            quad_xyz=np.array([own[k],own[k+1],other[k+1],other[k]])
+            quad=curve_in_patch(patch,quad_xyz)
+            strip=Polygon(quad)
+            v=quad[1:]-quad[0]
+            unsigned_area=sum(abs(v[i,0]*v[i+1,1]-v[i,1]*v[i+1,0])/2 for i in (0,1))
+            if unsigned_area<=1e-12:
+                continue
+            if not strip.is_valid:
+                return False
+            far=primitive_residual(patch,other[k:k+2])
+            separated=patch.kind=='plane' and (np.all(far>1e-7) or np.all(far < -1e-7))
+            if not separated and strip.intersection(geometries[patch.id]).area>max(1e-12,strip.area*1e-7):
+                return False
     return True
 
 
 def _join_coplanar(patches, shared, candidates, cfg, diagnostics, log, existing_bridges=None, corner_gap=False):
+    import copy
     existing_bridges = [] if existing_bridges is None else existing_bridges
     if (not corner_gap and not cfg.join_coplanar) or (corner_gap and not cfg.bridge_remaining_gaps):
         return shared, existing_bridges
     proposals = []
+    stage = 'Corner-gap strips' if corner_gap else 'Joint coplanar borders'
+    log(f'{stage}: searching {len(candidates)} candidate pairs')
+    border_cache={}
     for i, j in candidates:
-        proposals.extend(_coplanar_curves(patches[i], patches[j], cfg, corner_gap=corner_gap))
+        pair_started=perf_counter()
+        found=_coplanar_curves(patches[i], patches[j], cfg, corner_gap=corner_gap,border_cache=border_cache)
+        proposals.extend(found)
+        duration=perf_counter()-pair_started
+        if duration>=.5:
+            log(f'{stage}: pair {i}/{j}: {len(found)} curves in {duration:.3f}s')
+    log(f'{stage}: validating {len(proposals)} proposed border curves')
     incident = {i: [e for e in shared+existing_bridges if i in e['patch_ids']] for i in patches}
     accepted, bridges = [], []
-    for proposed in sorted(proposals, key=lambda e: -np.linalg.norm(np.diff(e['points'], axis=0), axis=1).sum()):
+    last_report = perf_counter()
+    for proposal_index, proposed in enumerate(sorted(proposals, key=lambda e: -np.linalg.norm(np.diff(e['points'], axis=0), axis=1).sum())):
+        if proposal_index % 32 == 0 or perf_counter()-last_report >= 1:
+            log(f'{stage}: validating {proposal_index+1}/{len(proposals)}; accepted {len(accepted)+len(bridges)}')
+            last_report = perf_counter()
         edge = dict(proposed)
         if cfg.coplanar_join_mode == 'bridge' or corner_gap:
             edge['kind'] = 'bridge'
@@ -856,7 +1080,7 @@ def _join_coplanar(patches, shared, candidates, cfg, diagnostics, log, existing_
         angle = np.rad2deg(np.arccos(np.clip(abs(a.normal@b.normal),0,1)))
         separation = max(np.abs(primitive_residual(a,edge['side_points'][b.id])).max(),
                          np.abs(primitive_residual(b,edge['side_points'][a.id])).max())
-        if edge.get('kind') == 'bridge' and not corner_gap and cfg.regularize_coplanar_borders and (angle > .1 or separation > 1e-5):
+        if a.kind == b.kind == 'plane' and edge.get('kind') == 'bridge' and not corner_gap and cfg.regularize_coplanar_borders and (angle > .1 or separation > 1e-5):
             common = edge['points']
             sides = {p.id:p.lift(p.project(common)) for p in (a,b)}
             # Node a crossing where a bevel shrinks to zero width instead of
@@ -870,7 +1094,10 @@ def _join_coplanar(patches, shared, candidates, cfg, diagnostics, log, existing_
                     crossing=(sides[a.id][k]+t*(sides[a.id][k+1]-sides[a.id][k])+sides[b.id][k]+t*(sides[b.id][k+1]-sides[b.id][k]))/2
                     for p in (a,b):refined[p.id].append(crossing)
             for p in (a,b):refined[p.id].append(sides[p.id][-1]);refined[p.id]=np.asarray(refined[p.id])
-            attempts.append(dict(edge,side_points=refined,border_regularized=True))
+            # The setting requests a common simplified border on both planes.
+            # Previously this was only a fallback after accepting the noisy
+            # observed sides, so a valid jagged strip bypassed regularization.
+            attempts.insert(0,dict(edge,side_points=refined,border_regularized=True))
         edits = []
         for trial in attempts:
             edits = []
@@ -880,8 +1107,15 @@ def _join_coplanar(patches, shared, candidates, cfg, diagnostics, log, existing_
                 local_edges = [_local_edge(e, label) for e in global_edges]
                 if not _consistent_vertex_targets(patch, local_edges, cfg.weld_tolerance):
                     break
-                geometry = _batch_boundary(patch, local_edges, cfg)
-                if geometry is None:
+                # Apply only the new edit to the current accepted boundary.
+                # Replaying every previous chain from the alpha footprint for
+                # every fragment makes heavily segmented borders quadratic.
+                current = copy.copy(patch)
+                current.footprint = patch.polygon
+                geometry = _batch_boundary(current, [_local_edge(trial,label)], cfg)
+                if geometry is None or not _preserves_local_locks(patch,geometry,
+                        curve_in_patch(patch,_edge_points(_local_edge(trial,label))),
+                        max(cfg.edge_tolerance,cfg.coplanar_boundary_tolerance)):
                     break
                 edits.append((patch, geometry, global_edges, local_edges))
             if len(edits) == 2 and trial.get('kind') == 'bridge':
@@ -933,7 +1167,7 @@ def _simplify_candidate(patch, tolerance):
             return None
         polys.append(candidate_poly)
     candidate = polys[0] if len(polys) == 1 else shapely.MultiPolygon(polys)
-    if candidate.is_valid and all(_has_edge(candidate, lock) for lock in patch.locked):
+    if candidate.is_valid and _has_curves(candidate, patch.locked):
         return candidate
     return None
 
@@ -1105,22 +1339,47 @@ def reconstruct(points, patch_ids, *, part_ids=None, mask=None, include_ids=None
         rmse = np.sqrt(max(0, values[0]))
         plane_rmse = rmse
         cylinder = None
+        spline = None
+        basis = vectors[:, 1:]
+        normal = np.cross(basis[:, 0], basis[:, 1])
         if cfg.fit_cylinders and rmse > cfg.cylinder_plane_trigger:
             log(f'Patch {label}: comparing plane and cylinder fits')
             fitted = fit_cylinder(xyz, max_radius=cfg.cylinder_max_radius)
             if fitted is not None and fitted.rmse < min(cfg.max_cylinder_rmse, plane_rmse*cfg.cylinder_error_ratio) and np.rad2deg(fitted.angular_span) >= cfg.cylinder_min_angle_degrees:
                 cylinder = fitted
                 rmse = fitted.rmse
-        if cylinder is None and (rmse > cfg.max_plane_rmse or values[1] <= max(values[2]*1e-10, 1e-16)):
+        if cylinder is None and cfg.fit_bsplines and plane_rmse > cfg.max_plane_rmse:
+            # On a long curved web the vertical thickness can have less variance
+            # than the transverse bend. The least-variance PCA direction is then
+            # the wrong height axis. Try the other PCA charts without changing
+            # the plane/cylinder selection or the geometric error requirements.
+            for axis, columns in enumerate(([1,2], [2,0], [0,1])):
+                log(f'Patch {label}: fitting B-spline in PCA chart {axis}')
+                chart = vectors[:, columns]
+                spline, reason = fit_bspline(xyz, center, chart, np.cross(chart[:,0],chart[:,1]), cfg)
+                if spline is not None and spline.rmse > cfg.bspline_error_ratio*plane_rmse:
+                    spline, reason = None, f'spline does not improve best PCA plane RMSE={plane_rmse:.6g}'
+                diagnostics.append(f'Patch {label}: PCA height axis {axis}: {reason}')
+                log(diagnostics[-1])
+                if spline is not None:
+                    break
+            if spline is not None:
+                rmse = spline.rmse
+        if cylinder is None and spline is None and (rmse > cfg.max_plane_rmse or values[1] <= max(values[2]*1e-10, 1e-16)):
             diagnostics.append(f'Patch {label}: skipped (nonplanar/degenerate, RMSE={rmse:.6g})')
             log(diagnostics[-1]);continue
         basis = vectors[:, 1:]
         normal = np.cross(basis[:, 0], basis[:, 1])
+        if spline is not None:
+            basis, normal = spline.basis, spline.normal
         patch = Patch(int(label), part, center, normal, basis, xyz, None, None, rmse,
-                      cylinder=cylinder, plane_rmse=plane_rmse, source_point_count=len(ids))
+                      cylinder=cylinder, spline=spline, plane_rmse=plane_rmse, source_point_count=len(ids))
         if cylinder is not None:
             message = (f'Patch {label}: cylinder r={cylinder.radius:.4f}, RMSE={rmse:.5f} '
                        f'(plane {plane_rmse:.5f}), coverage={np.rad2deg(cylinder.angular_span):.1f} degrees')
+            diagnostics.append(message);log(message)
+        elif spline is None:
+            message = f'Patch {label}: plane, RMSE={plane_rmse:.6g}'
             diagnostics.append(message);log(message)
         try:
             uv = patch.project(xyz)
@@ -1145,11 +1404,22 @@ def reconstruct(points, patch_ids, *, part_ids=None, mask=None, include_ids=None
     proposals = []
     candidate_pairs = list(_candidate_pairs(patches, cfg, log))
     for i, j in candidate_pairs:
-        segments = _intersection_segments(patches[i], patches[j], cfg)
+        log(f'Pair {i}/{j}: computing and validating surface intersections')
+        try:
+            def pair_diagnostic(message):
+                diagnostics.append(f'Pair {i}/{j}: {message}')
+                log(diagnostics[-1])
+            segments = _intersection_segments(patches[i], patches[j], cfg, pair_diagnostic)
+        except RuntimeError as exc:
+            diagnostics.append(f'Pair {(i,j)}: intersection failed: {exc}')
+            log(diagnostics[-1])
+            continue
         proposals.extend({'patch_ids': (i, j), 'points': xyz, 'endpoints': xyz[[0,-1]].copy()} for xyz in segments)
         diagnostics.append(f'Pair {i}/{j}: proposed {len(segments)} supported segments')
+        log(diagnostics[-1])
     log(f'Collected {len(proposals)} shared-edge proposals; reconciling corners')
-    _reconcile_corners(patches, proposals, cfg, log)
+    _reconcile_corners(patches, proposals, cfg,
+                       lambda message: (diagnostics.append(message), log(message)))
     shared = _assemble_topology(patches, proposals, cfg, diagnostics, log)
     shared = _rescue_edges(patches, proposals, shared, cfg, diagnostics, log)
     shared, bridges = _join_coplanar(patches, shared, candidate_pairs, cfg, diagnostics, log)
@@ -1163,8 +1433,14 @@ def reconstruct(points, patch_ids, *, part_ids=None, mask=None, include_ids=None
                 continue
             aa, bb = copy.copy(patches[i]), copy.copy(patches[j])
             aa.footprint, bb.footprint = aa.polygon, bb.polygon
+            try:
+                segments = _intersection_segments(aa,bb,cfg)
+            except RuntimeError as exc:
+                diagnostics.append(f'Pair {(i,j)}: rescue intersection failed: {exc}')
+                log(diagnostics[-1])
+                continue
             extras.extend({'patch_ids':(i,j),'points':curve,'endpoints':curve[[0,-1]].copy()}
-                          for curve in _intersection_segments(aa,bb,cfg))
+                          for curve in segments)
         shared = _rescue_edges(patches, extras, shared, cfg, diagnostics, log)
     shared, bridges = _join_coplanar(patches, shared, candidate_pairs, cfg, diagnostics, log,
                                     existing_bridges=bridges, corner_gap=True)
@@ -1177,6 +1453,31 @@ def reconstruct(points, patch_ids, *, part_ids=None, mask=None, include_ids=None
                                         existing_bridges=bridges)
         shared, bridges = _join_coplanar(patches, shared, candidate_pairs, cfg, diagnostics, log,
                                         existing_bridges=bridges, corner_gap=True)
+    from .meshing import (spline_grid_spacing, cylinder_grid_spacing, synchronize_seam_grid,
+                          insert_boundary_nodes, grid_triangles)
+    _synchronize_existing_seam_nodes(shared+bridges,patches)
+    spacings={label:spline_grid_spacing(p.spline,cfg.bspline_mesh_spacing,cfg.curve_tolerance)
+              for label,p in patches.items() if p.kind=='bspline'}
+    spacings.update({label:cylinder_grid_spacing(p.cylinder,cfg.cylinder_mesh_spacing,cfg.cylinder_chord_tolerance)
+                     for label,p in patches.items() if p.kind=='cylinder'})
+    if spacings:
+        log('Synchronizing shared seams with curved-surface UV grids')
+        for edge in shared+bridges:
+            synchronize_seam_grid(edge,patches,spacings)
+    if shared or bridges:
+        for label,patch in patches.items():
+            incident=[_local_edge(e,label) for e in shared+bridges if label in e['patch_ids']]
+            if incident:
+                try:
+                    patch.polygon=insert_boundary_nodes(patch.polygon,
+                        [_mesh_edge_uv(patch,e) for e in incident])
+                except ValueError as exc:
+                    raise ValueError(f'Patch {label}: {exc}') from exc
+                patch.locked=[_mesh_edge_uv(patch,e)[k:k+2]
+                              for e in incident for k in range(len(_edge_points(e))-1)]
+    for edge in shared:
+        edge['uv_curves'] = {label: _mesh_edge_uv(patches[label], edge)
+                             for label in edge['patch_ids']}
     vertices, faces, face_ids, part_labels, bridge_flags = [], [], [], [], []
     # Spatial welding only: tolerance must be far below real feature separation.
     buckets = {}
@@ -1201,18 +1502,20 @@ def reconstruct(points, patch_ids, *, part_ids=None, mask=None, include_ids=None
         )
         incident = [_local_edge(e, label) for e in shared+bridges if label in e['patch_ids']]
         boundary_xyz = np.concatenate([_edge_points(e) for e in incident]) if incident else None
-        boundary_uv = np.concatenate([curve_in_patch(patch, _edge_points(e)) for e in incident]) if incident else None
+        boundary_uv = np.concatenate([_mesh_edge_uv(patch,e) for e in incident]) if incident else None
         if incident and patch.cylinder is not None and patch.cylinder.periodic:
             period = 2*np.pi*patch.cylinder.radius
             boundary_uv = np.vstack([boundary_uv, boundary_uv+[period,0], boundary_uv-[period,0]])
             boundary_xyz = np.tile(boundary_xyz,(3,1))
         boundary_tree = cKDTree(boundary_uv) if incident else None
-        if patch.cylinder is None:
+        if patch.kind == 'bspline':
+            locked = [_mesh_edge_uv(patch,e) for e in incident]
+            uv_triangles = refine_surface_triangles(list(polygons(patch.polygon)), patch.lift,
+                                                   cfg.curve_tolerance, locked, spacing=spacings[label])
+        elif patch.kind == 'plane':
             uv_triangles = [np.asarray(t.exterior.coords)[:3] for t in shapely.constrained_delaunay_triangles(patch.polygon).geoms]
         else:
-            radius = patch.cylinder.radius
-            max_dx = radius*min(np.pi/4, 2*np.arccos(np.clip(1-cfg.cylinder_chord_tolerance/radius,-1,1)))
-            uv_triangles = refine_uv_triangles(list(polygons(patch.polygon)), max_dx)
+            uv_triangles = grid_triangles(list(polygons(patch.polygon)),spacings[label])
         for uv in uv_triangles:
             xyz = patch.lift(uv)
             if boundary_tree is not None:
@@ -1221,10 +1524,7 @@ def reconstruct(points, patch_ids, *, part_ids=None, mask=None, include_ids=None
                 # Nearly coplanar shared seams intentionally relax plane fidelity
                 # only at border vertices so both meshes have identical 3D edges.
                 xyz[matched] = boundary_xyz[index[matched]]
-            expected_normal = patch.normal
-            if patch.cylinder is not None:
-                delta = xyz.mean(axis=0)-patch.cylinder.origin
-                expected_normal = delta-(delta@patch.cylinder.axis)*patch.cylinder.axis
+            expected_normal = patch.normal_at(np.mean(uv, axis=0))
             if np.dot(np.cross(xyz[1]-xyz[0], xyz[2]-xyz[0]), expected_normal) < 0:
                 xyz = xyz[[0, 2, 1]]
             indices = [vertex_index(p) for p in xyz]
@@ -1246,7 +1546,7 @@ def reconstruct(points, patch_ids, *, part_ids=None, mask=None, include_ids=None
                 normal = np.cross(xyz[1]-xyz[0], xyz[2]-xyz[0])
                 if np.linalg.norm(normal) <= 1e-12:
                     continue
-                if normal @ owner.normal < 0:
+                if normal @ owner.normal_at(owner.project(xyz.mean(axis=0))) < 0:
                     xyz = xyz[[0, 2, 1]]
                 indices = [vertex_index(point) for point in xyz]
                 if len(set(indices)) < 3:

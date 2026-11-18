@@ -11,6 +11,22 @@ class BaseData(ABC):
     
     # global counter
     _id_counters: ClassVar[Dict[Type["BaseData"], int]] = {}
+    supports_merge: ClassVar[bool] = True
+
+    @classmethod
+    @abstractmethod
+    def merge(cls, objects, *, name=None):
+        """Return an independent same-type union without mutating any input."""
+        raise NotImplementedError
+
+    @classmethod
+    def _merge_inputs(cls, objects):
+        objects=list(objects)
+        if len(objects)<2 or any(type(obj) is not cls for obj in objects):
+            raise ValueError('Merge requires at least two objects of exactly the same type.')
+        if len({id(obj) for obj in objects})!=len(objects):
+            raise ValueError('An object cannot occur twice in a merge.')
+        return objects
     
     @abstractmethod
     def save_hdf5(self, group: h5py.Group) -> h5py.Group:

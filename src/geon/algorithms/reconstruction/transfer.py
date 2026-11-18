@@ -79,7 +79,10 @@ def reconstruct_cloud(cloud, primitive_name, mapped_names=(), *, config=None, ma
     primitive_ids = fields[0].data.reshape(-1)
     result = reconstruct(cloud.points, primitive_ids, mask=mask, config=config, progress=progress)
     if not len(result.faces):
-        raise ValueError("Reconstruction produced no faces. Check segmentation and reconstruction settings.")
+        reasons = '\n'.join(message for message in result.diagnostics
+                            if message.startswith('Patch ') or message.startswith('Size filter:'))
+        raise ValueError("Reconstruction produced no faces.\n" +
+                         (reasons or "Check the source instance field, selection, and reconstruction settings."))
     mesh = MeshData(result.vertices, result.faces, "Reconstructed mesh",
                     face_object_ids=result.face_patch_ids)
     mesh.metadata = {"reconstruction_settings": asdict(config), "primitive_field": primitive_name,
@@ -133,53 +136,56 @@ def reconstruct_cloud(cloud, primitive_name, mapped_names=(), *, config=None, ma
     return mesh, result
 
 
-def deviation_surface(result, points, primitive_ids, *, spacing=.05, max_vertices=80_000, mask=None):
+def deviation_surface(result, points, primitive_ids, *, spacing=.05, max_vertices=None, mask=None, progress=None):
     """Regular, temporary triangulation colored by local source-to-face RMS.
 
-    Geometry is capped independently of source density. Only the preview owns
+    Geometry is sampled at the requested spacing without a default size cap. Only the preview owns
     these arrays; the accepted mesh and its HDF5 representation stay compact.
     Neighbour searches are restricted to each source primitive.
     """
-    if spacing <= 0 or max_vertices < 3:
+    if spacing <= 0 or (max_vertices is not None and max_vertices < 3):
         raise ValueError("Deviation spacing and budget must be positive.")
     triangles = result.vertices[result.faces]
     lengths = np.linalg.norm(triangles-np.roll(triangles, 1, axis=1), axis=2).max(axis=1)
     divisions = np.maximum(1, np.ceil(lengths/spacing).astype(int))
-    if len(triangles)*3 > max_vertices:
+    if max_vertices is not None and len(triangles)*3 > max_vertices:
         # A budget smaller than the original surface cannot sample every face.
         raise ValueError("Deviation preview budget is smaller than the reconstructed mesh.")
-    while np.sum((divisions+1)*(divisions+2)//2) > max_vertices:
+    while max_vertices is not None and np.sum((divisions+1)*(divisions+2)//2) > max_vertices:
         divisions = np.maximum(1, (divisions*.85).astype(int))
     original = result.deviation_point_indices
     groups = _groups(np.asarray(primitive_ids)[original])
     vertices, faces, deviation = [], [], []
     offset = 0
     trees = {}
-    for triangle, label, n in zip(triangles, result.face_patch_ids, divisions):
+    for face_index, (triangle, label, n) in enumerate(zip(triangles, result.face_patch_ids, divisions)):
+        if progress is not None and face_index % 256 == 0:
+            progress(f'Deviation preview: face {face_index+1}/{len(triangles)}')
         label, n = int(label), int(n)
         if label not in trees:
             source = points[original[groups[label]]]
             trees[label] = cKDTree(source), result.point_deviations[groups[label]]
         tree, residuals = trees[label]
-        grid, index = [], {}
-        for i in range(n+1):
-            for j in range(n+1-i):
-                index[i, j] = len(grid)
-                grid.append(triangle[0]+(triangle[1]-triangle[0])*i/n+(triangle[2]-triangle[0])*j/n)
-        grid = np.asarray(grid)
-        normal = np.cross(triangle[1]-triangle[0], triangle[2]-triangle[0])
-        normal /= max(np.linalg.norm(normal), 1e-15)
+        i,k=np.triu_indices(n+1)
+        j=k-i
+        grid=(triangle[0]+(triangle[1]-triangle[0])*(i/n)[:,None]
+              +(triangle[2]-triangle[0])*(j/n)[:,None])
         nearest = tree.query(grid, k=min(8, tree.n))[1]
         residual = residuals[np.asarray(nearest).reshape(len(grid), -1)]
-        deviation.extend(np.sqrt(np.mean(residual**2, axis=1)))
-        vertices.extend(grid)
-        for i in range(n):
-            for j in range(n-i):
-                faces.append([offset+index[i, j], offset+index[i+1, j], offset+index[i, j+1]])
-                if j < n-i-1:
-                    faces.append([offset+index[i+1, j], offset+index[i+1, j+1], offset+index[i, j+1]])
+        deviation.append(np.sqrt(np.mean(residual**2, axis=1)))
+        vertices.append(grid)
+        i,k=np.triu_indices(n)
+        j=k-i
+        start=i*(n+1)-i*(i-1)//2+j
+        below=(i+1)*(n+1)-(i+1)*i//2+j
+        first=np.column_stack((start,below,start+1))
+        second=np.column_stack((below,below+1,start+1))
+        keep=np.column_stack((np.ones(len(i),dtype=bool),j<n-i-1)).ravel()
+        faces.append(np.stack((first,second),axis=1).reshape(-1,3)[keep]+offset)
         offset += len(grid)
-    return np.asarray(vertices), np.asarray(faces, dtype=np.int64), np.asarray(deviation)
+    return (np.concatenate(vertices) if vertices else np.empty((0,3)),
+            np.concatenate(faces) if faces else np.empty((0,3),dtype=np.int64),
+            np.concatenate(deviation) if deviation else np.empty(0))
 
 
 def corner_curves(result):
@@ -192,7 +198,7 @@ def corner_curves(result):
             kind = "coplanar"
         elif edge.get("kind") == "bridge":
             a, b = [result.patches[int(label)] for label in edge["patch_ids"]]
-            parallel = (a.cylinder is None and b.cylinder is None and
+            parallel = (a.kind == 'plane' and b.kind == 'plane' and
                         abs(a.normal @ b.normal) >= np.cos(np.deg2rad(10)))
             kind = "coplanar" if parallel else "outer"
         sources = list(edge["side_points"].values()) if "side_points" in edge else [edge.get("points", edge["endpoints"])]

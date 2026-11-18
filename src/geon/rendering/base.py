@@ -43,6 +43,32 @@ class BaseLayer(Generic[TData], ABC):
     # VTK
     _renderer: Optional[vtk.vtkRenderer] = field(default=None, init=False, repr=False)
     _actors: list[vtk.vtkProp] = field(default_factory= list, init=False, repr=False)
+
+    @classmethod
+    @abstractmethod
+    def merge(cls, layers, *, name=None):
+        """Construct an unattached merged layer; never edit the source layers."""
+        raise NotImplementedError
+
+    @classmethod
+    def can_merge(cls, layers):
+        return (len(layers)>=2 and all(type(layer) is cls for layer in layers)
+                and len({id(layer) for layer in layers})==len(layers)
+                and len({type(layer.data) for layer in layers})==1
+                and all(layer.data.supports_merge and not getattr(layer,'is_preview',False) for layer in layers))
+
+    @classmethod
+    def _merge_layers(cls, layers, name):
+        layers=list(layers)
+        if not cls.can_merge(layers):
+            raise ValueError('Select at least two mergeable layers of the same type.')
+        first=layers[0]
+        name=name or first._browser_name
+        data=type(first.data).merge([layer.data for layer in layers],name=name)
+        merged=cls(data)
+        merged.browser_name=name
+        merged.visible=first.visible
+        return merged,first
     
     def attach(self, renderer: vtk.vtkRenderer) -> None:
         """

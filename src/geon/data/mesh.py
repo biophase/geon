@@ -21,6 +21,24 @@ class MeshLevel(str, Enum):
 
 @register_data
 class MeshData(BaseData):
+    @classmethod
+    def merge(cls, objects, *, name=None):
+        from .merging import merge_fields
+        objects=cls._merge_inputs(objects)
+        faces=[];owners=[];offset=0;object_offset=0
+        for obj in objects:
+            faces.extend(face+offset for face in obj.faces)
+            owners.append(np.searchsorted(obj.object_ids,obj.face_object_ids)+object_offset)
+            offset+=len(obj.vertices);object_offset+=len(obj.object_ids)
+        result=cls(np.concatenate([o.vertices for o in objects]),faces,name or objects[0].name,
+                   face_object_ids=np.concatenate(owners))
+        # Disjoint vertex ranges also keep sorted edge ranges in input order.
+        for level in MeshLevel:
+            result.field_container(level)._fields=merge_fields([o.field_container(level) for o in objects])
+        from copy import deepcopy
+        result.metadata={'merged_sources':[{'id':o.id,'metadata':deepcopy(o.metadata)} for o in objects]}
+        return result
+
     def __init__(self, vertices, faces, name="Mesh", *, face_object_ids=None):
         super().__init__()
         self.name = str(name)

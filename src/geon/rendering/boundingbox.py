@@ -26,6 +26,13 @@ WIRE_EDGES = (
 
 @layer_for(BoundingBoxData)
 class BoundingBoxLayer(BaseLayer[BoundingBoxData], SelectableLayer):
+    @classmethod
+    def merge(cls, layers, *, name=None):
+        merged,first=cls._merge_layers(layers,name)
+        for attr in ('default_color','face_opacity','line_width'):
+            setattr(merged,attr,getattr(first,attr))
+        return merged
+
     layer_type_id = "boundingbox"
     use_cell_picking_for_selection = True
 
