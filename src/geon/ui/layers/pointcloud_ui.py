@@ -453,7 +453,9 @@ def _menu(layer:PointCloudLayer, parent: QWidget, controller: ToolController) ->
     ...
     
 def _text(layer:PointCloudLayer)->str: 
-    return layer.browser_name
+    if layer._visibility_mask is not None:
+        return f'{layer.data.name}; ({layer._visibility_mask.sum():,} / {len(layer.data.points):,})'
+    return layer.data.name
 
 def _icon(layer:PointCloudLayer)->QIcon: 
     return QIcon(resource_path("tree_icon_pointcloud.png"))

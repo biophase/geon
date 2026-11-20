@@ -89,7 +89,7 @@ class SuperpointRegionGrowingDialog(QDialog):
 
         for layer in scene.layers.values():
             if isinstance(layer, PointCloudLayer):
-                self.layer_combo.addItem(layer.browser_name, layer)
+                self.layer_combo.addItem(layer.data.name, layer)
         for i in range(self.layer_combo.count()):
             if self.layer_combo.itemData(i) is active_layer:
                 self.layer_combo.setCurrentIndex(i)

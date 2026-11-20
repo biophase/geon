@@ -64,7 +64,7 @@ def _ribbon_selection(
 
 
 def _text(layer: BoundingBoxLayer) -> str:
-    return layer.browser_name
+    return layer.data.name
 
 
 def _icon(layer: BoundingBoxLayer) -> QIcon:

@@ -126,7 +126,7 @@ def test_validation_and_name_roundtrip(tmp_path):
     loaded = Document.load_hdf5(path).scene_items[merged.id]
     assert loaded.name == 'Chosen name'
     scene = Scene(vtk.vtkRenderer()); scene.set_document(Document.load_hdf5(path))
-    assert scene.layers[merged.id]._browser_name == 'Chosen name'
+    assert scene.layers[merged.id].data.name == 'Chosen name'
 
 
 def test_command_replaces_at_first_position_and_undo_redo():
@@ -176,7 +176,7 @@ def test_browser_merge_and_cancel(monkeypatch):
     monkeypatch.setattr(QInputDialog, 'getText', pick)
     manager.merge_selected_layers()
     assert len(scene.layers) == 1
-    assert scene.active_layer._browser_name == 'Merged clouds'
+    assert scene.active_layer.data.name == 'Merged clouds'
     assert default_names
     window._mark_active_doc_modified.assert_called()
     commands.undo()
@@ -204,7 +204,7 @@ def test_layer_eligibility_and_display_settings():
     for cls, factory in ((BoundingBoxLayer, BoundingBoxData), (CellComplexLayer, CellComplexData),
                          (MeshLayer, lambda: MeshData([], []))):
         merged = cls.merge([cls(factory()), cls(factory())], name='Combined')
-        assert merged._browser_name == 'Combined'
+        assert merged.data.name == 'Combined'
 
 
 def test_attach_failure_preserves_sources(monkeypatch):

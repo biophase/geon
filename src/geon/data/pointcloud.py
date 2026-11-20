@@ -109,7 +109,7 @@ class PointCloudData(BaseData):
 
     def save_hdf5(self, group: h5py.Group) -> h5py.Group:
         group.attrs["type_id"] = self.get_type_id()
-        group.attrs["id"] = self.id
+        self._save_identity(group)
 
         group.create_dataset("points", data=self.points)
 
@@ -131,9 +131,7 @@ class PointCloudData(BaseData):
         points = field_group[()]
         obj = cls(points)
 
-        stored_id = group.attrs.get("id")
-        if stored_id is not None:
-            obj.id = decode_utf8(stored_id)
+        obj._load_identity(group)
 
         fields_group = group.get("fields")
         if isinstance(fields_group, h5py.Group):

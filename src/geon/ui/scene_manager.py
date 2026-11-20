@@ -218,7 +218,7 @@ class SceneManager(Dock):
         
         for key, layer in self._scene.layers.items():
             hooks = LAYER_UI.resolve(layer)
-            layer_text = hooks.tree_item_text(layer) if hooks.tree_item_text is not None else layer.browser_name
+            layer_text = hooks.tree_item_text(layer) if hooks.tree_item_text is not None else layer.data.name
             layer_root = QTreeWidgetItem([layer_text])
             layer_root.setData(0, Qt.ItemDataRole.UserRole, layer)
             if hooks.tree_item_icon is not None:
@@ -545,15 +545,13 @@ class SceneManager(Dock):
         from geon.tools.merge_layers import MergeLayersCommand
         layers=self.merge_candidates()
         if not layers:return
-        name,accepted=QInputDialog.getText(self,'Merge layers','Name:',text=layers[0]._browser_name)
+        name,accepted=QInputDialog.getText(self,'Merge layers','Name:',text=layers[0].data.name)
         if not accepted or not name.strip():return
         scene=self._scene
         self.tool_controller.deactivate_tool()
         if scene is not self._scene or any(scene.layers.get(layer.id) is not layer for layer in layers):return
         try:
             merged=type(layers[0]).merge(layers,name=name.strip())
-            while merged.id in scene.layers or merged.id in scene.doc.scene_items:
-                merged.data.id=merged.data._generate_id()
             self.tool_controller.do_global(MergeLayersCommand(scene,layers,merged,self._refresh_after_merge))
         except (ValueError,TypeError,RuntimeError) as exc:
             QMessageBox.warning(self,'Merge layers',str(exc))
@@ -582,7 +580,7 @@ class SceneManager(Dock):
         msg = QMessageBox(self.tree)
         msg.setIcon(QMessageBox.Icon.Warning)
         msg.setWindowTitle("Delete Layer")
-        msg.setText(f"Delete layer '{layer.browser_name}'?")
+        msg.setText(f"Delete layer '{layer.data.name}'?")
         msg.setInformativeText(
             "This removes the layer from the scene and the document. "
             "This action is irreversible."

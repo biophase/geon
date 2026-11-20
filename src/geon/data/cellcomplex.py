@@ -389,7 +389,7 @@ class CellComplexData(BaseData):
 
     def save_hdf5(self, group: h5py.Group) -> h5py.Group:
         group.attrs["type_id"] = self.get_type_id()
-        group.attrs["id"] = self.id
+        self._save_identity(group)
 
         schemas_group = group.create_group("semantic_attribute_schemas")
         for dim, schemas_by_name in self.semantic_attribute_schemas.items():
@@ -461,9 +461,7 @@ class CellComplexData(BaseData):
             edges=edges,
             semantic_attribute_schemas=semantic_attribute_schemas,
         )
-        stored_id = group.attrs.get("id")
-        if stored_id is not None:
-            obj.id = stored_id.decode("utf-8") if isinstance(stored_id, bytes) else str(stored_id)
+        obj._load_identity(group)
         obj.normalize_and_validate()
         return obj
     

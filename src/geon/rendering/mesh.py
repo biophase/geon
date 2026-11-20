@@ -26,7 +26,8 @@ class MeshLayer(BaseLayer[MeshData], SelectableLayer):
 
     def __init__(self, data, browser_name=None):
         super().__init__(data)
-        self.browser_name = browser_name or data.name
+        if browser_name is not None:
+            self.data.name = str(browser_name)
         self._poly = None
         self._mapper = None
         self._actor = None
@@ -312,4 +313,4 @@ class MeshLayer(BaseLayer[MeshData], SelectableLayer):
         if not self.has_selection:
             raise ValueError("The mesh has no selected elements.")
         data = self.data.extract_selection(self.active_selection, level=self.active_level)
-        return MeshLayer(data, self.browser_name+" (selection)")
+        return MeshLayer(data)

@@ -32,6 +32,23 @@ def points():
     return layer
 
 
+def test_instance_expansion_respects_visibility_and_unassigned():
+    data = PointCloudData(np.zeros((8, 3)))
+    data.add_field('instances', np.array([2, 2, 2, -1, -1, 7, 7, 8]), FieldType.INSTANCE)
+    layer = PointCloudLayer(data)
+    layer.set_active_field_name('instances')
+    layer._visibility_mask = np.array([True, False, True, True, True, False, True, True])
+    layer.active_selection = np.array([0, 3, 5])
+    np.testing.assert_array_equal(layer.instance_selection(), [0, 2])
+    layer.active_selection = np.array([1, 3])
+    assert layer.instance_selection().size == 0
+    layer.active_selection = np.array([0, 2, 3])
+    np.testing.assert_array_equal(layer.instance_selection(contract=True), [0, 2])
+    layer._visibility_mask = None
+    np.testing.assert_array_equal(layer.instance_selection(), [0, 1, 2])
+    assert layer.instance_selection(contract=True).size == 0
+
+
 def test_point_extraction_is_independent_and_complete():
     source = points()
     extracted = source.extract_selection()

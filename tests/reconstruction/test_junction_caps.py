@@ -20,4 +20,12 @@ class JunctionTests(unittest.TestCase):
         args=self.data()
         self.assertEqual(_close_junction_loops(*args,.01),0)
 
+    def test_cap_does_not_duplicate_existing_interior_diagonal(self):
+        vertices=np.array([[0,0,0],[.04,0,0],[.04,.04,0],[0,.04,0]])
+        faces=[[0,1,2],[0,2,3]]
+        patches={i:SimpleNamespace(id=i,part_id=None,source_point_count=10) for i in (1,2)}
+        assert _close_junction_loops(vertices,faces,[1,2],[-1,-1],
+                                     [True,False],patches,.15)==0
+        assert len(faces)==2
+
 if __name__=='__main__':unittest.main()

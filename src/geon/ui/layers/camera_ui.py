@@ -76,7 +76,7 @@ def _menu(layer: CameraLayer, parent: QWidget, controller: ToolController) -> QM
 
 
 def _text(layer: CameraLayer) -> str:
-    return layer.browser_name
+    return layer.data.name
 
 
 def _icon(layer: CameraLayer) -> QIcon:

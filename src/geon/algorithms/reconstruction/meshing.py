@@ -14,10 +14,23 @@ def insert_boundary_nodes(geometry, curves, tolerance=1e-8):
     rings=[np.asarray(r.coords)[:-1] for p in polygons for r in (p.exterior,*p.interiors)]
     segments=np.concatenate([np.stack((r,np.roll(r,-1,axis=0)),axis=1) for r in rings])
     points=np.unique(np.concatenate(curves),axis=0)
-    tree=shapely.STRtree(shapely.linestrings(segments))
+    lines=shapely.linestrings(segments)
+    tree=shapely.STRtree(lines)
     nodes,edges=tree.query(shapely.points(points),predicate='dwithin',distance=tolerance)
     if len(np.unique(nodes))!=len(points):
         raise ValueError('Shared seam node is not on the accepted patch boundary')
+    # A narrow boundary hairpin can put a node within tolerance of several
+    # different edges. Insert it only on its closest edge(s); inserting an
+    # existing vertex again on the nearby return edge creates a self-touch.
+    distances=shapely.distance(lines[edges],shapely.points(points[nodes]))
+    nearest=np.full(len(points),np.inf)
+    np.minimum.at(nearest,nodes,distances)
+    roundoff=32*np.finfo(float).eps*max(1.,float(np.max(np.abs(segments))))
+    keep=distances<=nearest[nodes]
+    from scipy.spatial import cKDTree
+    existing_distance=cKDTree(segments[:,0]).query(points)[0]
+    keep &= existing_distance[nodes]>roundoff
+    nodes,edges=nodes[keep],edges[keep]
     inserts={}
     for node,edge in zip(nodes,edges):
         a,b=segments[edge]

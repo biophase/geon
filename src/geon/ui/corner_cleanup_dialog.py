@@ -140,7 +140,7 @@ class CornerCleanupDialog(QDialog):
             self.layer_combo.setEnabled(False)
             return
         for layer in self._layers:
-            self.layer_combo.addItem(layer.browser_name, layer)
+            self.layer_combo.addItem(layer.data.name, layer)
         if active_layer is not None and active_layer in self._layers:
             self.layer_combo.setCurrentIndex(self._layers.index(active_layer))
 

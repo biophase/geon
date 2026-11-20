@@ -282,7 +282,7 @@ class BoundingBoxData(BaseData):
 
     def save_hdf5(self, group: h5py.Group) -> h5py.Group:
         group.attrs["type_id"] = self.get_type_id()
-        group.attrs["id"] = self.id
+        self._save_identity(group)
         dt = h5py.string_dtype(encoding="utf-8")
         group.create_dataset("box_ids", data=[b.id for b in self.boxes], dtype=dt)
         group.create_dataset("center_bottom_xyz", data=np.asarray([b.center_bottom_xyz for b in self.boxes], dtype=np.float64).reshape((-1, 3)))
@@ -337,7 +337,5 @@ class BoundingBoxData(BaseData):
         if isinstance(schema_group, h5py.Group):
             schema = SemanticSchema.from_hdf5_fieldgroup(schema_group)
         obj = cls(boxes=boxes, schema=schema)
-        stored_id = group.attrs.get("id")
-        if stored_id is not None:
-            obj.id = decode_utf8(stored_id)
+        obj._load_identity(group)
         return obj

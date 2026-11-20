@@ -16,19 +16,6 @@ class CameraLayer(BaseLayer[CameraData]):
 
     layer_type_id = "camera_snapshot"
 
-    def __init__(self, data: CameraData):
-        super().__init__(data)
-        self.browser_name = data.name
-
-    @property
-    def browser_name(self) -> str:
-        return self.data.name
-
-    @browser_name.setter
-    def browser_name(self, browser_name: str) -> None:
-        self.data.name = browser_name
-        self._browser_name = browser_name
-
     def _build_pipeline(
         self,
         renderer: vtk.vtkRenderer,
@@ -37,7 +24,7 @@ class CameraLayer(BaseLayer[CameraData]):
         return None
 
     def update(self) -> None:
-        self._browser_name = self.data.name
+        pass
 
     def world_xyz_from_picked_id(self, sub_id: int) -> tuple[float, float, float]:
         return tuple(float(v) for v in self.data.focal_point)

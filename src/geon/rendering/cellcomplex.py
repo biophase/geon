@@ -33,9 +33,10 @@ class CellComplexLayer(BaseLayer[CellComplexData], SelectableLayer):
     use_cell_picking_for_selection = True
     vertex_cube_wire_width = 1.0
 
-    def __init__(self, data: CellComplexData, browser_name: str = "Cell Complex"):
+    def __init__(self, data: CellComplexData, browser_name: str | None = None):
         super().__init__(data)
-        self.browser_name = browser_name
+        if browser_name is not None:
+            self.data.name = str(browser_name)
 
         self.size_mode: str = "screen"
         self.screen_size_px: float = 12.0

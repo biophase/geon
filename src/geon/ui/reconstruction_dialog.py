@@ -16,7 +16,7 @@ GROUPS = {
         "cylinder_min_angle_degrees", "curve_tolerance", "cylinder_chord_tolerance", "cylinder_mesh_spacing"],
     "B-spline fallback": ["fit_bsplines", "max_bspline_rmse", "bspline_error_ratio",
         "bspline_smoothing", "bspline_max_slope", "bspline_mesh_spacing"],
-    "Borders and corners": ["adjacency_radius", "min_contact_points", "edge_tolerance", "support_step",
+    "Borders and corners": ["clean_first", "adjacency_radius", "min_contact_points", "edge_tolerance", "support_step",
         "corner_tolerance", "min_edge_length", "min_plane_angle_degrees", "simplify_tolerance", "weld_tolerance"],
     "Coplanar joins": ["join_coplanar", "prefer_coplanar_join", "coplanar_join_mode", "coplanar_angle_degrees",
         "coplanar_plane_tolerance", "coplanar_boundary_tolerance", "regularize_coplanar_borders"],
@@ -42,7 +42,7 @@ class ReconstructionDialog(QDialog):
         source_layout = QVBoxLayout(source)
         form = QFormLayout()
         source_layout.addLayout(form)
-        self.name_input = QLineEdit(f"{layer.browser_name} (reconstructed)")
+        self.name_input = QLineEdit(f"{layer.data.name} (reconstructed)")
         form.addRow("Mesh name", self.name_input)
         self.primitive_combo = QComboBox()
         instances = layer.data.get_fields(field_type=FieldType.INSTANCE)
@@ -108,17 +108,28 @@ class ReconstructionDialog(QDialog):
                         control.setSpecialValueText("Automatic / disabled")
                     control.setValue(0. if value is None else value)
                 self.inputs[name] = control
-                form.addRow(name.replace("_", " ").capitalize(), control)
+                if name == 'clean_first':
+                    control.setToolTip('Clean individual outlines before matching complete seams and coordinating junctions. Disable to compare the previous pipeline.')
+                form.addRow('Clean first (experimental)' if name == 'clean_first' else name.replace("_", " ").capitalize(), control)
             scroll = QScrollArea()
             scroll.setWidgetResizable(True)
             scroll.setWidget(widget)
             tabs.addTab(scroll, title)
+        self.inputs['clean_first'].toggled.connect(self._update_border_controls)
+        self._update_border_controls()
         self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         self.buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Reconstruct")
         self.buttons.button(QDialogButtonBox.StandardButton.Ok).setEnabled(bool(instances))
         self.buttons.accepted.connect(self.accept)
         self.buttons.rejected.connect(self.reject)
         layout.addWidget(self.buttons)
+
+    def _update_border_controls(self):
+        legacy = not self.inputs['clean_first'].isChecked()
+        for name in ('prefer_coplanar_join', 'rescue_shared_edges',
+                     'bridge_remaining_gaps', 'clean_border_pass', 'gap_bridge_tolerance'):
+            self.inputs[name].setEnabled(legacy)
+            self.inputs[name].setToolTip('Used by the previous pipeline when Clean first is disabled.')
 
     def add_mapping(self, selected=None):
         row = QWidget()

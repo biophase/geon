@@ -331,8 +331,6 @@ class ReconstructMeshTool(ModeTool):
             if message not in logged:
                 self._set_status(f'Final diagnostic: {message}')
         mesh.name = self.mesh_name
-        while mesh.id in self.ctx.scene.layers or mesh.id in self.ctx.scene.doc.scene_items:
-            mesh.id = mesh._generate_id()
         layer = MeshLayer(mesh)
         layer.is_preview = True
         self.preview_layer = layer

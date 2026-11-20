@@ -122,11 +122,12 @@ def test_import_dialog_destination():
     from geon.ui.mesh_import_dialog import MeshImportDialog
     app = QApplication.instance() or QApplication([])
     mesh = MeshData(VERTICES, [[0, 1, 2, 3]])
+    original_name = mesh.name
     dialog = MeshImportDialog(mesh, active_document_name="Existing building")
     assert dialog.append_to_active_document
     assert "Existing building" in dialog.destination_combo.currentText()
     dialog.destination_combo.setCurrentIndex(0)
     assert not dialog.append_to_active_document
     dialog.reject()
-    assert mesh.name == "Mesh"
+    assert mesh.name == original_name
     dialog.close()

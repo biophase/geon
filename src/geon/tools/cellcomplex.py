@@ -843,7 +843,7 @@ class CellComplexAssociateTool(ModeTool):
         row1.addWidget(QLabel("Layer:", w))
         self._layer_combo = QComboBox(w)
         for layer in self._point_layers():
-            self._layer_combo.addItem(layer.browser_name, layer.id)
+            self._layer_combo.addItem(layer.data.name, layer.id)
         self._layer_combo.currentIndexChanged.connect(lambda _idx: self._populate_fields())
         row1.addWidget(self._layer_combo)
         row1.addWidget(QLabel("ID:", w))

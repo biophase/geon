@@ -45,5 +45,5 @@ class SelectableLayer(ABC):
             raise ValueError("The layer has no selected elements.")
         data = self.data.extract_selection(self.active_selection)
         layer = type(self)(data)
-        layer.browser_name = f"{self.browser_name} (selection)"
+        data.name = f"{self.data.name} (selection)"
         return layer

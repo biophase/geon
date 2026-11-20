@@ -51,7 +51,8 @@ class CameraData(BaseData):
         view_shear: Sequence[float] = (0.0, 0.0, 1.0),
     ) -> None:
         super().__init__()
-        self.name = name or f"Camera Snapshot {self.id}"
+        if name is not None:
+            self.name = str(name)
         self.position = _float_tuple(position, 3)
         self.focal_point = _float_tuple(focal_point, 3)
         self.view_up = _float_tuple(view_up, 3)
@@ -66,8 +67,6 @@ class CameraData(BaseData):
     def from_camera(cls, camera: vtk.vtkCamera, name: Optional[str] = None) -> "CameraData":
         obj = cls(name=name)
         obj.update_from_camera(camera)
-        if name is None:
-            obj.name = f"Camera Snapshot {obj.id}"
         return obj
 
     def update_from_camera(self, camera: vtk.vtkCamera) -> None:
@@ -142,8 +141,7 @@ class CameraData(BaseData):
 
     def save_hdf5(self, group: h5py.Group) -> h5py.Group:
         group.attrs["type_id"] = self.get_type_id()
-        group.attrs["id"] = self.id
-        group.attrs["name"] = self.name
+        self._save_identity(group)
         group.attrs["view_angle"] = self.view_angle
         group.attrs["parallel_projection"] = int(self.parallel_projection)
         group.attrs["parallel_scale"] = self.parallel_scale
@@ -175,9 +173,5 @@ class CameraData(BaseData):
             window_center=dataset_tuple("window_center", 2, (0.0, 0.0)),
             view_shear=dataset_tuple("view_shear", 3, (0.0, 0.0, 1.0)),
         )
-        stored_id = group.attrs.get("id")
-        if stored_id is not None:
-            obj.id = _decode(stored_id)
-        if not obj.name:
-            obj.name = f"Camera Snapshot {obj.id}"
+        obj._load_identity(group)
         return obj

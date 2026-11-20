@@ -39,9 +39,10 @@ class MeshData(BaseData):
         result.metadata={'merged_sources':[{'id':o.id,'metadata':deepcopy(o.metadata)} for o in objects]}
         return result
 
-    def __init__(self, vertices, faces, name="Mesh", *, face_object_ids=None):
+    def __init__(self, vertices, faces, name=None, *, face_object_ids=None):
         super().__init__()
-        self.name = str(name)
+        if name is not None:
+            self.name = str(name)
         self.vertices = np.array(vertices, dtype=np.float64, copy=True)
         if self.vertices.size == 0:
             self.vertices = self.vertices.reshape(0, 3)
@@ -182,7 +183,7 @@ class MeshData(BaseData):
 
     def save_hdf5(self, group):
         group.attrs["type_id"] = self.get_type_id()
-        group.attrs["name"] = self.name
+        self._save_identity(group)
         group.create_dataset("vertices", data=self.vertices)
         group.create_dataset("face_object_ids", data=self.face_object_ids)
         group.create_dataset("metadata", data=json.dumps(self.metadata), dtype=h5py.string_dtype("utf-8"))
@@ -226,7 +227,7 @@ class MeshData(BaseData):
                     if len(field.data) != obj.element_count(level):
                         raise ValueError(f"Invalid {level.value} field length: {field.name}")
                     obj.field_container(level)._fields.append(field)
-        obj.id = group.name.rsplit("/", 1)[-1]
+        obj._load_identity(group)
         return obj
 
     @classmethod

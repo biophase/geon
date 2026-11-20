@@ -11,6 +11,7 @@
   "edge_tolerance": 0.25,
   "support_step": 0.02,
   "join_coplanar": true,
+  "clean_first": false,
   "coplanar_join_mode": "bridge",
   "coplanar_angle_degrees": 10,
   "coplanar_plane_tolerance": 0.3,

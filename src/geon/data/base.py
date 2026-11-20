@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod 
 from typing import Optional, ClassVar, Type, Dict, Tuple
+from uuid import uuid4
 import h5py
 
 
@@ -74,10 +75,24 @@ class BaseData(ABC):
         return ''.join([c for c in cls.get_type_id() if c.isupper()])
 
     @classmethod
-    def _generate_id(cls) -> str:
+    def _generate_default_name(cls) -> str:
         n = cls._id_counters.get(cls, 0) + 1
         cls._id_counters[cls] = n
         return f"{cls.get_short_type_id()}_{n:04}"
     
     def __init__(self):
-        self.id = self._generate_id()
+        self.id: str    = str(uuid4())
+        self.name: str  = self._generate_default_name()
+
+    def _save_identity(self, group: h5py.Group) -> None:
+        """Persist the stable reference key separately from the display name."""
+        group.attrs["id"] = self.id
+        group.attrs["name"] = self.name
+
+    def _load_identity(self, group: h5py.Group) -> None:
+        """Keep legacy IDs intact; use them as names when no name was saved."""
+        stored_id = group.attrs.get("id", group.name.rsplit("/", 1)[-1])
+        if stored_id:
+            self.id = stored_id.decode("utf-8") if isinstance(stored_id, bytes) else str(stored_id)
+        name = group.attrs.get("name", self.id)
+        self.name = name.decode("utf-8") if isinstance(name, bytes) else str(name)

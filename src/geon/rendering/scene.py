@@ -14,7 +14,7 @@ from typing import Optional, Mapping
 from types import MappingProxyType
 import vtk
 
-class DuplicateLayerNameError(Exception):
+class DuplicateLayerIdError(Exception):
     pass
 
 class Scene:
@@ -54,7 +54,7 @@ class Scene:
     def add_layer(self, layer: BaseLayer) -> BaseLayer:
         """Attach an existing layer; document insertion is the caller's responsibility."""
         if layer.id in self._layers.keys():
-            raise DuplicateLayerNameError(f"Can't create duplicate layer names: {layer.id}")
+            raise DuplicateLayerIdError(f"Can't create duplicate layer IDs: {layer.id}")
         self._layers[layer.id] = layer
         if isinstance(layer, PointCloudLayer):
             layer.set_unassigned_point_color(self._unassigned_point_color)
@@ -70,26 +70,26 @@ class Scene:
                 layer.set_coarse_points_percent(self._coarse_points_percent)
         
         
-    def get_layer(self, name:Optional[str]=None) -> Optional[BaseLayer]:
+    def get_layer(self, layer_id:Optional[str]=None) -> Optional[BaseLayer]:
         if len(self.layers) == 0:
             return
-        if name is None:
+        if layer_id is None:
             return list(self._layers.values())[0]
-        return self._layers[name]
+        return self._layers[layer_id]
     
-    def remove_layer(self, name:str, delete_data=True) -> None:
-        layer = self._layers.pop(name)
+    def remove_layer(self, layer_id:str, delete_data=True) -> None:
+        layer = self._layers.pop(layer_id)
         self._unregister_layer_actors(layer)
         layer.detach()
         if delete_data:
             self._doc.remove_data(layer.id)
-        if self._active_layer_id == name:
+        if self._active_layer_id == layer_id:
             self._active_layer_id = next(iter(self._layers.keys()), None)
             
     @property
     def active_layer(self)->Optional[BaseLayer]:
         if self._active_layer_id is not None:
-            return self.get_layer(name = self._active_layer_id)
+            return self.get_layer(layer_id=self._active_layer_id)
         
     @property
     def active_layer_id(self) -> Optional[str]:

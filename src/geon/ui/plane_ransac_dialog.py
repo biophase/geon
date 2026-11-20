@@ -164,7 +164,7 @@ class PlaneRansacDialog(QDialog):
             return
 
         for layer in self._layers:
-            self.layer_combo.addItem(layer.browser_name, layer)
+            self.layer_combo.addItem(layer.data.name, layer)
             normals = [f.name for f in layer.data.get_fields(field_type=FieldType.NORMAL)]
             self._normal_fields_by_layer[id(layer)] = normals
 

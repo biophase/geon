@@ -211,14 +211,16 @@ class CellComplexAttributesDialog(QDialog):
         refs = list(self._cell.geometry_refs)
         table.setColumnCount(5)
         table.setRowCount(len(refs))
-        table.setHorizontalHeaderLabels(["", "Layer ID", "Select", "View", "Clear"])
+        table.setHorizontalHeaderLabels(["", "Layer", "Select", "View", "Clear"])
         for row, ref in enumerate(refs):
             layer = self._layer_for_ref(ref.ref_id)
             icon_item = QTableWidgetItem("")
             if isinstance(layer, PointCloudLayer):
                 icon_item.setIcon(QIcon(resource_path("tree_icon_pointcloud.png")))
             table.setItem(row, 0, icon_item)
-            table.setItem(row, 1, QTableWidgetItem(ref.ref_id))
+            layer_item = QTableWidgetItem(layer.data.name if layer is not None else ref.ref_id)
+            layer_item.setToolTip(ref.ref_id)
+            table.setItem(row, 1, layer_item)
 
             select_btn = QPushButton("Select", table)
             select_btn.clicked.connect(lambda _checked=False, r=ref: self._select_ref(r))

@@ -209,7 +209,7 @@ def _ribbon_selection(
 
 
 def _text(layer: CellComplexLayer) -> str:
-    return layer.browser_name
+    return layer.data.name
 
 
 def _icon(layer: CellComplexLayer) -> QIcon:

@@ -37,7 +37,6 @@ class BaseLayer(Generic[TData], ABC):
     signals: LayerSignals = field(default_factory=LayerSignals, init=False, repr=False, compare=False)
     visible: bool = True
     # active: bool = True
-    _browser_name: str = 'Untitled'
 
     
     # VTK
@@ -63,10 +62,9 @@ class BaseLayer(Generic[TData], ABC):
         if not cls.can_merge(layers):
             raise ValueError('Select at least two mergeable layers of the same type.')
         first=layers[0]
-        name=name or first._browser_name
+        name=name or first.data.name
         data=type(first.data).merge([layer.data for layer in layers],name=name)
         merged=cls(data)
-        merged.browser_name=name
         merged.visible=first.visible
         return merged,first
     
@@ -145,19 +143,12 @@ class BaseLayer(Generic[TData], ABC):
         return self.data.id
     
     @property
-    def browser_name(self) -> str:
-        return self._browser_name
-    
-    @property
     def browser_sel_descr(self)->str | None:
         """
         Optional text descriptor of the selection (e.g. '<N> points')
         """
         return None
     
-    @browser_name.setter
-    def browser_name(self, browser_name: str) -> None: 
-        self._browser_name = browser_name
         
       
     @property

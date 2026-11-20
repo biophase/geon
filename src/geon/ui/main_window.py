@@ -295,7 +295,7 @@ class MainWindow(QMainWindow):
         if hooks.ribbon_widget is None:
             self.ribbon.clear_group("layer")
         else:
-            title = getattr(layer, "browser_name", "Layer")
+            title = layer.data.name
             widget = hooks.ribbon_widget(layer, self.ribbon, self.tool_controller)
             self.ribbon.set_group(title, widget, "layer")
         self._on_layer_internal_sel_changed(layer)
@@ -571,18 +571,14 @@ class MainWindow(QMainWindow):
         except (ValueError, TypeError, IndexError, KeyError) as exc:
             QMessageBox.warning(self, "Extract selection", str(exc))
             return
-        used_ids = set(scene.doc.scene_items)
-        used_names = {layer.browser_name for layer in scene.layers.values()}
+        used_names = {layer.data.name for layer in scene.layers.values()}
         for layer in extracted:
-            while layer.id in used_ids:
-                layer.data.id = layer.data._generate_id()
-            used_ids.add(layer.id)
-            base = layer.browser_name
+            base = layer.data.name
             suffix = 2
-            while layer.browser_name in used_names:
-                layer.browser_name = f"{base} {suffix}"
+            while layer.data.name in used_names:
+                layer.data.name = f"{base} {suffix}"
                 suffix += 1
-            used_names.add(layer.browser_name)
+            used_names.add(layer.data.name)
         previous_active = scene.active_layer_id
 
         def refresh():
@@ -623,9 +619,6 @@ class MainWindow(QMainWindow):
         if scene is None:
             QMessageBox.information(self, "Import mesh", "Load a document before appending a mesh.")
             return
-        # Loaded document IDs may overlap this process's generated IDs.
-        while mesh.id in scene.doc.scene_items:
-            mesh.id = mesh._generate_id()
         scene.doc.add_data(mesh)
         layer = scene.add_data(mesh)
         scene.active_layer_id = layer.id
@@ -1391,7 +1384,7 @@ class MainWindow(QMainWindow):
         self.scene_manager.broadcastActivatedPcdField.emit(target_layer)
         print(
             f"[region_growing] {output_action} field '{output_field_name}' "
-            f"(type=INSTANCE, points={target_layer.data.points.shape[0]}) on layer '{target_layer.browser_name}'"
+            f"(type=INSTANCE, points={target_layer.data.points.shape[0]}) on layer '{target_layer.data.name}'"
         )
         dataset = self.dataset_manager._dataset
         if dataset is not None and scene_after is not None:
@@ -1562,7 +1555,7 @@ class MainWindow(QMainWindow):
         self.scene_manager.broadcastActivatedPcdField.emit(target_layer)
         print(
             f"[plane_ransac] Added field '{output_field_name}' "
-            f"(type=INSTANCE, points={target_layer.data.points.shape[0]}) on layer '{target_layer.browser_name}'"
+            f"(type=INSTANCE, points={target_layer.data.points.shape[0]}) on layer '{target_layer.data.name}'"
         )
         dataset = self.dataset_manager._dataset
         if dataset is not None and scene_after is not None:
@@ -1733,7 +1726,7 @@ class MainWindow(QMainWindow):
         self.scene_manager.broadcastActivatedPcdField.emit(target_layer)
         print(
             f"[superpoints] Added field '{output_field_name}' "
-            f"(type=INSTANCE, points={target_layer.data.points.shape[0]}) on layer '{target_layer.browser_name}'"
+            f"(type=INSTANCE, points={target_layer.data.points.shape[0]}) on layer '{target_layer.data.name}'"
         )
         dataset = self.dataset_manager._dataset
         if dataset is not None and scene_after is not None:
@@ -1904,7 +1897,7 @@ class MainWindow(QMainWindow):
         self.scene_manager.broadcastActivatedPcdField.emit(target_layer)
         print(
             f"[region_merge] Added field '{output_field_name}' from source '{source_field_name}' "
-            f"(type=INSTANCE, points={target_layer.data.points.shape[0]}) on layer '{target_layer.browser_name}'"
+            f"(type=INSTANCE, points={target_layer.data.points.shape[0]}) on layer '{target_layer.data.name}'"
         )
         dataset = self.dataset_manager._dataset
         if dataset is not None and scene_after is not None:

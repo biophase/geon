@@ -45,7 +45,7 @@ class PointCloudLayer(BaseLayer[PointCloudData], SelectableLayer):
     layer_type_id = "pointcloud"
 
     def instance_selection(self, *, contract: bool = False) -> np.ndarray:
-        """Select complete instances in the active field."""
+        """Select visible members of nonnegative instances in the active field."""
         if not isinstance(self.active_field, InstanceSegmentation):
             raise ValueError("The active field is not of type instance.")
         values = self.active_field.data.reshape(-1)
@@ -53,14 +53,18 @@ class PointCloudLayer(BaseLayer[PointCloudData], SelectableLayer):
         if selection is None or len(selection) == 0:
             return np.empty(0, dtype=np.int64)
         selected = np.unique(selection)
+        eligible = values >= 0
+        if self._visibility_mask is not None:
+            eligible &= self._visibility_mask
+        selected = selected[eligible[selected]]
         ids, counts = np.unique(values[selected], return_counts=True)
         if contract:
-            total_ids, total_counts = np.unique(values, return_counts=True)
+            total_ids, total_counts = np.unique(values[eligible], return_counts=True)
             counts_match = counts == total_counts[np.searchsorted(total_ids, ids)]
             ids = ids[counts_match]
-        return np.flatnonzero(np.isin(values, ids))
+        return np.flatnonzero(eligible & np.isin(values, ids))
 
-    def __init__(self, data:PointCloudData, browser_name = 'Point Cloud'):
+    def __init__(self, data:PointCloudData, browser_name=None):
         super().__init__(data)
         self._poly:         Optional[vtk.vtkPolyData] = None
         self._poly_coarse:  Optional[vtk.vtkPolyData] = None
@@ -86,7 +90,8 @@ class PointCloudLayer(BaseLayer[PointCloudData], SelectableLayer):
         self._main_actor: Optional[vtk.vtkActor] = None
 
         
-        self.browser_name = browser_name
+        if browser_name is not None:
+            self.data.name = str(browser_name)
         self.point_size: int = 2
         self.unassigned_point_color = tuple(DEFAULT_PREFS["unassigned_point_color"])
         
@@ -433,21 +438,6 @@ class PointCloudLayer(BaseLayer[PointCloudData], SelectableLayer):
         print(f'Set point size to {self.point_size}')
         return self.point_size
 
-    @property
-    def id(self) -> str:
-        return super().id
-    
-    @property
-    def browser_name(self) -> str:
-        if self._visibility_mask is not None:
-            return f'{super().browser_name}; ({self._visibility_mask.sum():,} / {self.   data.points.shape[0]:,})'
-        else:
-            return super().browser_name
-
-    @browser_name.setter
-    def browser_name(self, browser_name: str) -> None:
-        self._browser_name = browser_name
-        
     @property
     def browser_sel_descr(self) -> str | None:
         if self.active_selection is None:

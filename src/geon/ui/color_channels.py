@@ -255,7 +255,7 @@ class ColorChannels(QDockWidget):
                 field.color_map = deepcopy(self.draft)
                 layer._color_overrides[field.name] = field
             self.label.setTextFormat(Qt.TextFormat.PlainText)
-            self.label.setText(f'{layer.id}/{field.name}')
+            self.label.setText(f'{layer.data.name}/{field.name}')
             layer.signals.pointVisibilityChanged.connect(self.invalidate)
             layer.signals.fieldDataChanged.connect(self.invalidate)
             layer.signals.activeFieldChanged.connect(self.active_field_changed)

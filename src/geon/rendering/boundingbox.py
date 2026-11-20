@@ -36,9 +36,10 @@ class BoundingBoxLayer(BaseLayer[BoundingBoxData], SelectableLayer):
     layer_type_id = "boundingbox"
     use_cell_picking_for_selection = True
 
-    def __init__(self, data: BoundingBoxData, browser_name: str = "Bounding Boxes"):
+    def __init__(self, data: BoundingBoxData, browser_name: str | None = None):
         super().__init__(data)
-        self.browser_name = browser_name
+        if browser_name is not None:
+            self.data.name = str(browser_name)
         self.default_color: tuple[int, int, int] = theme.DEFAULT_SEGMENTATION_COLOR
         self.selection_color: tuple[int, int, int] = theme.SELECTION_COLOR
         self.face_opacity: float = 0.22

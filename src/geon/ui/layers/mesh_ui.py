@@ -118,5 +118,5 @@ def _menu(layer, parent, controller):
 LAYER_UI.register(MeshLayer, LayerUIHooks(
     ribbon_widget=_ribbon,
     tree_menu=_menu,
-    tree_item_text=lambda layer: layer.browser_name+(" (preview)" if layer.is_preview else ""),
+    tree_item_text=lambda layer: layer.data.name+(" (preview)" if layer.is_preview else ""),
 ))

@@ -32,13 +32,13 @@ class FitObbDialog(QDialog):
         form = QFormLayout()
         layout.addLayout(form)
 
-        form.addRow("Point cloud", QLabel(source_layer.browser_name, self))
+        form.addRow("Point cloud", QLabel(source_layer.data.name, self))
         form.addRow("Working points", QLabel(f"{selection_count:,}", self))
 
         self.target_layer_combo = QComboBox(self)
         for layer in scene.layers.values():
             if isinstance(layer, BoundingBoxLayer):
-                self.target_layer_combo.addItem(layer.browser_name, layer)
+                self.target_layer_combo.addItem(layer.data.name, layer)
         form.addRow("Bounding-box layer", self.target_layer_combo)
 
         self.method_combo = QComboBox(self)

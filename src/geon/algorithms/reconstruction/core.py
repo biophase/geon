@@ -58,6 +58,7 @@ class Config:
     rescue_shared_edges: bool = True
     bridge_remaining_gaps: bool = True
     clean_border_pass: bool = True
+    clean_first: bool = False  # Experimental coordinated joints; opt in for comparison.
     stitch_mesh_boundaries: bool = True
     mesh_stitch_tolerance: float = .05
     junction_cap_tolerance: float = .15
@@ -1207,6 +1208,7 @@ def _close_junction_loops(vertices, faces, labels, parts, flags, patches, tolera
     triangles = np.asarray(faces, dtype=int)
     edges = np.sort(np.concatenate([triangles[:,[0,1]],triangles[:,[1,2]],triangles[:,[2,0]]]),axis=1)
     unique, first, counts = np.unique(edges,axis=0,return_index=True,return_counts=True)
+    edge_counts={tuple(edge):int(count) for edge,count in zip(unique,counts)}
     source = np.tile(np.arange(len(faces)),3)[first]
     boundary = unique[counts==1];source = source[counts==1]
     neighbors = {};ownership = {}
@@ -1239,9 +1241,17 @@ def _close_junction_loops(vertices, faces, labels, parts, flags, patches, tolera
         for triangle in shapely.constrained_delaunay_triangles(polygon).geoms:
             indices=cKDTree(uv).query(np.asarray(triangle.exterior.coords)[:3])[1]
             caps.append([chain[int(i)] for i in indices])
+        from collections import Counter
+        additions=Counter(tuple(sorted((triangle[i],triangle[j])))
+                          for triangle in caps for i,j in ((0,1),(1,2),(2,0)))
+        # A cap diagonal can coincide with an existing interior mesh edge,
+        # particularly around thin corners. Do not create a third incident face.
+        if any(edge_counts.get(edge,0)+count>2 for edge,count in additions.items()):
+            continue
         owner=patches[min(patch_ids,key=lambda i:(patches[i].source_point_count,i))]
         for triangle in caps:
             faces.append(triangle);labels.append(owner.id);parts.append(-1 if owner.part_id is None else owner.part_id);flags.append(True)
+        for edge,added in additions.items():edge_counts[edge]=edge_counts.get(edge,0)+added
         count+=1
     return count
 
@@ -1401,58 +1411,62 @@ def reconstruct(points, patch_ids, *, part_ids=None, mask=None, include_ids=None
             diagnostics.append(f'Patch {label}: skipped ({exc})');log(diagnostics[-1]);continue
         patches[int(label)] = patch
     log(f"Building adjacency graph for {len(patches)} fitted patches")
-    proposals = []
     candidate_pairs = list(_candidate_pairs(patches, cfg, log))
-    for i, j in candidate_pairs:
-        log(f'Pair {i}/{j}: computing and validating surface intersections')
-        try:
-            def pair_diagnostic(message):
-                diagnostics.append(f'Pair {i}/{j}: {message}')
-                log(diagnostics[-1])
-            segments = _intersection_segments(patches[i], patches[j], cfg, pair_diagnostic)
-        except RuntimeError as exc:
-            diagnostics.append(f'Pair {(i,j)}: intersection failed: {exc}')
-            log(diagnostics[-1])
-            continue
-        proposals.extend({'patch_ids': (i, j), 'points': xyz, 'endpoints': xyz[[0,-1]].copy()} for xyz in segments)
-        diagnostics.append(f'Pair {i}/{j}: proposed {len(segments)} supported segments')
-        log(diagnostics[-1])
-    log(f'Collected {len(proposals)} shared-edge proposals; reconciling corners')
-    _reconcile_corners(patches, proposals, cfg,
-                       lambda message: (diagnostics.append(message), log(message)))
-    shared = _assemble_topology(patches, proposals, cfg, diagnostics, log)
-    shared = _rescue_edges(patches, proposals, shared, cfg, diagnostics, log)
-    shared, bridges = _join_coplanar(patches, shared, candidate_pairs, cfg, diagnostics, log)
-    # Joint border edits can expose a valid chain for a previously rejected pair.
-    if cfg.rescue_shared_edges:
-        import copy
-        accepted_pairs = {frozenset(e['patch_ids']) for e in shared}
-        extras = []
+    if cfg.clean_first:
+        from .clean_joints import reconstruct_joints
+        shared, bridges = reconstruct_joints(patches, candidate_pairs, cfg, diagnostics, log)
+    else:
+        proposals = []
         for i, j in candidate_pairs:
-            if frozenset((i,j)) in accepted_pairs:
-                continue
-            aa, bb = copy.copy(patches[i]), copy.copy(patches[j])
-            aa.footprint, bb.footprint = aa.polygon, bb.polygon
+            log(f'Pair {i}/{j}: computing and validating surface intersections')
             try:
-                segments = _intersection_segments(aa,bb,cfg)
+                def pair_diagnostic(message):
+                    diagnostics.append(f'Pair {i}/{j}: {message}')
+                    log(diagnostics[-1])
+                segments = _intersection_segments(patches[i], patches[j], cfg, pair_diagnostic)
             except RuntimeError as exc:
-                diagnostics.append(f'Pair {(i,j)}: rescue intersection failed: {exc}')
+                diagnostics.append(f'Pair {(i,j)}: intersection failed: {exc}')
                 log(diagnostics[-1])
                 continue
-            extras.extend({'patch_ids':(i,j),'points':curve,'endpoints':curve[[0,-1]].copy()}
-                          for curve in segments)
-        shared = _rescue_edges(patches, extras, shared, cfg, diagnostics, log)
-    shared, bridges = _join_coplanar(patches, shared, candidate_pairs, cfg, diagnostics, log,
-                                    existing_bridges=bridges, corner_gap=True)
-    if cfg.clean_border_pass:
-        log('Clean-border pass: simplify exposed runs, then reconnect remaining supported borders')
-        for patch in patches.values():
-            patch.polygon = _simplify(patch, cfg.simplify_tolerance)
-            patch.footprint = patch.polygon
-        shared, bridges = _join_coplanar(patches, shared, candidate_pairs, cfg, diagnostics, log,
-                                        existing_bridges=bridges)
+            proposals.extend({'patch_ids': (i, j), 'points': xyz, 'endpoints': xyz[[0,-1]].copy()} for xyz in segments)
+            diagnostics.append(f'Pair {i}/{j}: proposed {len(segments)} supported segments')
+            log(diagnostics[-1])
+        log(f'Collected {len(proposals)} shared-edge proposals; reconciling corners')
+        _reconcile_corners(patches, proposals, cfg,
+                           lambda message: (diagnostics.append(message), log(message)))
+        shared = _assemble_topology(patches, proposals, cfg, diagnostics, log)
+        shared = _rescue_edges(patches, proposals, shared, cfg, diagnostics, log)
+        shared, bridges = _join_coplanar(patches, shared, candidate_pairs, cfg, diagnostics, log)
+        # Joint border edits can expose a valid chain for a previously rejected pair.
+        if cfg.rescue_shared_edges:
+            import copy
+            accepted_pairs = {frozenset(e['patch_ids']) for e in shared}
+            extras = []
+            for i, j in candidate_pairs:
+                if frozenset((i,j)) in accepted_pairs:
+                    continue
+                aa, bb = copy.copy(patches[i]), copy.copy(patches[j])
+                aa.footprint, bb.footprint = aa.polygon, bb.polygon
+                try:
+                    segments = _intersection_segments(aa,bb,cfg)
+                except RuntimeError as exc:
+                    diagnostics.append(f'Pair {(i,j)}: rescue intersection failed: {exc}')
+                    log(diagnostics[-1])
+                    continue
+                extras.extend({'patch_ids':(i,j),'points':curve,'endpoints':curve[[0,-1]].copy()}
+                              for curve in segments)
+            shared = _rescue_edges(patches, extras, shared, cfg, diagnostics, log)
         shared, bridges = _join_coplanar(patches, shared, candidate_pairs, cfg, diagnostics, log,
                                         existing_bridges=bridges, corner_gap=True)
+        if cfg.clean_border_pass:
+            log('Clean-border pass: simplify exposed runs, then reconnect remaining supported borders')
+            for patch in patches.values():
+                patch.polygon = _simplify(patch, cfg.simplify_tolerance)
+                patch.footprint = patch.polygon
+            shared, bridges = _join_coplanar(patches, shared, candidate_pairs, cfg, diagnostics, log,
+                                            existing_bridges=bridges)
+            shared, bridges = _join_coplanar(patches, shared, candidate_pairs, cfg, diagnostics, log,
+                                            existing_bridges=bridges, corner_gap=True)
     from .meshing import (spline_grid_spacing, cylinder_grid_spacing, synchronize_seam_grid,
                           insert_boundary_nodes, grid_triangles)
     _synchronize_existing_seam_nodes(shared+bridges,patches)
@@ -1493,13 +1507,15 @@ def reconstruct(points, patch_ids, *, part_ids=None, mask=None, include_ids=None
         vertices.append(xyz)
         buckets.setdefault(cell, []).append(index)
         return index
-    log("Simplifying locked boundaries and constrained retriangulation")
+    log("Triangulating coordinated clean boundaries" if cfg.clean_first else
+        "Simplifying locked boundaries and constrained retriangulation")
     for number, (label, patch) in enumerate(patches.items(), 1):
-        log(f"Simplify/triangulate {number}/{len(patches)}: patch {label}")
-        patch.polygon = _simplify(
-            patch, cfg.simplify_tolerance,
-            log=lambda message: (diagnostics.append(message), log(message)),
-        )
+        log(f"{'Triangulate' if cfg.clean_first else 'Simplify/triangulate'} {number}/{len(patches)}: patch {label}")
+        if not cfg.clean_first:
+            patch.polygon = _simplify(
+                patch, cfg.simplify_tolerance,
+                log=lambda message: (diagnostics.append(message), log(message)),
+            )
         incident = [_local_edge(e, label) for e in shared+bridges if label in e['patch_ids']]
         boundary_xyz = np.concatenate([_edge_points(e) for e in incident]) if incident else None
         boundary_uv = np.concatenate([_mesh_edge_uv(patch,e) for e in incident]) if incident else None

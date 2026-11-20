@@ -354,6 +354,11 @@ def test_all_reconstruction_config_controls_are_exposed(app):
     from geon.rendering.pointcloud import PointCloudLayer
     dialog=ReconstructionDialog(PointCloudLayer(cloud()))
     assert set(dialog.inputs)=={field.name for field in fields(Config)}
+    dialog.inputs['clean_first'].setChecked(True)
+    assert not dialog.inputs['clean_border_pass'].isEnabled()
+    assert dialog.inputs['stitch_mesh_boundaries'].isEnabled()
+    dialog.inputs['clean_first'].setChecked(False)
+    assert dialog.inputs['clean_border_pass'].isEnabled()
     dialog.close()
 
 
