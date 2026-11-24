@@ -28,7 +28,7 @@ GROUPS = {
 class ReconstructionDialog(QDialog):
     def __init__(self, layer, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Mesh from PCD instance field")
+        self.setWindowTitle("Mesh from PCD instance field (experimental)")
         self.resize(650, 640)
         self.layer = layer
         self.config = None
@@ -66,11 +66,6 @@ class ReconstructionDialog(QDialog):
         add = QPushButton("Add mapped field")
         add.clicked.connect(lambda: self.add_mapping())
         source_layout.addWidget(add)
-        note = QLabel("One primitive per instance. IDs excluded below (default −1) are skipped.\n"
-                      "Simplification and stitching run before field transfer. Tied label votes use the lowest ID.\n"
-                      "Preview only: a bounded surface overlay and source-point distance histogram.")
-        note.setWordWrap(True)
-        source_layout.addWidget(note)
         preview_form = QFormLayout()
         self.preview_spacing = QDoubleSpinBox()
         self.preview_spacing.setDecimals(4)

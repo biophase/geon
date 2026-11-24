@@ -52,6 +52,13 @@ class ContextRibbon(QToolBar):
         self._insert_group_action(group_type, w)
         self._refresh_separators()
 
+    def set_group_title(self, title: str, group_type: Literal['layer', 'selection', 'tool']) -> None:
+        group = self._group_widgets.get(group_type)
+        if group is not None:
+            label = group.findChild(QLabel, 'ribbon_group_title')
+            if label is not None:
+                label.setText(title)
+
     def clear_group(self, group_type: Literal['layer', 'selection', 'tool']) -> None:
         existing = self._group_widgets.get(group_type)
         action = self._group_actions.get(group_type)
@@ -74,6 +81,7 @@ class ContextRibbon(QToolBar):
         outer.setContentsMargins(4, 2, 4, 2)
 
         title_label = QLabel(title)
+        title_label.setObjectName('ribbon_group_title')
         # title_label.setStyleSheet("QLabel { font-weight: bold; font-size: 12pt; }")
         font = title_label.font()
         font.setBold(True)

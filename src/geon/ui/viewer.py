@@ -29,6 +29,8 @@ import vtk
 
 from typing import Optional, cast
 import time
+import math
+from itertools import product
 from dataclasses import dataclass        
 
 
@@ -97,6 +99,9 @@ class InteractorStyle(vtk.vtkInteractorStyleTrackballCamera):
     
     # events
     def left_button_press_event(self, _vtk_obj, _vtk_event):
+        # A tool hook may open a modal dialog and re-enable the camera before
+        # returning. That must not turn the original tool click into a drag.
+        camera_press = self.camera_enabled
         self._left_press_pos = self.event_info.pos
         
         current_time = time.time()
@@ -104,14 +109,17 @@ class InteractorStyle(vtk.vtkInteractorStyleTrackballCamera):
             self.last_click_time = 0
             if self.mode_tool is not None:
                 self.mode_tool.left_button_press_hook(self.event_info)
-            if self.camera_enabled:
+            if camera_press and self.camera_enabled:
                 self.OnLeftButtonDown()
-            self.double_click_event()
+            if camera_press:
+                self.double_click_event()
+            elif self.mode_tool is not None:
+                self.mode_tool.double_click_press_hook(self.event_info)
         else:
             self.last_click_time = current_time
             if self.mode_tool is not None:
                 self.mode_tool.left_button_press_hook(self.event_info)
-            if self.camera_enabled:
+            if camera_press and self.camera_enabled:
                 self.OnLeftButtonDown()
                 
     def double_click_event(self):
@@ -296,6 +304,26 @@ class InteractorStyle(vtk.vtkInteractorStyleTrackballCamera):
             pass
         return
     
+def _fit_parallel_depth_range(renderer, _event=None):
+    """Keep all visible bounds inside the parallel camera's depth interval."""
+    camera = renderer.GetActiveCamera()
+    if not camera.GetParallelProjection():
+        return
+    bounds = renderer.ComputeVisiblePropBounds()
+    if (not all(math.isfinite(v) for v in bounds)
+            or any(bounds[i] > bounds[i + 1] for i in (0, 2, 4))):
+        return
+    position = camera.GetPosition()
+    direction = camera.GetDirectionOfProjection()
+    depths = [sum((p[i] - position[i]) * direction[i] for i in range(3))
+              for p in product(bounds[:2], bounds[2:4], bounds[4:6])]
+    near, far = min(depths), max(depths)
+    margin = max((far - near) * 0.01, 1e-3)
+    # Negative near distances are valid for parallel projection and allow
+    # geometry behind the camera position to remain visible.
+    camera.SetClippingRange(near - margin, far + margin)
+
+
 class VTKViewer(QWidget):
     """
     VTK Widget
@@ -314,6 +342,7 @@ class VTKViewer(QWidget):
         
         # vtk setup
         self._renderer: vtk.vtkRenderer = vtk.vtkRenderer()
+        self._renderer.AddObserver(vtk.vtkCommand.StartEvent, _fit_parallel_depth_range)
         self.vtkWidget.GetRenderWindow().AddRenderer(self._renderer)
         self._renderer.SetBackground(DEFAULT_RENDERER_BACKGROUND)
         self._interactor = self.vtkWidget.GetRenderWindow().GetInteractor()
@@ -641,6 +670,7 @@ class VTKViewer(QWidget):
         camera = self._renderer.GetActiveCamera()
         if camera.GetParallelProjection():
             camera.SetParallelProjection(False)
+            self._renderer.ResetCameraClippingRange()
         else:
             camera.SetParallelProjection(True)
         # self._renderer.ResetCamera()

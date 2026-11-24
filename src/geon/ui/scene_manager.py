@@ -74,6 +74,8 @@ class SceneManager(Dock):
                  ):
         super().__init__("Scene", parent)
         self._scene : Optional[Scene] =  None
+        # Session-only tree preferences; never written into document data.
+        self._tree_expansion: dict[tuple, bool] = {}
         self.tool_controller: ToolController = controller
         # self._renderer: vtk.vtkRenderer = vtk.vtkRenderer()
         
@@ -148,6 +150,9 @@ class SceneManager(Dock):
         panel = getattr(self.window(), 'color_channels', None)
         if panel is not None and not panel.activate(None):
             return
+        # Commands retain references to the outgoing scene and its layers.
+        # Clear both global and active-tool history before replacing that scene.
+        self.tool_controller.clear_undo_stacks()
         if self._scene is not None:
             self.broadcastDeleteScene.emit(self._scene) 
             self._scene.clear(delete_data=False)
@@ -201,6 +206,15 @@ class SceneManager(Dock):
             self.scene_label.setText(f"{self._scene.doc.name}")
     
     def populate_tree(self):
+        role = int(Qt.ItemDataRole.UserRole) + 1
+        def remember(item):
+            key = item.data(0, role)
+            if key is not None and item.childCount():
+                self._tree_expansion[key] = item.isExpanded()
+            for i in range(item.childCount()):
+                remember(item.child(i))
+        for i in range(self.tree.topLevelItemCount()):
+            remember(self.tree.topLevelItem(i))
         self.tree.clear()
 
         print(f"called populate_tree")
@@ -262,7 +276,18 @@ class SceneManager(Dock):
                 self._populate_mesh_layer(layer, layer_root)
             else:
                 layer_root.addChild(QTreeWidgetItem([type(layer).__name__]))
-        self.tree.expandAll()
+        def restore(item, key):
+            item.setData(0, role, key)
+            item.setExpanded(self._tree_expansion.get(key, True))
+            for i in range(item.childCount()):
+                child = item.child(i)
+                # Group keys exclude changing element-count display suffixes.
+                component = child.data(0, role) or child.text(0)
+                restore(child, key + (component,))
+        for i in range(self.tree.topLevelItemCount()):
+            item = self.tree.topLevelItem(i)
+            layer = item.data(0, Qt.ItemDataRole.UserRole)
+            restore(item, (scene.doc, layer.id))
         self.update_tree_visibility()
 
     def _populate_mesh_layer(self, layer, root):
@@ -271,6 +296,7 @@ class SceneManager(Dock):
         group.setExclusive(True)
         for level in MeshLevel:
             item = QTreeWidgetItem([f"{level.value.capitalize()} ({layer.data.element_count(level):,})"])
+            item.setData(0, int(Qt.ItemDataRole.UserRole) + 1, level.value)
             root.addChild(item)
             for field in layer.data.get_fields(level=level):
                 child = QTreeWidgetItem([field.name])
@@ -299,6 +325,8 @@ class SceneManager(Dock):
     ) -> None:
         vertices_item = QTreeWidgetItem([f"Vertices ({layer.vertex_count:,})"])
         edges_item = QTreeWidgetItem([f"Edges ({layer.edge_count:,})"])
+        vertices_item.setData(0, int(Qt.ItemDataRole.UserRole) + 1, 'vertices')
+        edges_item.setData(0, int(Qt.ItemDataRole.UserRole) + 1, 'edges')
         layer_root.addChild(vertices_item)
         layer_root.addChild(edges_item)
         self._populate_cell_complex_semantic_attributes(layer, vertices_item, 0)

@@ -1,0 +1,1 @@
+- avoid adding Qt, VTK and other UI-only dependencies to the data module

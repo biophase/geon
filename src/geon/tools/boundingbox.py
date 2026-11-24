@@ -187,6 +187,7 @@ class CreateHorizontalBoundingBoxTool(ModeTool):
     c3: NDArray[np.float64] | None = field(default=None, init=False)
     bottom_z: float = field(default=0.0, init=False)
     top_z: float = field(default=1.0, init=False)
+    _first_edge_preview_depth: float = field(default=0.0025, init=False)
     draft_box: BoundingBox | None = field(default=None, init=False)
     cull_outside: bool = field(default=False, init=False)
 
@@ -247,6 +248,10 @@ class CreateHorizontalBoundingBoxTool(ModeTool):
 
     def _init_vertical_extents(self) -> None:
         bounds = self._active_scene_bounds()
+        # The first-edge preview needs only a fixed scene-relative thickness.
+        # Reuse the activation-time bounds instead of scanning clouds per move.
+        span_xy = 1.0 if bounds is None else max(bounds[1] - bounds[0], bounds[3] - bounds[2], 1.0)
+        self._first_edge_preview_depth = max(span_xy * 0.0025, 1e-4)
         if bounds is None:
             self.bottom_z = -1.0
             self.top_z = 1.0
@@ -331,14 +336,11 @@ class CreateHorizontalBoundingBoxTool(ModeTool):
             return None
         yaw = math.atan2(float(v[1]), float(v[0]))
         center = p1 + 0.5 * v
-        bounds = self._active_scene_bounds()
-        span_xy = 1.0 if bounds is None else max(bounds[1] - bounds[0], bounds[3] - bounds[2], 1.0)
-        depth = max(span_xy * 0.0025, 1e-4)
         return BoundingBox(
             center_bottom_xyz=(float(center[0]), float(center[1]), float(self.bottom_z)),
             yaw=yaw,
             width=width,
-            depth=depth,
+            depth=self._first_edge_preview_depth,
             height=max(float(self.top_z - self.bottom_z), 1e-6),
         )
 

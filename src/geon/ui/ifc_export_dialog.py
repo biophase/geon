@@ -1,7 +1,7 @@
 """IFC class mapping, JSON interchange and export controls."""
 from copy import deepcopy
 from PyQt6.QtCore import Qt, QThread
-from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel,
+from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QFormLayout,
     QComboBox, QTableWidget, QTableWidgetItem, QPushButton, QDialogButtonBox,
     QFileDialog, QMessageBox, QHeaderView, QProgressDialog)
 import numpy as np
@@ -14,7 +14,7 @@ from geon.io.ifc import (IFC_SCHEMA, available_ifc_classes, predefined_types, de
 class IfcExportDialog(QDialog):
     def __init__(self, mesh, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Export mesh to IFC 4.3")
+        self.setWindowTitle("Export mesh to IFC 4.3 (experimental)")
         self.resize(850, 650)
         self.mesh = mesh
         self.mapping = None
@@ -40,12 +40,6 @@ class IfcExportDialog(QDialog):
         form.addRow("Object separation", self.object_combo)
         form.addRow("Face groups (optional)", self.face_combo)
         layout.addLayout(form)
-        note = QLabel("Labels below object level vote within each object using the original mesh elements.\n"
-                      "Face groups become named shape aspects; edge display depends on the IFC viewer.\n"
-                      "Surface features attach to the nearest exported pavement/slab or physical host.\n"
-                      "Open meshes are exported as tessellated surfaces. Coordinates are in metres.")
-        note.setWordWrap(True)
-        layout.addWidget(note)
         self.table = QTableWidget(0, 4)
         self.table.setHorizontalHeaderLabels(["ID", "Semantic class", "IFC4.3 class", "Predefined type"])
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)

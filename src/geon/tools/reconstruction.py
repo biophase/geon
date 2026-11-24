@@ -148,7 +148,7 @@ def _control_point_actor(points):
 @dataclass
 class ReconstructMeshTool(ModeTool):
     label: ClassVar = "reconstruct_mesh"
-    tooltip: ClassVar = "Mesh from PCD instance field"
+    tooltip: ClassVar = "Mesh from PCD instance field (experimental)"
     shortcut: ClassVar = None
     icon_path: ClassVar = None
     ui_zones: ClassVar = set()

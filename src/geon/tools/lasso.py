@@ -201,6 +201,10 @@ class LassoTool(ModeTool):
             self.poly_points = []
             self._remove_polygon_actor()
         self.ctx.viewer.set_camera_enabled(self.select_paused)
+        if getattr(self, '_pause_button', None) is not None:
+            self._pause_button.setText('Unpause (Space)' if self.select_paused else 'Pause (Space)')
+        self.ctx.controller.ribbon.set_group_title(
+            self.tooltip + (' (paused)' if self.select_paused else ''), 'tool')
         self.ctx.viewer.rerender()     
             
     def _remove_polygon_actor(self) -> None:
@@ -392,16 +396,16 @@ class LassoTool(ModeTool):
         
         button_params = [
             [ # col 1
-                ('In', self._sIn),
-                ('Out',self._sOut),
+                ('In (I)', self._sIn),
+                ('Out (O)',self._sOut),
             ],
             [ # col 2
-                ('Accept', self._sAccept),
-                ('Cancel', self._sCancel),            
+                ('Accept (Enter)', self._sAccept),
+                ('Cancel (Esc)', self._sCancel),            
             ],
             [ # col 3
-                ('Pause', self._sPause),
-                ('Remove', self._sRemoveLastPt),
+                ('Pause (Space)', self._sPause),
+                ('Remove (Del)', self._sRemoveLastPt),
             ],
         ]
         
@@ -419,6 +423,9 @@ class LassoTool(ModeTool):
                 
                 # btn.setStyleSheet("QPushButton { padding: 0 12px; }")
                 btn.setText(text)
+                if func == self._sPause:
+                    self._pause_button = btn
+                    btn.setText('Unpause (Space)' if self.select_paused else 'Pause (Space)')
                 # btn.setFixedSize(QSize(48, 24))
                 # btn.setFlat(True)
                 btn.clicked.connect(func)
