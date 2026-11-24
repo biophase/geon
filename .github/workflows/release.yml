@@ -73,6 +73,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Install Linux graphics runtime
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1 libgl1 libgl1-mesa-dri libopengl0
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -219,7 +225,7 @@ jobs:
             VENV_PY=".venv/bin/python"
             SMOKE="dist/geometry-smoke/geometry-smoke"
           fi
-          "$VENV_PY" -m PyInstaller --onedir --name geometry-smoke --noconfirm --clean scripts/smoke_surface_geometry.py
+          "$VENV_PY" -m PyInstaller --onedir --name geometry-smoke --noconfirm --clean tests/reconstruction/smoke_surface_geometry.py
           "$SMOKE"
           "$SMOKE" --ifc-first
 
