@@ -9,7 +9,7 @@ import pytest
 @pytest.mark.parametrize('ifc_first', [False, True])
 def test_occt_ifcopenshell_coexistence(ifc_first):
     import geon._native
-    script = Path(__file__).resolve().parents[2] / 'scripts' / 'smoke_surface_geometry.py'
+    script = Path(__file__).with_name('smoke_surface_geometry.py')
     # Preserve the package under test, including source builds with out-of-tree
     # native modules. Installed-wheel CI runs with GEON_USE_INSTALLED=1.
     code = (

@@ -44,6 +44,7 @@ def test_invalid_faces(faces):
         MeshData(VERTICES, faces)
 
 
+@pytest.mark.usefixtures("vtk_rendering_available")
 def test_quad_layer_renders_on_attach():
     mesh = MeshData(VERTICES, [[0, 1, 2, 3]], "Quad")
     layer = LAYER_REGISTRY.create_layer_for(mesh)

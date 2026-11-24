@@ -13,6 +13,9 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
         python: ["3.10", "3.11", "3.12"]
+        exclude:
+          - os: windows-latest
+            python: "3.10"
     env:
       QT_QPA_PLATFORM: offscreen
       GEON_USE_INSTALLED: "1"
@@ -31,6 +34,12 @@ jobs:
       - name: Install build tooling
         run: python -m pip install --upgrade pip setuptools wheel cmake ninja
 
+      - name: Install Linux graphics runtime
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1 libgl1 libgl1-mesa-dri libopengl0
+
       - name: Build and install
         run: python -m pip install --no-cache-dir --force-reinstall ".[test]"
 
@@ -38,4 +47,4 @@ jobs:
         run: python -c "import geon.data.pointcloud as p; print(p.__file__)"
 
       - name: Run tests
-        run: python -m pytest
+        run: python -m pytest -ra

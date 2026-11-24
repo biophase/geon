@@ -10,6 +10,7 @@ from geon.ui.picker import PointPicker
 
 @pytest.mark.parametrize('association', ['point', 'cell'])
 @pytest.mark.parametrize('edl', [False, True])
+@pytest.mark.usefixtures("vtk_rendering_available")
 def test_picking_uses_fine_mapper_under_coarse_render_budget(association, edl):
     # Index 1 is absent from the coarse sample. Index 2 is behind it.
     points = np.full((101, 3), 100., dtype=np.float32)
@@ -94,6 +95,7 @@ def test_visibility_survives_attach_and_field_updates():
 
 
 @pytest.mark.parametrize('coarse', [False, True])
+@pytest.mark.usefixtures("vtk_rendering_available")
 def test_hidden_foreground_does_not_intercept_pick(coarse):
     # Coarse sample indices 0 and 100 overlap, with 0 closest to camera.
     points = np.full((101, 3), 100., dtype=np.float32)
@@ -142,6 +144,8 @@ def test_hidden_foreground_does_not_intercept_pick(coarse):
 
     try:
         before = layer._poly.GetPoints().GetMTime(), layer._poly.GetVerts().GetMTime()
+        # Initialize the OpenGL context before the first hardware selection.
+        window.Render()
         assert pick() == 0
         footprint = [pick(x) for x in range(43, 58)]
         mask = np.zeros(101, dtype=bool)

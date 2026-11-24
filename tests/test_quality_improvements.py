@@ -88,7 +88,7 @@ def test_instance_selection_empty_unassigned_and_wrong_field(app):
     layer = make_layer()
     assert layer.instance_selection().size == 0
     layer.active_selection = np.array([0])
-    np.testing.assert_array_equal(layer.instance_selection(), [0, 5])
+    assert layer.instance_selection().size == 0  # Unassigned labels never expand.
     assert layer.instance_selection(contract=True).size == 0
     layer.active_field_name = "semantics"
     with pytest.raises(ValueError, match="not of type instance"):

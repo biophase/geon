@@ -20,6 +20,7 @@ pytestmark = pytest.mark.skipif(os.environ.get('GEON_TEST_QT_OPENGL') != '1',
                                 reason='requires an accessible desktop OpenGL context')
 
 
+@pytest.mark.usefixtures("vtk_rendering_available")
 def test_qt_surface_render_pick_resize_and_cleanup():
     configure_surface_format()
     app = QApplication.instance() or QApplication([])

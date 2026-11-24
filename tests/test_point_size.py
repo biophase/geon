@@ -12,6 +12,7 @@ from geon.ui.layers.pointcloud_ui import _increase_point_size, _decrease_point_s
 
 
 @pytest.mark.parametrize('coarse', [False, True])
+@pytest.mark.usefixtures("vtk_rendering_available")
 def test_ribbon_size_preserves_buffers_and_changes_pixels(coarse):
     data = PointCloudData(np.zeros((1, 3), dtype=np.float32))
     data.add_field('color', np.array([[255, 0, 0]], dtype=np.uint8), FieldType.COLOR)

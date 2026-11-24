@@ -330,6 +330,7 @@ def test_panel_visible_histogram_and_save(app):
     (FieldType.COLOR, [.2, .4, .6], [51, 102, 153]),
     (FieldType.NORMAL, [np.nan, 0., 1.], [153, 153, 153]),
 ])
+@pytest.mark.usefixtures("vtk_rendering_available")
 def test_default_gpu_colors(app, kind, values, expected):
     data = PointCloudData(np.zeros((1,3), dtype=np.float32))
     data.add_field('field', np.array([values]), kind)

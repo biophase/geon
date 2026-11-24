@@ -15,6 +15,7 @@ def app():
 
 @pytest.mark.parametrize('color_mode', ['solid', 'rgb', 'scalar', 'blend'])
 @pytest.mark.parametrize('coarse', [False, True])
+@pytest.mark.usefixtures("vtk_rendering_available")
 def test_selection_color_visibility_and_picking(app, color_mode, coarse):
     points = np.full((201, 3), 100., dtype=np.float32)
     points[100] = [0, 0, 0]

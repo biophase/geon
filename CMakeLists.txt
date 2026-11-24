@@ -132,6 +132,12 @@ include(cmake/GeonOCCT.cmake)
 
 pybind11_add_module(lasso MODULE native/lasso.cpp)
 pybind11_add_module(touching_graph MODULE native/touching_graph.cpp)
+if(MSVC)
+  target_compile_options(touching_graph PRIVATE /fp:strict)
+else()
+  # Match NumPy's separate multiply/add rounding at inclusive radius boundaries.
+  target_compile_options(touching_graph PRIVATE -ffp-contract=off)
+endif()
 target_include_directories(touching_graph PRIVATE "${GEON_NANOFLANN_DIR}")
 
 install(

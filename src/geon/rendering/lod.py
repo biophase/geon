@@ -143,6 +143,7 @@ class LODCoordinator:
             )
             for participant, level in zip(visible, levels):
                 participant.select_level(level)
+        self._frame = None if picking else (perf_counter(), visible)
 
     def _end(self, *_):
         frame, self._frame = self._frame, None

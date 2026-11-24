@@ -39,6 +39,7 @@ def test_exact_linear_detection():
     ([20., 120., 240.], 4., (4., 4.)),
     ([np.nan, 120., 240.], np.inf, (0., 1.)),
 ])
+@pytest.mark.usefixtures("vtk_rendering_available")
 def test_gpu_fast_and_lookup_blending_match(app, monkeypatch, rgb, intensity, limits):
     data = PointCloudData(np.zeros((1, 3), dtype=np.float32))
     data.add_field('rgb', np.array([rgb]), FieldType.COLOR)

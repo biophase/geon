@@ -11,6 +11,7 @@ from geon.ui.viewer import VTKViewer
 
 
 @pytest.mark.parametrize('association', ['point', 'cell'])
+@pytest.mark.usefixtures("vtk_rendering_available")
 def test_edl_toggle_keeps_picking_and_releases_resources(association, capfd):
     renderer = vtk.vtkRenderer()
     window = vtk.vtkRenderWindow()

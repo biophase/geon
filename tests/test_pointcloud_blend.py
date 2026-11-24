@@ -21,6 +21,7 @@ def make_layer(count=201):
 
 @pytest.mark.parametrize("with_color", [False, True])
 @pytest.mark.parametrize("coarse", [False, True])
+@pytest.mark.usefixtures("vtk_rendering_available")
 def test_first_render_after_attach_without_update(with_color, coarse):
     from geon.config import theme
 
@@ -116,6 +117,7 @@ def test_field_conversion_visibility_and_lod(kind):
 
 @pytest.mark.parametrize("kind", list(FieldType))
 @pytest.mark.parametrize("coarse", [False, True])
+@pytest.mark.usefixtures("vtk_rendering_available")
 def test_gpu_pixels_endpoints_midpoint_and_fallback(kind, coarse):
     layer, renderer = make_layer(1)
     background_name = "blue"

@@ -64,7 +64,7 @@ def test_global_overwrite_requires_confirmation(segmentation_dialog, monkeypatch
     dialog.show()
     dialog.findChild(QDialogButtonBox).button(QDialogButtonBox.StandardButton.Ok).click()
     assert warnings == [
-        "You are about to overwrite the field instances <selected> globally. "
+        "You are about to overwrite the field `instances <selected>` globally. "
         "Are you sure you want to do this? This can't be undone."
     ]
     assert bool(accepted) == (answer == QMessageBox.StandardButton.Yes)
